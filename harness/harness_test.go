@@ -477,6 +477,7 @@ func fakeAppServer(mode string) {
 	hash := ""
 	initialized := false
 	role := "review"
+	activeReadProfile := ""
 	send := func(v any) { _ = json.NewEncoder(os.Stdout).Encode(v) }
 	for scanner.Scan() {
 		var m struct {
@@ -488,6 +489,15 @@ func fakeAppServer(mode string) {
 			os.Exit(3)
 		}
 		if m.Method == "initialize" {
+			var init struct {
+				Capabilities struct {
+					Experimental bool `json:"experimentalApi"`
+				} `json:"capabilities"`
+			}
+			_ = json.Unmarshal(m.Params, &init)
+			if strings.HasPrefix(mode, "restricted") && !init.Capabilities.Experimental {
+				os.Exit(17)
+			}
 			if mode == "protocol-initial-stream" || mode == "protocol-initial-queue" {
 				for i := 0; i < 24; i++ {
 					send(map[string]any{"method": "ignored/progress", "params": map[string]any{"data": strings.Repeat("q", 1024)}})
@@ -515,7 +525,7 @@ func fakeAppServer(mode string) {
 			}
 			send(map[string]any{"id": m.ID, "result": map[string]any{"account": map[string]any{"type": kind, "planType": "prolite"}}})
 		case "config/read":
-			send(map[string]any{"id": m.ID, "result": map[string]any{"config": map[string]any{"mcp_servers": map[string]any{"dangerous": map[string]any{"command": "DO-NOT-RUN", "env": map[string]any{"API_KEY": "sensitive-config-placeholder"}}}, "plugins": map[string]any{"risk@local": map[string]any{"enabled": true}}, "hooks": map[string]any{"SessionStart": []any{map[string]any{"command": "DO-NOT-RUN"}}, "state": map[string]any{"hook-id": map[string]any{"enabled": true, "trusted_hash": "sensitive-config-placeholder"}}}, "shell_environment_policy": map[string]any{"set": map[string]any{"API_KEY": "sensitive-config-placeholder"}}}}})
+			send(map[string]any{"id": m.ID, "result": map[string]any{"config": map[string]any{"permissions": map[string]any{"existing-profile": map[string]any{"filesystem": map[string]any{":root": "read"}}}, "mcp_servers": map[string]any{"dangerous": map[string]any{"command": "DO-NOT-RUN", "env": map[string]any{"API_KEY": "sensitive-config-placeholder"}}}, "plugins": map[string]any{"risk@local": map[string]any{"enabled": true}}, "hooks": map[string]any{"SessionStart": []any{map[string]any{"command": "DO-NOT-RUN"}}, "state": map[string]any{"hook-id": map[string]any{"enabled": true, "trusted_hash": "sensitive-config-placeholder"}}}, "shell_environment_policy": map[string]any{"set": map[string]any{"API_KEY": "sensitive-config-placeholder"}}}}})
 		case "account/rateLimits/read":
 			if string(m.Params) != "null" {
 				os.Exit(11)
@@ -523,10 +533,12 @@ func fakeAppServer(mode string) {
 			send(map[string]any{"id": m.ID, "result": fakeQuota(mode)})
 		case "thread/start":
 			var p struct {
-				Model    string `json:"model"`
-				Provider string `json:"modelProvider"`
-				Tier     string `json:"serviceTier"`
-				Config   struct {
+				Model       string `json:"model"`
+				Provider    string `json:"modelProvider"`
+				Tier        string `json:"serviceTier"`
+				Permissions string `json:"permissions"`
+				Sandbox     string `json:"sandbox"`
+				Config      struct {
 					MCP map[string]struct {
 						Enabled bool `json:"enabled"`
 					} `json:"mcp_servers"`
@@ -543,7 +555,16 @@ func fakeAppServer(mode string) {
 						Set     map[string]string `json:"set"`
 						Profile bool              `json:"experimental_use_profile"`
 					} `json:"shell_environment_policy"`
-					Web string `json:"web_search"`
+					Web         string `json:"web_search"`
+					Permissions map[string]struct {
+						Filesystem map[string]string `json:"filesystem"`
+						Network    struct {
+							Enabled bool `json:"enabled"`
+						} `json:"network"`
+					} `json:"permissions"`
+					Tools struct {
+						ViewImage *bool `json:"view_image"`
+					} `json:"tools"`
 				} `json:"config"`
 			}
 			if json.Unmarshal(m.Params, &p) != nil {
@@ -568,16 +589,41 @@ func fakeAppServer(mode string) {
 			if mode == "fast-tier" {
 				tier = "fast"
 			}
-			send(map[string]any{"id": m.ID, "result": map[string]any{"thread": map[string]any{"id": threadID}, "model": resolved, "modelProvider": provider, "serviceTier": tier}})
+			response := map[string]any{"thread": map[string]any{"id": threadID}, "model": resolved, "modelProvider": provider, "serviceTier": tier}
+			if strings.HasPrefix(mode, "restricted") {
+				cwd, _ := os.Getwd()
+				profile, ok := p.Config.Permissions[p.Permissions]
+				if !ok || p.Permissions == "" || p.Sandbox != "" || len(p.Config.Permissions) != 1 || len(profile.Filesystem) != 2 || profile.Filesystem[":minimal"] != "read" || profile.Filesystem[filepath.Join(cwd, "code.txt")] != "read" || profile.Network.Enabled || p.Config.Tools.ViewImage == nil || *p.Config.Tools.ViewImage {
+					os.Exit(15)
+				}
+				id := p.Permissions
+				activeReadProfile = id
+				var extends any
+				if mode == "restricted-other" {
+					id = "other"
+				}
+				if mode == "restricted-inherits" {
+					extends = ":read-only"
+				}
+				if mode != "restricted-missing" {
+					response["activePermissionProfile"] = map[string]any{"id": id, "extends": extends}
+				}
+				response["sandbox"] = map[string]any{"type": "readOnly", "networkAccess": mode == "restricted-network"}
+			}
+			send(map[string]any{"id": m.ID, "result": response})
 		case "turn/start":
+			if strings.HasPrefix(mode, "restricted-") {
+				os.Exit(16)
+			}
 			if strings.HasPrefix(mode, "quota-") || mode == "wrong-model" || mode == "wrong-provider" || mode == "fast-tier" {
 				os.Exit(8)
 			}
 			var p struct {
-				ThreadID string `json:"threadId"`
-				Approval string `json:"approvalPolicy"`
-				Tier     string `json:"serviceTier"`
-				Sandbox  struct {
+				ThreadID    string `json:"threadId"`
+				Approval    string `json:"approvalPolicy"`
+				Tier        string `json:"serviceTier"`
+				Permissions string `json:"permissions"`
+				Sandbox     struct {
 					Type          string   `json:"type"`
 					Network       bool     `json:"networkAccess"`
 					WritableRoots []string `json:"writableRoots"`
@@ -600,7 +646,7 @@ func fakeAppServer(mode string) {
 				role = "repair"
 			}
 			if role == "review" {
-				if p.Approval != "on-request" || p.Sandbox.Type != "readOnly" {
+				if p.Approval != "on-request" || (mode == "restricted" && (p.Permissions != activeReadProfile || p.Permissions == "" || p.Sandbox.Type != "")) || (mode != "restricted" && (p.Permissions != "" || p.Sandbox.Type != "readOnly")) {
 					os.Exit(5)
 				}
 			} else {

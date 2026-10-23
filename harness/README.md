@@ -240,6 +240,14 @@ The presence of ChatGPT authentication alone is not taken as proof of access to 
 
 The live adapter implements stdio initialize → initialized → account/read → allowance check → thread/start → turn/start.
 New reviews are read-only; implementation and repair use workspace-write, with `networkAccess=false` required for child tools.
+For Codex reviews, optional `review.readPaths` restricts command reads to explicitly supplied canonical absolute files/directories plus the CLI's minimal runtime.
+Directories grant all descendants, including ignored files; avoid broad workspace/build/data roots and list the required source, instruction and diagnostic paths.
+Up to 128 paths and 32 KiB of combined path text are supported.
+The adapter opts into the experimental named-permissions API, disables image loading, and uses the same read-only, network-disabled profile at thread and turn start.
+An unconfirmed profile or inherited profile-name collision stops before a model turn, without falling back to the broad legacy policy.
+The confirmed profile ID is recorded in model metadata. Tasks omitting `readPaths` retain the existing policy.
+An explicit empty list is refused so it cannot silently select the legacy policy.
+This does not freeze ignored-file contents: use existing protected files/artifact manifests for that. It is not a token/cost cap or model-quality result.
 Connecting to the model service itself still uses the network.
 A structured JSON schema is specified, and only a completed turn and its corresponding final output are accepted.
 The saved-output `logLimitBytes` is separate from the limit on transient communication volume.
@@ -270,7 +278,8 @@ Known token formats are redacted in logs, but arbitrary secrets are not guarante
 Do not configure commands that could read secrets.
 
 Codex itself is on the trusted side and holds authentication.
-CLI 0.148.0's read-only mode does not guarantee isolation from reading confidential files.
+The legacy read-only policy without `review.readPaths` does not restrict confidential-file reads.
+The opt-in profile constrains commands within the sandbox; Codex itself remains trusted and must handle authentication.
 For production development, use a dedicated user / isolated environment without secrets and a dedicated Codex configuration.
 The live smoke test uses a temporary Git workspace without secrets; only the trusted CLI handles authentication.
 Provide an Xcode runner separately on the macOS side and keep signing / publication credentials away from validation agents.

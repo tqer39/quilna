@@ -51,6 +51,7 @@ func validCodex(c *CodexConfig) bool {
 }
 
 type Reviewer struct {
+	ReadPaths      []string     `json:"readPaths,omitempty"`
 	Kind           string       `json:"kind"`
 	Command        []string     `json:"command,omitempty"`
 	Codex          *CodexConfig `json:"codex,omitempty"`
@@ -222,6 +223,9 @@ func (t Task) validate() error {
 		return errors.New("repair-required")
 	}
 	r := t.Review
+	if err := validateReviewReadPaths(r); err != nil {
+		return err
+	}
 	if r.TimeoutSeconds < 1 || r.TimeoutSeconds > t.TimeoutSeconds {
 		return errors.New("review-timeout-invalid")
 	}
