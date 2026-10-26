@@ -28,6 +28,7 @@ import { ArticleSearch } from "./article-search";
 import { articlePage } from "./article-page";
 import { ArticleListView } from "./article-list-view";
 import { ArticleHighlightView } from "./article-highlight-view";
+import { ArticleConnectionView } from "./article-connection-view";
 import {
   fetchArticle,
   browserTranslator,
@@ -320,6 +321,18 @@ export async function feedReader(root: HTMLElement) {
     "rss-lede",
   );
   const highlights = new ArticleHighlightView();
+  let relationLibraryRevision = 0;
+  const connections = new ArticleConnectionView(
+    () => articles,
+    (id) => {
+      const position = articlePositions.get(id);
+      return position === undefined ? undefined : articles[position];
+    },
+    (id) => {
+      const position = articlePositions.get(id);
+      if (position !== undefined) openArticle(articles[position]);
+    },
+  );
   const listView = new ArticleListView({
     open: (id) => {
       const position = articlePositions.get(id);
@@ -722,6 +735,7 @@ export async function feedReader(root: HTMLElement) {
       articles[index] = article;
       countArticleMetadata(article, 1);
       searchIndex.update(article);
+      relationLibraryRevision++;
       return;
     }
     searchIndex.invalidate();
@@ -740,6 +754,7 @@ export async function feedReader(root: HTMLElement) {
     articlePositions = new Map(
       articles.map((article, index) => [article.id, index]),
     );
+    relationLibraryRevision++;
     tagCounts.clear();
     articleCounts.clear();
     for (const article of articles) countArticleMetadata(article, 1);
@@ -1826,6 +1841,7 @@ export async function feedReader(root: HTMLElement) {
         shortcuts.append(
           jumpToBody,
           readingJump("ハイライト・メモ", "rss-highlights"),
+          readingJump("情報のつながり", "rss-connections"),
           jumpToTools,
         );
         articleNode.append(shortcuts);
@@ -2041,9 +2057,15 @@ export async function feedReader(root: HTMLElement) {
           },
           sourceText,
         );
-        articleNode.append(body, panel, tagsPanel);
+        articleNode.append(
+          body,
+          panel,
+          connections.mount(article, relationLibraryRevision),
+          tagsPanel,
+        );
       } else {
         highlights.detach();
+        connections.detach();
         appendArticleText(sourceText, text, article.content?.codeRanges);
         articleNode.append(body, tagsPanel);
       }
@@ -2051,6 +2073,7 @@ export async function feedReader(root: HTMLElement) {
       main.append(articleNode);
     } else {
       highlights.detach();
+      connections.detach();
       main.classList.remove("rss-reading");
       listHeading.textContent =
         filter === "saved"

@@ -517,3 +517,52 @@
   z-index: 20;
   box-shadow: 0 4px 20px #0003;
 }
+
+.rss-connections {
+  margin-block: 2rem;
+  padding: 1.25rem;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+}
+.rss-connections summary {
+  cursor: pointer;
+  padding-block: 0.75rem;
+  font-weight: 700;
+}
+.rss-connections ul {
+  list-style: none;
+  padding: 0;
+}
+.rss-connections li {
+  padding: 1rem;
+  margin-block: 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  overflow-wrap: anywhere;
+}
+.rss-connections h4 {
+  margin-block: 0 0.5rem;
+}
+.rss-connections button,
+.rss-connections a {
+  margin: 0.25rem 0.5rem 0.25rem 0;
+}
+.rss-connections input,
+.rss-connections textarea {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  padding: 0.75rem;
+  margin-block: 0.5rem;
+  border: 1px solid currentColor;
+  border-radius: 0.5rem;
+}
+.rss-connection-reason {
+  white-space: pre-wrap;
+}
+:root[data-reader-design] :is(.rss-connections, .rss-highlights) a {
+  color: var(--viewer-accent);
+}
