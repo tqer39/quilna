@@ -2,6 +2,38 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { ArticleSpeech } from "../src/article-speech";
 
 afterEach(() => vi.unstubAllGlobals());
+it("keeps regional choices separate and only inherits a matching legacy voice", () => {
+  const voices = [
+    {
+      name: "Samantha",
+      voiceURI: "us",
+      lang: "en-US",
+      localService: true,
+      default: true,
+    },
+    {
+      name: "Daniel",
+      voiceURI: "gb",
+      lang: "en-GB",
+      localService: true,
+      default: false,
+    },
+  ];
+  vi.stubGlobal("speechSynthesis", {
+    getVoices: () => voices,
+    cancel: vi.fn(),
+  });
+  vi.stubGlobal("SpeechSynthesisUtterance", class {});
+  localStorage.setItem("quilna.reader.voices.v1", JSON.stringify({ en: "us" }));
+  const speech = new ArticleSpeech(() => {});
+  expect(speech.selectedVoice("en-US")).toBe(voices[0]);
+  expect(speech.selectedVoice("en-GB")).toBe(voices[1]);
+  speech.selectVoice("en-GB", "us");
+  expect(new ArticleSpeech(() => {}).selectedVoice("en-GB")).toBe(voices[0]);
+  voices.shift();
+  expect(new ArticleSpeech(() => {}).selectedVoice("en-GB")).toBeUndefined();
+  expect(new ArticleSpeech(() => {}).selectedVoice("en-US")).toBeUndefined();
+});
 beforeEach(() => {
   const values = new Map<string, string>();
   vi.stubGlobal("localStorage", {

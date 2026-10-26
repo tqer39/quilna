@@ -18,7 +18,7 @@ export class ArticleSpeech {
       if (stored && typeof stored === "object" && !Array.isArray(stored)) {
         for (const [language, key] of Object.entries(stored)) {
           if (
-            /^[a-z]{2,3}$/.test(language) &&
+            /^[a-z]{2,3}(?:-[a-z0-9]{2,8})*$/.test(language) &&
             typeof key === "string" &&
             key.length <= 1000
           )
@@ -43,11 +43,24 @@ export class ArticleSpeech {
   }
   selectedVoice(language: string): SpeechSynthesisVoice | undefined {
     const voices = this.voices(language);
-    const saved = this.preferences[language.split("-")[0]];
+    const locale = language.toLowerCase();
+    const saved = this.preferences[locale];
     if (saved) return voices.find((voice) => voiceKey(voice) === saved);
+    const legacy = this.preferences[locale.split("-")[0]];
+    if (legacy && !voices.some((voice) => voiceKey(voice) === legacy))
+      return undefined;
+    const inherited = voices.find(
+      (voice) =>
+        voiceKey(voice) === legacy && voice.lang.toLowerCase() === locale,
+    );
+    if (inherited) return inherited;
+    const regional = voices.filter(
+      (voice) => voice.lang.toLowerCase() === locale,
+    );
+    const preferred = regional.length ? regional : voices;
     return (
-      voices.find((voice) => voice.default) ||
-      (voices.length === 1 ? voices[0] : undefined)
+      preferred.find((voice) => voice.default) ||
+      (preferred.length === 1 ? preferred[0] : undefined)
     );
   }
   voiceNotice(language: string): string {
@@ -57,12 +70,12 @@ export class ArticleSpeech {
     if (!this.selectedVoice(language))
       return "読み上げ音声を選択してください。音声が不明瞭な場合は別の音声を試せます。";
     if (this.preferenceNotice) return this.preferenceNotice;
-    return "選んだ端末内音声で読み上げます。音声の選択は言語ごとにこのブラウザへ保存します。";
+    return "選んだ端末内音声で読み上げます。音声の選択は言語・地域ごとにこのブラウザへ保存します。";
   }
   selectVoice(language: string, key: string) {
     if (!this.voices(language).some((voice) => voiceKey(voice) === key)) return;
     this.stop(false);
-    this.preferences[language.split("-")[0]] = key;
+    this.preferences[language.toLowerCase()] = key;
     this.preferenceNotice = "";
     try {
       localStorage.setItem(

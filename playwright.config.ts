@@ -4,7 +4,11 @@ export default defineConfig({
   workers: 2,
   outputDir: "test-results/chromium",
   reporter: [["list"], ["json", { outputFile: "test-results/browser.json" }]],
-  use: { baseURL: "http://127.0.0.1:5197", trace: "retain-on-failure" },
+  use: {
+    baseURL: "http://127.0.0.1:5197",
+    locale: "ja-JP",
+    trace: "retain-on-failure",
+  },
   webServer: {
     command: "npm run dev -- --port 5197 --strictPort",
     url: "http://127.0.0.1:5197",

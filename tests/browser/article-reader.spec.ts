@@ -866,7 +866,7 @@ test("automatic translation saves the target preference and reuses a matching sa
     "Final paragraph.",
   );
   await page.getByRole("button", { name: "設定", exact: true }).click();
-  await page.getByLabel("翻訳先の言語", { exact: true }).selectOption("fr");
+  await page.getByLabel("ロケール（翻訳・読み上げ）", { exact: true }).selectOption("fr");
   await page.getByLabel("記事を開いたら自動翻訳").check();
   await page.getByRole("button", { name: "閉じる", exact: true }).click();
   await expect(page.locator(".rss-article-body")).toContainText(
@@ -888,10 +888,10 @@ test("automatic translation saves the target preference and reuses a matching sa
     "Final paragraph.",
   );
   await page.getByRole("button", { name: "設定", exact: true }).click();
-  await expect(page.getByLabel("翻訳先の言語", { exact: true })).toHaveValue(
+  await expect(page.getByLabel("ロケール（翻訳・読み上げ）", { exact: true })).toHaveValue(
     "fr",
   );
-  await page.getByLabel("翻訳先の言語", { exact: true }).selectOption("en");
+  await page.getByLabel("ロケール（翻訳・読み上げ）", { exact: true }).selectOption("en");
   await page.getByRole("button", { name: "閉じる", exact: true }).click();
   await expect(page.locator(".rss-article-body")).toContainText(
     "Final paragraph.",
@@ -1103,7 +1103,7 @@ test("browser target follows the local language and reacts to a language change 
   );
   await page.getByRole("button", { name: "設定", exact: true }).click();
   await page
-    .getByLabel("翻訳先の言語", { exact: true })
+    .getByLabel("ロケール（翻訳・読み上げ）", { exact: true })
     .selectOption("browser");
   await page.getByLabel("記事を開いたら自動翻訳").check();
   await page.getByRole("button", { name: "閉じる", exact: true }).click();

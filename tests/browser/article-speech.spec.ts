@@ -145,3 +145,47 @@ test("voices arriving after page load update the selector without a reload", asy
     ),
   ).toEqual(["natural"]);
 });
+
+test.describe("browser locale defaults", () => {
+  test.use({ locale: "en-US" });
+  test("defaults to the user's locale and persists a regional override while cancelling speech", async ({
+    page,
+  }) => {
+    await setup(page);
+    const voice = page.getByLabel("読み上げ音声", { exact: true });
+    await expect(voice).toHaveValue("novelty"); // The sole en-US voice, despite an en-GB default.
+    await expect(
+      page.getByRole("button", { name: "英語に翻訳", exact: true }),
+    ).toBeDisabled();
+    await page
+      .getByRole("button", { name: "表示中の本文を読み上げ", exact: true })
+      .click();
+    await page.getByRole("button", { name: "設定", exact: true }).click();
+    const locale = page.getByLabel("ロケール（翻訳・読み上げ）", {
+      exact: true,
+    });
+    await expect(locale).toHaveValue("browser");
+    await locale.selectOption("en-GB");
+    await page.getByRole("button", { name: "閉じる", exact: true }).click();
+    await expect(voice).toHaveValue("natural");
+    await expect(
+      page.getByRole("button", { name: "読み上げを停止", exact: true }),
+    ).toHaveCount(0);
+    await page.reload();
+    await page
+      .getByRole("button", { name: "Speech article", exact: true })
+      .click();
+    await expect(voice).toHaveValue("natural");
+    await page.getByRole("button", { name: "設定", exact: true }).click();
+    await expect(locale).toHaveValue("en-GB");
+    await locale.selectOption("ja-JP");
+    await page.getByRole("button", { name: "閉じる", exact: true }).click();
+    await page
+      .getByRole("button", { name: "日本語に翻訳", exact: true })
+      .click();
+    await expect(
+      page.getByText("日本語訳（機械翻訳）", { exact: true }),
+    ).toBeVisible();
+    await expect(voice).toHaveValue("ja");
+  });
+});

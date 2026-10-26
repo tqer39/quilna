@@ -15,6 +15,9 @@ import {
 import {
   articleLanguage,
   browserTargetLanguage,
+  browserLocale,
+  readerLocales,
+  speechLocaleFor,
   targetLanguageFor,
   languageName,
   readerLanguages,
@@ -153,19 +156,19 @@ export async function feedReader(root: HTMLElement) {
     ),
     button("閉じる", () => settings.close()),
   );
-  const targetLabel = el("label", "翻訳先の言語");
+  const targetLabel = el("label", "ロケール（翻訳・読み上げ）");
   targetLabel.htmlFor = "rss-target-language";
   const targetLanguage = el("select");
   targetLanguage.id = targetLabel.htmlFor;
   const browserLanguageOption = el(
     "option",
     browserTargetLanguage()
-      ? `ブラウザに合わせる（${languageName(browserTargetLanguage())}）`
+      ? `ブラウザに合わせる（${browserLocale()}）`
       : "ブラウザに合わせる（対象外の言語）",
   );
   browserLanguageOption.value = "browser";
   targetLanguage.append(browserLanguageOption);
-  for (const [code, name] of readerLanguages) {
+  for (const [code, name] of [...readerLocales, ...readerLanguages]) {
     const option = el("option", name);
     option.value = code;
     targetLanguage.append(option);
@@ -181,7 +184,7 @@ export async function feedReader(root: HTMLElement) {
   const preferenceNotice = el(
     "p",
     browserTranslator()
-      ? "翻訳先の既定は日本語です。自動翻訳は最初はオフです。設定はこのブラウザに保存します。"
+      ? "既定はブラウザの言語・地域です。選んだ言語へ翻訳し、表示中の本文の言語に合う端末内音声で読み上げます。自動翻訳は最初はオフです。設定はこのブラウザに保存します。"
       : "このブラウザは端末内翻訳に対応していません。外部サービスには送信していません。",
     "muted",
   );
@@ -194,7 +197,7 @@ export async function feedReader(root: HTMLElement) {
     };
     try {
       localStorage.setItem(readerPreferencesKey, JSON.stringify(preferences));
-      preferenceNotice.textContent = "翻訳設定を保存しました。";
+      preferenceNotice.textContent = "ロケールと翻訳設定を保存しました。";
     } catch {
       preferenceNotice.textContent =
         "設定を保存できませんでした。今回は適用しますが、次回は設定し直してください。";
@@ -210,9 +213,14 @@ export async function feedReader(root: HTMLElement) {
     "rss-translation-settings",
   );
   translationSettings.append(
-    el("h3", "翻訳"),
+    el("h3", "言語・地域と読み上げ"),
     targetLabel,
     targetLanguage,
+    el(
+      "p",
+      "翻訳は選んだ言語で行い、地域は読み上げ音声の選択に使います。原文を表示している場合は原文の言語で読み上げます。",
+      "muted",
+    ),
     autoTranslation,
     autoLabel,
     preferenceNotice,
@@ -220,7 +228,7 @@ export async function feedReader(root: HTMLElement) {
   settings.insertBefore(translationSettings, settings.children[1]);
   window.addEventListener("languagechange", () => {
     browserLanguageOption.textContent = browserTargetLanguage()
-      ? `ブラウザに合わせる（${languageName(browserTargetLanguage())}）`
+      ? `ブラウザに合わせる（${browserLocale()}）`
       : "ブラウザに合わせる（対象外の言語）";
     if (preferences.targetLanguage !== "browser") return;
     cancelReading();
@@ -1860,9 +1868,12 @@ export async function feedReader(root: HTMLElement) {
           status.setAttribute("role", "status");
           tools.append(status);
         }
-        const spokenLanguage = displayTranslation
-          ? displayTranslation.targetLanguage
-          : originalLanguage;
+        const spokenLanguage = speechLocaleFor(
+          preferences,
+          displayTranslation
+            ? displayTranslation.targetLanguage
+            : originalLanguage,
+        );
         const voiceLabel = el("label", "読み上げ音声");
         voiceLabel.htmlFor = "rss-speech-voice";
         const voices = el("select");
