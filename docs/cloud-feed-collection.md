@@ -77,7 +77,11 @@ Real owner login, rejection of another real account, authenticated edge acquisit
 PR #66 was merged after owner approval, and the main-branch [initial authentication sync](https://github.com/tqer39/quilna/actions/runs/40355960337) succeeded.
 The exact Google callback URI was saved after approval. A real owner login reached the reader, which fetched 20 articles from Zenn and accepted a 15-minute cloud collection schedule.
 With the reader page unloaded until 01:35 JST, reopening it showed the next cloud fetch at 01:50 with no fetch error. The browser's imported-copy timestamp remained 01:20, consistent with unchanged responses not creating another snapshot.
-This establishes schedule progression, but the deployed UI did not expose the cloud's last successful fetch timestamp directly. The added timestamp display still needs deployment and live verification; physical PC shutdown, long-running collection and rejection of another real Google account have not been verified.
+At that checkpoint the deployed UI did not expose the cloud's last successful fetch timestamp directly.
+The timestamp display was subsequently published from `1e37648b279bb08909cb3c162691cd27f124be96` as Worker version `40912471-d0cc-4140-b8df-2af36854036b`, with 100% traffic. Both source-commit CI workflows succeeded.
+Post-deployment metadata confirmed unchanged bindings (including the three authentication secrets), runtime flags and asset routing; the Dashboard still showed Workers Free. The authenticated reader displayed the last cloud success separately from the browser's imported-copy timestamp.
+With the reader unloaded, cloud success advanced from 01:50:16.857 to 02:05:17.052 JST, before the page was reopened at 02:05:29.891. The browser's imported-copy timestamp stayed at 01:50 and the next cloud fetch became 02:20. This directly confirms a successful cloud fetch without the reader page running, including the unchanged-response case.
+Physical PC shutdown, long-running collection and rejection of another real Google account have not been verified.
 Authentication setup is now managed through the [1Password sync workflow](onepassword-cloud-auth.md), rather than manual secret entry in the dashboard. The dated 2026-10-24 record above describes the earlier state.
 
 ## Activation and validation
