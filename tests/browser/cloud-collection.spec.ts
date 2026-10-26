@@ -65,6 +65,60 @@ async function seed(page: Page, feedAddress = address) {
     { address: feedAddress, time },
   );
 }
+test("cloud success time advances without a new snapshot and survives a later fetch failure", async ({
+  page,
+}) => {
+  const state = initial();
+  state.interval = 15;
+  state.feeds = [
+    { url: address, nextAt: time, lastSuccess: null, failures: 0, error: "" },
+  ];
+  await page.route("**/api/collection", (route) =>
+    route.fulfill({ json: state }),
+  );
+  await seed(page);
+  await page.reload();
+  const source = page.locator(".rss-feed-state");
+  await expect(source).toContainText("クラウドの取得はまだ成功していません");
+  const localTime = await source
+    .getByText(/^ブラウザ内の最終取得 /)
+    .textContent();
+  await page.getByRole("button", { name: "設定", exact: true }).click();
+  state.feeds[0].lastSuccess = time + 15 * 60_000;
+  state.feeds[0].nextAt = time + 30 * 60_000;
+  await page
+    .getByRole("button", {
+      name: "クラウドの状態確認・記事を取り込む",
+      exact: true,
+    })
+    .click();
+  await page.getByRole("button", { name: "閉じる", exact: true }).click();
+  const success = source.locator("time");
+  await expect(success).toHaveAttribute(
+    "datetime",
+    new Date(time + 15 * 60_000).toISOString(),
+  );
+  await expect(source).toContainText(localTime!);
+  await expect(
+    page.getByRole("button", { name: "Newer local article", exact: true }),
+  ).toBeVisible();
+
+  state.feeds[0].error = "feed-fetch-failed";
+  state.feeds[0].failures = 1;
+  await page.getByRole("button", { name: "設定", exact: true }).click();
+  await page
+    .getByRole("button", {
+      name: "クラウドの状態確認・記事を取り込む",
+      exact: true,
+    })
+    .click();
+  await page.getByRole("button", { name: "閉じる", exact: true }).click();
+  await expect(source).toContainText("クラウドで取得できませんでした");
+  await expect(success).toHaveAttribute(
+    "datetime",
+    new Date(time + 15 * 60_000).toISOString(),
+  );
+});
 test("cloud results import after reopening, preserve newer local content and tolerate a lost acknowledgement", async ({
   page,
 }) => {

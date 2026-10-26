@@ -1492,13 +1492,25 @@ export async function feedReader(root: HTMLElement) {
       const line = el("div", undefined, "rss-feed-state");
       line.append(
         el("strong", feed.title),
-        el("span", `最終取得 ${date(feed.fetchedAt)}`, "muted"),
+        el("span", `ブラウザ内の最終取得 ${date(feed.fetchedAt)}`, "muted"),
       );
       const remoteFeed =
         cloudState?.available && cloudState.interval
           ? cloudState.feeds.find((item) => item.url === feed.url)
           : undefined;
       if (cloudState?.available && cloudState.interval) {
+        if (remoteFeed) {
+          const lastSuccess = el("span", "クラウド最終取得 ", "muted");
+          if (remoteFeed.lastSuccess !== null) {
+            const iso = new Date(remoteFeed.lastSuccess).toISOString();
+            const timestamp = el("time", date(iso));
+            timestamp.dateTime = iso;
+            lastSuccess.append(timestamp);
+          } else {
+            lastSuccess.textContent = "クラウドの取得はまだ成功していません。";
+          }
+          line.append(lastSuccess);
+        }
         line.append(
           el(
             "span",

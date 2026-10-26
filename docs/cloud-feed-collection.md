@@ -6,7 +6,7 @@
 
 On 2026-10-24 the owner required collection while the PC sleeps or is powered off, not only while a browser page is open (Issue #61).
 The implementation uses the existing authenticated Cloudflare Worker and one account's `AccountVault` Durable Object.
-It is disabled in the default local configuration. A dedicated owner-only Worker was published after approval on 2026-10-24, but Google authentication is still unconfigured and no account has started a collection schedule.
+It is disabled in the default local configuration. A dedicated owner-only Worker was published after approval on 2026-10-24. On 2026-10-27 JST, owner Google login succeeded and a 15-minute collection schedule was started for one public feed.
 The local alarm tests and published setup screen do not establish a continuously running collection service. No billing change or real provider key was performed.
 
 In **設定 → PCを閉じている間の収集**, explicitly start/update cloud subscriptions at 15, 30 or 60 minutes.
@@ -14,6 +14,8 @@ The operation unions this browser's subscriptions with the existing cloud subscr
 Adding another local subscription requires **設定を更新**; it does not silently upload the new subscription.
 **クラウド収集を停止** preserves pending results. Logging out does not stop an already configured collection job.
 Unavailable authentication, an unconfigured runtime, conflicting settings, fetch failures and full storage are reported instead of claiming successful collection.
+Each registered source shows its last successful cloud fetch separately from the browser's last imported copy and the next scheduled fetch.
+A source with no successful cloud fetch says so explicitly. An unchanged RSS response advances the cloud success time without creating a new snapshot; a later failure retains the previous success time alongside the retry warning.
 
 Cloud requests support public HTTPS publisher domains, rather than a fixed list of three hosts. The authenticated `/api/feeds/fetch` route uses the same policy for RSS discovery and article HTML, bounded to 20 requests per account per minute.
 URL credentials, nonstandard ports, literal/alternative IP forms, local/reserved names and the application's own hostname are rejected. Redirects are validated again and URL fragments are removed.
@@ -70,6 +72,14 @@ The deployed version confirmed `PRIVATE_DEV=true`, `global_fetch_strictly_public
 No authentication secrets or Google client ID were configured. The selected owner's email is configured privately, without including it in this record.
 Real owner login, rejection of another real account, authenticated edge acquisition and PC-off collection remain unverified. The owner must enter authentication secrets directly; do not send them through chat.
 
+## Authentication and collection check — 2026-10-27 JST
+
+PR #66 was merged after owner approval, and the main-branch [initial authentication sync](https://github.com/tqer39/quilna/actions/runs/40355960337) succeeded.
+The exact Google callback URI was saved after approval. A real owner login reached the reader, which fetched 20 articles from Zenn and accepted a 15-minute cloud collection schedule.
+With the reader page unloaded until 01:35 JST, reopening it showed the next cloud fetch at 01:50 with no fetch error. The browser's imported-copy timestamp remained 01:20, consistent with unchanged responses not creating another snapshot.
+This establishes schedule progression, but the deployed UI did not expose the cloud's last successful fetch timestamp directly. The added timestamp display still needs deployment and live verification; physical PC shutdown, long-running collection and rejection of another real Google account have not been verified.
+Authentication setup is now managed through the [1Password sync workflow](onepassword-cloud-auth.md), rather than manual secret entry in the dashboard. The dated 2026-10-24 record above describes the earlier state.
+
 ## Activation and validation
 
 On 2026-10-24 the owner selected a **new owner-only Cloudflare environment**.
@@ -81,7 +91,7 @@ Keep `PRIVATE_DEV="true"`, `assets.run_worker_first=true` and `preview_urls=fals
 Keep `compatibility_flags=["global_fetch_strictly_public"]`; never enable `global_fetch_private_origin`. `security:check` and `workers:build` reject missing/conflicting routing flags in the tracked configs and any existing ignored owner configs, including environment overrides.
 These checks also reject owner-only configs that bypass the Worker for static assets or enable preview URLs. Verify the deployed flag/asset settings after publication; local validation does not inspect a later Dashboard edit.
 Set the Google Web client's exact redirect URI to `APP_ORIGIN + /api/auth/callback/google`.
-Enter `GOOGLE_CLIENT_SECRET` and `BETTER_AUTH_SECRET` directly in the target Worker's secret settings; configure `GOOGLE_CLIENT_ID` as a variable and retain it in the ignored config for subsequent deployments.
+Use the [1Password sync workflow](onepassword-cloud-auth.md) to set `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET` and `BETTER_AUTH_SECRET` as secrets on the approved Worker. Preserve these bindings on subsequent deployments.
 RSS collection does not require a BYOK encryption keyring or an LLM provider key. Real-key entry and live AI sending remain disabled.
 See [owner-only authentication](owner-only-setup.md) for verified-email enforcement and the auth migrations.
 
@@ -120,4 +130,4 @@ Core tests cover failed writes, duplicate alarm delivery, in-flight pause, durab
 Browser tests cover importing after reopen, lost acknowledgement, newer local content, failed local saves, start/stop, stale revisions and an unavailable service.
 Recovery regressions cover a malformed result before healthy articles, five failed results before another batch, concurrent removal, explicit retry, cancelled/failed/successful discard, and interval selection across reload/status checks.
 Public-domain tests use synthetic responses from an unlisted publisher and another-domain redirect, including discovery HTML. They verify URL/redirect refusal, credential non-forwarding, the collection API/alarm and configuration gates; Miniflare fixtures do not prove Cloudflare edge routing or live publisher acceptance.
-Live cloud activation and edge routing checks, long-running operation, complete backup/multi-device sync and owner usability acceptance remain outstanding.
+Broader live edge routing checks, long-running operation, complete backup/multi-device sync and owner usability acceptance remain outstanding.
