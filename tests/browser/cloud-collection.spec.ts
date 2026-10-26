@@ -391,6 +391,11 @@ test("a malformed snapshot stays recoverable without blocking healthy articles; 
     return route.fulfill({ json: state });
   });
   await seed(page);
+  // Finish the seed page's initial check before publishing pending fixtures.
+  // Otherwise its canceled request can be counted across the following reload.
+  await expect(page.locator("#rss-cloud-status")).toContainText(
+    "クラウド収集は停止中。未取り込みの取得結果：0件",
+  );
   state.interval = 30;
   state.pending = [snapshotId, goodId].map((id) => ({
     id,

@@ -116,3 +116,182 @@ test("search input is readable and touch-sized within the article column", async
   await expect(page.locator(".rss-article-list li")).toHaveCount(2);
   await page.screenshot({ path: test.info().outputPath("search-layout.png") });
 });
+
+test("unchanged results stay connected and retain keyboard focus through repeated renders", async ({
+  page,
+}) => {
+  await seed(page, 55);
+  const first = await page
+    .locator(".rss-article-title")
+    .first()
+    .elementHandle();
+  await first!.focus();
+  const preserved = await page.evaluate((first) => {
+    const list = document.querySelector(".rss-article-list")!;
+    const status = document.querySelector("#rss-search-status")!;
+    const input = document.querySelector<HTMLInputElement>("#rss-search")!;
+    let removals = 0;
+    const observer = new MutationObserver(() => {});
+    observer.observe(list.parentElement!, { childList: true, subtree: true });
+    for (let i = 0; i < 20; i++)
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+    for (const mutation of observer.takeRecords())
+      removals += mutation.removedNodes.length;
+    observer.disconnect();
+    return {
+      focused: document.activeElement === first,
+      connected: first!.isConnected,
+      list: document.querySelector(".rss-article-list") === list,
+      status: document.querySelector("#rss-search-status") === status,
+      removals,
+    };
+  }, first);
+  expect(preserved).toEqual({
+    focused: true,
+    connected: true,
+    list: true,
+    status: true,
+    removals: 0,
+  });
+  await page.keyboard.press("Enter");
+  await expect(page.locator("#rss-current-title")).toHaveText("記事 0");
+});
+
+test("reused rows reflect replacements and open the latest saved translation", async ({
+  page,
+}) => {
+  await seed(page, 3);
+  const first = await page
+    .locator(".rss-article-title")
+    .first()
+    .elementHandle();
+  await page.evaluate(async () => {
+    const db = await new Promise<IDBDatabase>((resolve) => {
+      const request = indexedDB.open("tsumiki.rss.v1");
+      request.onsuccess = () => resolve(request.result);
+    });
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction("articles", "readwrite");
+      const store = tx.objectStore("articles");
+      const request = store.get("id-000000");
+      request.onsuccess = () =>
+        store.put({
+          ...request.result,
+          title: "更新後の記事",
+          body: "更新後の本文",
+          read: false,
+          saved: false,
+          manualTags: ["更新タグ"],
+          translation: {
+            text: "最新の保存済み翻訳",
+            sourceText: "更新後の本文",
+            sourceLanguage: "en",
+            targetLanguage: "ja",
+          },
+        });
+      tx.oncomplete = () => {
+        db.close();
+        resolve();
+      };
+      tx.onerror = tx.onabort = () => reject(tx.error);
+    });
+    const channel = new BroadcastChannel("tsumiki.rss.v1");
+    channel.postMessage({ articleId: "id-000000" });
+    channel.close();
+  });
+  const row = page.locator(".rss-article-list li").first();
+  await expect(row).toContainText("更新後の記事");
+  await expect(row).toContainText("更新後の本文");
+  await expect(row).toContainText("更新タグ");
+  await expect(row).toContainText("未読");
+  await expect(row).not.toContainText("保存済み");
+  expect(await first!.evaluate((node) => node.isConnected)).toBe(true);
+  await page.getByRole("button", { name: "更新後の記事", exact: true }).click();
+  await page
+    .getByRole("button", { name: "日本語訳を読む", exact: true })
+    .click();
+  await expect(page.locator(".rss-article-body")).toContainText(
+    "最新の保存済み翻訳",
+  );
+  await page.getByRole("button", { name: "← 記事一覧へ", exact: true }).click();
+  await page.getByLabel("保存領域の記事を検索").fill("no-matching-result");
+  await expect(page.locator(".rss-article-list li")).toHaveCount(0);
+  expect(await first!.evaluate((node) => node.isConnected)).toBe(false);
+  await page.getByLabel("保存領域の記事を検索").fill("最新の保存済み翻訳");
+  await expect(page.locator(".rss-article-title")).toHaveText("更新後の記事");
+});
+
+test("background control removal, reordering and deletion preserve focus on surviving rows", async ({
+  page,
+}) => {
+  await seed(page, 2);
+  const first = await page
+    .getByRole("button", { name: "記事 0", exact: true })
+    .elementHandle();
+  const second = await page
+    .getByRole("button", { name: "記事 1", exact: true })
+    .elementHandle();
+  await second!.focus();
+  const change = async (action: "classify" | "reorder" | "delete") => {
+    await page.evaluate(async (action) => {
+      const db = await new Promise<IDBDatabase>((resolve) => {
+        const request = indexedDB.open("tsumiki.rss.v1");
+        request.onsuccess = () => resolve(request.result);
+      });
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction("articles", "readwrite");
+        const store = tx.objectStore("articles");
+        if (action === "delete") store.delete("id-000001");
+        else
+          for (const id of action === "classify"
+            ? ["id-000000", "id-000001"]
+            : ["id-000001"]) {
+            const get = store.get(id);
+            get.onsuccess = () =>
+              store.put({
+                ...get.result,
+                ...(action === "classify"
+                  ? {
+                      tags: {
+                        version: 1,
+                        state: "unclassified",
+                        suggestions: [],
+                      },
+                    }
+                  : { published: "2026-10-25T00:00:00Z" }),
+              });
+          }
+        tx.oncomplete = () => {
+          db.close();
+          resolve();
+        };
+        tx.onerror = tx.onabort = () => reject(tx.error);
+      });
+      const channel = new BroadcastChannel("tsumiki.rss.v1");
+      channel.postMessage("changed");
+      channel.close();
+    }, action);
+  };
+  await change("classify");
+  await expect(
+    page.getByRole("button", { name: /未処理.*件のタグを判定/ }),
+  ).toHaveCount(0);
+  expect(
+    await second!.evaluate((node) => document.activeElement === node),
+  ).toBe(true);
+  await change("reorder");
+  await expect(page.locator(".rss-article-title").first()).toHaveText("記事 1");
+  expect(
+    await second!.evaluate((node) => document.activeElement === node),
+  ).toBe(true);
+  await first!.focus();
+  await change("delete");
+  await expect(page.locator("#rss-search-status")).toHaveText(
+    "1件 · 1–1件を表示",
+  );
+  await expect(page.locator(".rss-article-title")).toHaveText("記事 0");
+  expect(await first!.evaluate((node) => document.activeElement === node)).toBe(
+    true,
+  );
+  expect(await second!.evaluate((node) => node.isConnected)).toBe(false);
+});

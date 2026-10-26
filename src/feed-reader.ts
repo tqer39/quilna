@@ -26,6 +26,7 @@ import {
 } from "./reader-preferences";
 import { ArticleSearch } from "./article-search";
 import { articlePage } from "./article-page";
+import { ArticleListView } from "./article-list-view";
 import {
   fetchArticle,
   browserTranslator,
@@ -317,7 +318,27 @@ export async function feedReader(root: HTMLElement) {
     "気になる情報を集めて、読む。学びたい記事を保存しておきましょう。",
     "rss-lede",
   );
-  const listResults = el("div");
+  const listView = new ArticleListView({
+    open: (id) => {
+      const position = articlePositions.get(id);
+      if (position !== undefined) openArticle(articles[position]);
+    },
+    classify: () => void classifyPending(),
+    cancel: () => tagBatchController?.abort(),
+    retry: () =>
+      void load().catch((error) =>
+        showError((error as Error).message, () => void connect()),
+      ),
+    clear: () => {
+      searchQuery = displayedQuery = "";
+      render();
+    },
+    page: (delta) => {
+      pageNumber += delta;
+      render();
+    },
+  });
+  const listResults = listView.root;
   const searchLabel = el("label", "保存領域の記事を検索");
   searchLabel.htmlFor = "rss-search";
   const searchField = el("input");
@@ -1397,7 +1418,6 @@ export async function feedReader(root: HTMLElement) {
     renderError();
     navigation.replaceChildren();
     if (article || listResults.parentNode !== main) main.replaceChildren();
-    listResults.replaceChildren();
     navigation.append(
       el("p", "COLLECT → READ → LEARN", "eyebrow"),
       el("h2", "情報収集"),
@@ -2049,26 +2069,6 @@ export async function feedReader(root: HTMLElement) {
       }
       for (const option of existingOptions.values()) option.remove();
       if (tagsSelect.value !== tagFilter) tagsSelect.value = tagFilter;
-      if (pendingCount || tagBatchController) {
-        const classify = button(
-          tagBatchController
-            ? "タグを判定中…"
-            : `未処理${pendingCount}件のタグを判定`,
-          () => void classifyPending(),
-        );
-        classify.disabled = !!tagBatchController || !searchIndex.ready;
-        listResults.append(classify);
-        if (tagBatchController)
-          listResults.append(
-            button("タグ判定を中止", () => tagBatchController?.abort()),
-          );
-      }
-      if (tagProgress) {
-        const progress = el("p", tagProgress);
-        progress.id = "rss-tag-progress";
-        progress.setAttribute("role", "status");
-        listResults.append(progress);
-      }
       const query = displayedQuery.trim();
       const key = JSON.stringify([query, source, filter, tagFilter]);
       if (key !== paginationKey) {
@@ -2096,103 +2096,44 @@ export async function feedReader(root: HTMLElement) {
         pageSize,
       });
       pageNumber = result.page;
-      const status = el(
-        "p",
-        searchProblem ||
+      listView.update({
+        items: result.items,
+        metadata: (item) =>
+          `${feeds.find((f) => f.url === item.feedUrl)?.title ?? "取り込んだ記事"} · ${date(item.published)}${item.saved ? " · 保存済み" : ""}${item.read ? " · 既読" : " · 未読"}`,
+        status:
+          searchProblem ||
           (preparing
             ? "検索を準備中です。入力した条件で準備後に検索します。"
             : `${result.count}件 · ${pageNumber * pageSize + (result.count ? 1 : 0)}–${Math.min((pageNumber + 1) * pageSize, result.count)}件を表示`),
-      );
-      status.id = "rss-search-status";
-      status.setAttribute("role", "status");
-      listResults.append(status);
-      if (searchProblem)
-        listResults.append(
-          button(
-            "検索準備を再試行",
-            () =>
-              void load().catch((error) =>
-                showError((error as Error).message, () => void connect()),
-              ),
-          ),
-        );
-      if (query)
-        listResults.append(
-          button("検索を解除", () => {
-            searchQuery = displayedQuery = "";
-            render();
-          }),
-        );
-      const list = el("ul", undefined, "rss-article-list");
-      list.setAttribute("aria-label", "記事一覧");
-      for (const item of result.items) {
-        const row = el("li");
-        row.append(
-          el(
-            "p",
-            `${feeds.find((f) => f.url === item.feedUrl)?.title ?? "取り込んだ記事"} · ${date(item.published)}${item.saved ? " · 保存済み" : ""}${item.read ? " · 既読" : " · 未読"}`,
-            "rss-article-meta",
-          ),
-        );
-        const open = button(
-          item.content?.title || item.title,
-          () => openArticle(item),
-          "rss-article-title",
-        );
-        row.append(
-          open,
-          el(
-            "p",
-            (
-              item.content?.text ||
-              (isLinkOnly(item.body) ? "本文なし・リンク情報のみ" : item.body)
-            ).slice(0, 160),
-            "rss-excerpt",
-          ),
-        );
-        row.append(
-          el(
-            "p",
-            `${tagState(item)}：${effectiveTags(item).join("・") || "タグなし"}`,
-            "rss-tag-summary",
-          ),
-        );
-        list.append(row);
-      }
-      listResults.append(list);
-      if (result.count > pageSize) {
-        const previous = button("前の50件", () => {
-          pageNumber--;
-          render();
-        });
-        previous.disabled = pageNumber === 0;
-        const next = button("次の50件", () => {
-          pageNumber++;
-          render();
-        });
-        next.disabled = (pageNumber + 1) * pageSize >= result.count;
-        listResults.append(previous, next);
-      }
-      if (!result.count)
-        listResults.append(
-          el(
-            "div",
-            query
-              ? preparing
-                ? "検索準備中です。検索を解除すると記事を読めます。"
-                : "一致する記事はありません。語句や絞り込みを変更してください。"
-              : connecting
-                ? "保存した記事を読み込んでいます…"
-                : !feeds.length
-                  ? "気になるサイトを追加すると、ここに記事が届きます。サイトのURLから探すか、公開フィードから試してください。"
-                  : filter === "saved"
-                    ? "まだ保存した記事はありません。記事を開いて「この記事を保存」を押してください。"
-                    : filter === "unread"
-                      ? "未読の記事はありません。"
-                      : "まだ記事がありません。配信元を更新してください。",
-            "rss-empty",
-          ),
-        );
+        classify: tagBatchController
+          ? "タグを判定中…"
+          : pendingCount
+            ? `未処理${pendingCount}件のタグを判定`
+            : "",
+        classifying: !!tagBatchController,
+        classifyDisabled: !!tagBatchController || !searchIndex.ready,
+        progress: tagProgress,
+        retry: !!searchProblem,
+        clear: !!query,
+        pagination: result.count > pageSize,
+        previousDisabled: pageNumber === 0,
+        nextDisabled: (pageNumber + 1) * pageSize >= result.count,
+        empty: result.count
+          ? ""
+          : query
+            ? preparing
+              ? "検索準備中です。検索を解除すると記事を読めます。"
+              : "一致する記事はありません。語句や絞り込みを変更してください。"
+            : connecting
+              ? "保存した記事を読み込んでいます…"
+              : !feeds.length
+                ? "気になるサイトを追加すると、ここに記事が届きます。サイトのURLから探すか、公開フィードから試してください。"
+                : filter === "saved"
+                  ? "まだ保存した記事はありません。記事を開いて「この記事を保存」を押してください。"
+                  : filter === "unread"
+                    ? "未読の記事はありません。"
+                    : "まだ記事がありません。配信元を更新してください。",
+      });
     }
     if (activeId) {
       const restored = document.getElementById(activeId);

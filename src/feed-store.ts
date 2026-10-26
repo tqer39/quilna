@@ -158,11 +158,33 @@ export function readFeedLibrary(
   return new Promise((resolve, reject) => {
     const tx = db.transaction(["feeds", "articles"], "readonly");
     const feeds = tx.objectStore("feeds").getAll();
-    const articles = tx.objectStore("articles").getAll();
+    const store = tx.objectStore("articles");
+    const articles: FeedArticle[] = [];
+    let invalidArticles = false;
+    // Bound each native IDB result as well as JS callback work. One huge
+    // getAll result can leave a large native value array for later cleanup.
+    // Enqueue the next batch synchronously in onsuccess: every batch remains
+    // in this one readonly transaction/snapshot, with no partial publication.
+    const readBatch = (after?: string) => {
+      const request = store.getAll(
+        after === undefined ? null : IDBKeyRange.lowerBound(after, true),
+        500,
+      );
+      request.onsuccess = () => {
+        const batch = request.result as FeedArticle[];
+        if (!batch.every(validArticle)) {
+          invalidArticles = true;
+          tx.abort();
+          return;
+        }
+        articles.push(...batch);
+        if (batch.length === 500) readBatch(batch[batch.length - 1].id);
+      };
+    };
+    readBatch();
     tx.oncomplete = () => {
       const validFeeds = feeds.result.every(validFeed);
-      const validArticles = articles.result.every(validArticle);
-      if (!validFeeds || !validArticles) {
+      if (!validFeeds) {
         reject(
           Error(
             "保存データの形式を確認できませんでした。データは削除していません。",
@@ -170,10 +192,16 @@ export function readFeedLibrary(
         );
         return;
       }
-      resolve({ feeds: feeds.result, articles: articles.result });
+      resolve({ feeds: feeds.result, articles });
     };
     tx.onabort = tx.onerror = () =>
-      reject(Error("保存した記事を読み込めませんでした。"));
+      reject(
+        Error(
+          invalidArticles
+            ? "保存データの形式を確認できませんでした。データは削除していません。"
+            : "保存した記事を読み込めませんでした。",
+        ),
+      );
   });
 }
 export function mergeFeed(
