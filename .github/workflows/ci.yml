@@ -36,7 +36,8 @@ jobs:
           mkdir -p test-results
           git rev-parse HEAD > test-results/source-sha.txt
       - run: npm run test:browser
-      - run: npm run test:search-performance
+      - id: search
+        run: npm run test:search-performance
       - name: Preserve browser validation evidence
         if: ${{ !cancelled() }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
@@ -45,6 +46,18 @@ jobs:
           path: |
             test-results/
             .local-state/search-performance/results/**/measurements.json
+          include-hidden-files: true
+          retention-days: 14
+      - name: Diagnose a failed search gate
+        if: ${{ failure() && steps.search.conclusion == 'failure' }}
+        timeout-minutes: 4
+        run: node scripts/diagnose-search.mjs
+      - name: Preserve search diagnostic traces
+        if: ${{ !cancelled() && steps.search.conclusion == 'failure' }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: search-diagnostics-${{ github.run_id }}-${{ github.run_attempt }}
+          path: .local-state/search-diagnostics/
           include-hidden-files: true
           retention-days: 14
 

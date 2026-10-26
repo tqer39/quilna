@@ -31,6 +31,16 @@ On failure, distinguish a product defect, a test-control defect and a missing pr
 
 The CI web job runs the same maintained functional and search commands after its existing static/unit/build checks. It records the checked-out SHA and uploads the synthetic test results and measurements for 14 days, including failures after validation starts. The upload paths exclude personal databases and general `.local-state` contents. A missing or failed check is not an acceptance, even if an artifact upload succeeds. Native/Go jobs and the required workflow result are not removed by this change.
 
+### Search diagnostics
+
+When a search failure needs timing detail, run `node scripts/diagnose-search.mjs` after preserving the original failure. This creates an instrumented copy of the maintained benchmark under a new `.local-state/search-diagnostics/run-*/` directory; it does not edit the benchmark, application or acceptance results. It uses the same isolated port/profile and runs all 630 dense-tag samples for each design, retaining correctness, writer-progress and 200 ms assertions. It is a diagnostic experiment, not acceptance: tracing adds overhead, and the untagged baseline is not run.
+
+The optional arguments select a design and CPU slowdown, for example `node scripts/diagnose-search.mjs editorial 4`. Allowed designs are `all` (default), `studio`, `editorial`, and `focus`; slowdown is `1` (default), `2`, or `4`. These are local experiments, not claims about equivalent physical devices. Do not run this alongside browser/server tests that own the same ports.
+
+The copy records synchronous input-dispatch time, the remaining paint/correctness time, and a compressed Chromium trace. The manifest records source/dependency/control hashes and the generated copy; completion reports whether source hashes stayed unchanged and every expected trace is complete. Inspect `diagnosticError` and `traceDataLoss` before interpreting a trace. Compressed traces are capped at 128 MiB each; a partial or missing trace is diagnostic failure, never evidence that no pause occurred. Source-adapter drift fails explicitly rather than silently changing the workload. Only synthetic fixtures are profiled; no personal profile, credentials or account data are copied. See [Playwright CDP sessions](https://playwright.dev/docs/api/class-cdpsession).
+
+If the maintained search gate fails in CI, its normal artifact is uploaded first. A separate four-minute diagnostic step then uses the default slowdown of 1, with traces in `search-diagnostics-<run>-<attempt>` retained for 14 days when the job is not cancelled. The original failure remains a failure even if diagnostics pass. The existing job timeout still applies; cancellation can prevent diagnostic upload, while already-uploaded normal evidence remains available.
+
 ## Existing harness integration
 
 Use the existing [Go harness contract](../harness/README.md), not a new loop runner or an automatic-approve reviewer. Keep its frozen task, checks, distinct review execution, bounded repair, no-replay recovery and hash checks.
