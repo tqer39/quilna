@@ -27,6 +27,7 @@ import {
 import { ArticleSearch } from "./article-search";
 import { articlePage } from "./article-page";
 import { ArticleListView } from "./article-list-view";
+import { ArticleHighlightView } from "./article-highlight-view";
 import {
   fetchArticle,
   browserTranslator,
@@ -318,6 +319,7 @@ export async function feedReader(root: HTMLElement) {
     "気になる情報を集めて、読む。学びたい記事を保存しておきましょう。",
     "rss-lede",
   );
+  const highlights = new ArticleHighlightView();
   const listView = new ArticleListView({
     open: (id) => {
       const position = articlePositions.get(id);
@@ -1821,7 +1823,11 @@ export async function feedReader(root: HTMLElement) {
         shortcuts.setAttribute("aria-label", "記事内の移動");
         const jumpToBody = readingJump("本文を読む", "rss-article-body");
         const jumpToTools = readingJump("翻訳・読み上げ", "rss-reading-tools");
-        shortcuts.append(jumpToBody, jumpToTools);
+        shortcuts.append(
+          jumpToBody,
+          readingJump("ハイライト・メモ", "rss-highlights"),
+          jumpToTools,
+        );
         articleNode.append(shortcuts);
         const tools = el("section", undefined, "rss-reader-tools");
         tools.id = "rss-reading-tools";
@@ -2015,17 +2021,36 @@ export async function feedReader(root: HTMLElement) {
             "muted",
           ),
         );
-      appendArticleText(
-        body,
-        text,
-        displayTranslation
-          ? displayTranslation.codeRanges
-          : article.content?.codeRanges,
-      );
-      articleNode.append(body, tagsPanel);
+      const sourceText = el("div", undefined, "rss-source-text");
+      body.append(sourceText);
+      if (hasText) {
+        const panel = highlights.mount(
+          {
+            articleId: article.id,
+            title: article.content?.title || article.title,
+            url: article.content?.url || article.url,
+            text,
+            original: originalText,
+            view: displayTranslation ? "translation" : "original",
+            language: displayTranslation
+              ? displayTranslation.targetLanguage
+              : originalLanguage,
+            ranges: displayTranslation
+              ? displayTranslation.codeRanges
+              : article.content?.codeRanges,
+          },
+          sourceText,
+        );
+        articleNode.append(body, panel, tagsPanel);
+      } else {
+        highlights.detach();
+        appendArticleText(sourceText, text, article.content?.codeRanges);
+        articleNode.append(body, tagsPanel);
+      }
       if (readingTools) articleNode.append(readingTools);
       main.append(articleNode);
     } else {
+      highlights.detach();
       main.classList.remove("rss-reading");
       listHeading.textContent =
         filter === "saved"

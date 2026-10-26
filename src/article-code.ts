@@ -110,7 +110,10 @@ export function appendArticleText(
   parent: HTMLElement,
   text: string,
   ranges: ArticleCodeRange[] = [],
+  renderText: (text: string, start: number) => Node = (value) =>
+    document.createTextNode(value),
 ) {
+  let offset = 0;
   let paragraph: HTMLParagraphElement | undefined;
   const getParagraph = () => {
     if (!paragraph) {
@@ -122,19 +125,21 @@ export function appendArticleText(
   for (const segment of articleSegments(text, ranges)) {
     if (segment.code) {
       const code = document.createElement("code");
-      code.textContent = segment.text;
+      code.append(renderText(segment.text, offset));
       if (segment.code.block) {
         paragraph = undefined;
         const pre = document.createElement("pre");
         pre.append(code);
         parent.append(pre);
       } else getParagraph().append(code);
+      offset += segment.text.length;
       continue;
     }
     for (const piece of segment.text.split(/(\n\s*\n)/)) {
       if (/^\n\s*\n$/.test(piece)) paragraph = undefined;
       else if (piece.trim() || paragraph)
-        getParagraph().append(document.createTextNode(piece));
+        getParagraph().append(renderText(piece, offset));
+      offset += piece.length;
     }
   }
 }

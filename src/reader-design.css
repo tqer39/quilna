@@ -455,3 +455,65 @@
     flex-wrap: wrap;
   }
 }
+
+.rss-highlights {
+  margin-block: 2rem;
+  padding: 1.25rem;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+}
+.rss-highlights textarea,
+.rss-highlights select {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  margin-block: 0.5rem;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+  border: 1px solid currentColor;
+  border-radius: 0.5rem;
+  padding: 0.65rem;
+}
+.rss-highlights button {
+  margin: 0.25rem 0.5rem 0.25rem 0;
+}
+.rss-highlights summary {
+  cursor: pointer;
+  padding-block: 0.75rem;
+  font-weight: 700;
+}
+.rss-highlights ol {
+  padding-inline-start: 1.25rem;
+}
+.rss-highlights li {
+  margin-block: 1.5rem;
+}
+.rss-highlights blockquote {
+  margin: 0.75rem 0;
+  padding-inline-start: 1rem;
+  border-inline-start: 3px solid currentColor;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.rss-highlight-memo {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.rss-source-text mark {
+  background: #f9e4a4;
+  color: #32280d;
+  border-radius: 0.15em;
+}
+.rss-source-text mark:focus {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+.rss-highlight-capture:not(:disabled) {
+  position: fixed;
+  right: max(1rem, env(safe-area-inset-right));
+  bottom: max(1rem, env(safe-area-inset-bottom));
+  max-width: calc(100vw - 2rem);
+  z-index: 20;
+  box-shadow: 0 4px 20px #0003;
+}
