@@ -24,7 +24,7 @@ export function diagnosticSource(source) {
     '      for (const group of ["idle", "held-write", "continuous-write"]) {',
     `      cdp = await context.newCDPSession(page);
       await cdp.send("Emulation.setCPUThrottlingRate", { rate: Number(process.env.QUILNA_DIAGNOSTIC_CPU_RATE) });
-      await cdp.send("Tracing.start", { categories: "devtools.timeline,v8,blink.user_timing,disabled-by-default-v8.gc", transferMode: "ReturnAsStream", streamCompression: "gzip" });
+      await cdp.send("Tracing.start", { categories: "devtools.timeline,v8,blink.user_timing,disabled-by-default-v8.gc,toplevel,cc,viz,renderer.scheduler", transferMode: "ReturnAsStream", streamCompression: "gzip" });
       tracing = true;
       report.diagnosticOnly = true;
       report.cpuSlowdown = Number(process.env.QUILNA_DIAGNOSTIC_CPU_RATE);
@@ -35,6 +35,13 @@ export function diagnosticSource(source) {
     "            const timing = await page.evaluate(",
   );
   replace(
+    "                const start = performance.now();",
+    `                const visibilityStart = document.visibilityState;
+                const focusedStart = document.hasFocus();
+                let firstFrameMs = 0;
+                const start = performance.now();`,
+  );
+  replace(
     "                await new Promise<void>((resolve) =>\n                  requestAnimationFrame",
     `                const rendered = performance.now();
                 performance.measure("quilna-input-dispatch", { start, end: rendered });
@@ -42,10 +49,23 @@ export function diagnosticSource(source) {
                   requestAnimationFrame`,
   );
   replace(
+    `requestAnimationFrame(() =>
+                    requestAnimationFrame(() => resolve()),
+                  ),`,
+    `requestAnimationFrame(() => {
+                    firstFrameMs = performance.now() - start;
+                    performance.mark("quilna-first-frame");
+                    requestAnimationFrame(() => {
+                      performance.mark("quilna-second-frame");
+                      resolve();
+                    });
+                  }),`,
+  );
+  replace(
     "                return performance.now() - start;",
     `                const end = performance.now();
                 performance.measure("quilna-input-to-paint", { start, end });
-                return { ms: end - start, dispatchMs: rendered - start, paintWaitMs: end - rendered };`,
+                return { ms: end - start, dispatchMs: rendered - start, paintWaitMs: end - rendered, firstFrameMs, visibilityStart, visibilityEnd: document.visibilityState, focusedStart, focusedEnd: document.hasFocus() };`,
   );
   replace(
     "              ms,\n            });",

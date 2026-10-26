@@ -35,6 +35,9 @@ test("diagnostic copy preserves the workload and acceptance assertion while addi
   assert.match(copy, /Tracing\.start/);
   assert.match(copy, /Tracing\.end/);
   assert.match(copy, /report\.diagnosticOnly = true/);
+  // Instrumenting frames must retain both callbacks; stopping at the first
+  // would silently shorten the maintained measurement boundary.
+  assert.equal((copy.match(/requestAnimationFrame\(/g) ?? []).length, 2);
   assert.equal(
     readFileSync(
       new URL("../performance/search.spec.ts", import.meta.url),
