@@ -185,6 +185,46 @@ test("post-write binding drift and missing auth bindings are reported as unverif
   }
 });
 
+function assertNoRunExpressions(workflow) {
+  // Track the indentation of the explicit run keys used in this workflow.
+  // Indented continuation lines are shell content, even when they contain ':'.
+  let runIndent = null;
+  for (const line of workflow.split(/\r?\n/)) {
+    if (!line.trim()) continue;
+    const indent = /^ */.exec(line)[0].length;
+    if (runIndent !== null && indent > runIndent) {
+      assert.doesNotMatch(line, /\$\{\{/);
+      continue;
+    }
+    runIndent = null;
+    const run = /^( *(?:- +)?)run:(.*)$/.exec(line);
+    if (run) {
+      runIndent = run[1].length;
+      assert.doesNotMatch(run[2], /\$\{\{/);
+    }
+  }
+}
+
+test("shell expression guard catches multiline scripts without rejecting adjacent env values", () => {
+  const expression = "${{ steps.onepassword.outputs.GOOGLE_CLIENT_SECRET }}";
+  for (const script of [
+    `  - name: Apply\n    run: |\n      echo ready\n      echo: ${expression}`,
+    `  - name: Apply\n    run: >-\n      echo\n      ${expression}`,
+    `  - run: |+\n      echo ready\n\n      echo ${expression}`,
+    `  - run: echo\n      ${expression}`,
+    `  - run: echo ${expression}`,
+    `  - run: 'echo\n      ${expression}'`,
+  ]) {
+    assert.throws(() => assertNoRunExpressions(`steps:\n${script}\n`), script);
+  }
+  assertNoRunExpressions(
+    `steps:\n  - run: |\n      node scripts/sync-cloud-auth.mjs --apply\n    env:\n      GOOGLE_CLIENT_SECRET: ${expression}\n`,
+  );
+  assertNoRunExpressions(
+    `steps:\n  - name: Apply\n    run: node scripts/sync-cloud-auth.mjs --apply\n    env:\n      GOOGLE_CLIENT_SECRET: ${expression}\n`,
+  );
+});
+
 test("workflow credentials are environment-scoped, manual-only and not expanded into shell code", () => {
   const workflow = readFileSync(
     new URL("../../.github/workflows/sync-cloud-auth.yml", import.meta.url),
@@ -198,5 +238,5 @@ test("workflow credentials are environment-scoped, manual-only and not expanded 
     /pull_request:|push:|schedule:|export-env: true|upload-artifact/,
   );
   assert.equal((workflow.match(/OP_SERVICE_ACCOUNT_TOKEN: /g) ?? []).length, 1);
-  assert.doesNotMatch(workflow, /run:.*\$\{\{/);
+  assertNoRunExpressions(workflow);
 });
