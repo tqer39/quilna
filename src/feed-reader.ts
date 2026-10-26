@@ -29,6 +29,7 @@ import { articlePage } from "./article-page";
 import { ArticleListView } from "./article-list-view";
 import { ArticleHighlightView } from "./article-highlight-view";
 import { ArticleConnectionView } from "./article-connection-view";
+import { LearningCueView } from "./learning-cue-view";
 import {
   fetchArticle,
   browserTranslator,
@@ -321,6 +322,16 @@ export async function feedReader(root: HTMLElement) {
     "rss-lede",
   );
   const highlights = new ArticleHighlightView();
+  const learning = new LearningCueView(
+    (view, cue) => highlights.revealExcerpt(view, cue.start, cue.end),
+    (view, cue) =>
+      highlights.prepareExcerpt(
+        view,
+        cue.start,
+        cue.end,
+        `問い：${cue.prompt}`,
+      ),
+  );
   let relationLibraryRevision = 0;
   const connections = new ArticleConnectionView(
     () => articles,
@@ -1841,6 +1852,7 @@ export async function feedReader(root: HTMLElement) {
         shortcuts.append(
           jumpToBody,
           readingJump("ハイライト・メモ", "rss-highlights"),
+          readingJump("学ぶきっかけ", "rss-learning-cues"),
           readingJump("情報のつながり", "rss-connections"),
           jumpToTools,
         );
@@ -2040,31 +2052,33 @@ export async function feedReader(root: HTMLElement) {
       const sourceText = el("div", undefined, "rss-source-text");
       body.append(sourceText);
       if (hasText) {
-        const panel = highlights.mount(
-          {
-            articleId: article.id,
-            title: article.content?.title || article.title,
-            url: article.content?.url || article.url,
-            text,
-            original: originalText,
-            view: displayTranslation ? "translation" : "original",
-            language: displayTranslation
-              ? displayTranslation.targetLanguage
-              : originalLanguage,
-            ranges: displayTranslation
-              ? displayTranslation.codeRanges
-              : article.content?.codeRanges,
-          },
-          sourceText,
-        );
+        const readingView = {
+          articleId: article.id,
+          title: article.content?.title || article.title,
+          url: article.content?.url || article.url,
+          text,
+          original: originalText,
+          view: displayTranslation
+            ? ("translation" as const)
+            : ("original" as const),
+          language: displayTranslation
+            ? displayTranslation.targetLanguage
+            : originalLanguage,
+          ranges: displayTranslation
+            ? displayTranslation.codeRanges
+            : article.content?.codeRanges,
+        };
+        const panel = highlights.mount(readingView, sourceText);
         articleNode.append(
           body,
           panel,
+          learning.mount(readingView),
           connections.mount(article, relationLibraryRevision),
           tagsPanel,
         );
       } else {
         highlights.detach();
+        learning.detach();
         connections.detach();
         appendArticleText(sourceText, text, article.content?.codeRanges);
         articleNode.append(body, tagsPanel);
@@ -2073,6 +2087,7 @@ export async function feedReader(root: HTMLElement) {
       main.append(articleNode);
     } else {
       highlights.detach();
+      learning.detach();
       connections.detach();
       main.classList.remove("rss-reading");
       listHeading.textContent =

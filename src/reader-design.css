@@ -563,6 +563,49 @@
 .rss-connection-reason {
   white-space: pre-wrap;
 }
-:root[data-reader-design] :is(.rss-connections, .rss-highlights) a {
+:root[data-reader-design]
+  :is(.rss-connections, .rss-highlights, .rss-learning-cues)
+  a {
   color: var(--viewer-accent);
+}
+.rss-learning-cues {
+  margin-block: 2rem;
+  padding: 1.25rem;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+}
+.rss-learning-cues summary {
+  cursor: pointer;
+  padding-block: 0.75rem;
+  font-weight: 700;
+}
+.rss-learning-cues ol {
+  padding: 0;
+  list-style: none;
+}
+.rss-learning-cues li {
+  padding: 1rem;
+  margin-block: 1rem;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  overflow-wrap: anywhere;
+}
+.rss-learning-cues h3 {
+  margin-block: 0 0.75rem;
+}
+.rss-learning-cues blockquote {
+  margin: 0.75rem 0;
+  padding-inline-start: 1rem;
+  border-inline-start: 3px solid var(--viewer-accent);
+  white-space: pre-wrap;
+}
+.rss-learning-cues button {
+  margin: 0.25rem 0.5rem 0.25rem 0;
+}
+.rss-cue-question {
+  font-weight: 600;
+}
+.rss-source-text :focus {
+  outline: 2px solid var(--viewer-accent);
+  outline-offset: 3px;
 }

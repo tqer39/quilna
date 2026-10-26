@@ -10,7 +10,7 @@ import {
 } from "./article-highlights";
 import { button, el } from "./ui";
 
-type View = Omit<HighlightSource, "version"> & {
+export type ReadingView = Omit<HighlightSource, "version"> & {
   text: string;
   original: string;
   ranges?: ArticleCodeRange[];
@@ -46,7 +46,7 @@ export class ArticleHighlightView {
     typeof BroadcastChannel === "undefined"
       ? null
       : new BroadcastChannel("quilna.highlights.v1");
-  private view?: View;
+  private view?: ReadingView;
   private source?: HighlightSource;
   private body?: HTMLElement;
   private spans: Span[] = [];
@@ -125,7 +125,7 @@ export class ArticleHighlightView {
     });
     this.controls();
   }
-  mount(view: View, body: HTMLElement) {
+  mount(view: ReadingView, body: HTMLElement) {
     const same =
       this.view?.articleId === view.articleId &&
       this.view.text === view.text &&
@@ -162,6 +162,59 @@ export class ArticleHighlightView {
     this.spans = [];
     this.selected = undefined;
     this.ready = false;
+  }
+  private checkExcerpt(view: ReadingView, start: number, end: number) {
+    if (
+      !this.view ||
+      this.view.articleId !== view.articleId ||
+      this.view.text !== view.text ||
+      this.view.original !== view.original ||
+      this.view.view !== view.view ||
+      this.view.language !== view.language ||
+      !Number.isSafeInteger(start) ||
+      !Number.isSafeInteger(end) ||
+      start < 0 ||
+      end <= start ||
+      end > view.text.length
+    )
+      return "本文が切り替わりました。現在の本文で候補を開き直してください。";
+    return "";
+  }
+  prepareExcerpt(view: ReadingView, start: number, end: number, note: string) {
+    const error = this.checkExcerpt(view, start, end);
+    if (error) return error;
+    if (this.busy)
+      return "ハイライトを保存中です。完了後にもう一度操作してください。";
+    if (!this.ready)
+      return "ハイライトをまだ読み込めていません。状態を確認し、「ハイライト一覧を再読み込み」を試してください。";
+    if (this.draft)
+      return "ハイライトの編集内容を保持しています。先に保存するか「編集をやめる」を選んでください。";
+    if (note.length > 2000 || !this.begin(start, end))
+      return "引用または問いの範囲を確認できませんでした。";
+    this.note.value = note;
+    return "引用と問いをハイライトの下書きに入れました。内容を確認して保存してください。";
+  }
+  revealExcerpt(view: ReadingView, start: number, end: number) {
+    const error = this.checkExcerpt(view, start, end);
+    if (error) return error;
+    const first = this.spans.find(
+      (s) => s.start <= start && s.start + s.node.length > start,
+    );
+    const last = this.spans.find(
+      (s) => s.start < end && s.start + s.node.length >= end,
+    );
+    if (!first || !last) return "根拠の本文の位置を確認できませんでした。";
+    const range = document.createRange();
+    range.setStart(first.node, start - first.start);
+    range.setEnd(last.node, end - last.start);
+    const selection = document.getSelection();
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+    const target = first.node.parentElement!;
+    target.tabIndex = -1;
+    target.focus({ preventScroll: true });
+    target.scrollIntoView({ block: "center" });
+    return "根拠の本文を選択しました。";
   }
   private controls() {
     this.selection.disabled = this.busy || !this.ready || !this.selected;
@@ -303,11 +356,11 @@ export class ArticleHighlightView {
     if (this.selected) this.begin(this.selected.start, this.selected.end);
   }
   private begin(start: number, end: number) {
-    if (!this.source || !this.view || !this.ready || this.busy) return;
+    if (!this.source || !this.view || !this.ready || this.busy) return false;
     const quote = this.view.text.slice(start, end);
     if (!quote.trim() || quote.length > 4000) {
       this.announce("引用は1〜4000文字の本文を選択してください。");
-      return;
+      return false;
     }
     for (const offset of [start, end]) {
       if (
@@ -315,7 +368,7 @@ export class ArticleHighlightView {
         /[\uDC00-\uDFFF]/.test(this.view.text[offset] ?? "")
       ) {
         this.announce("文字の途中を選択しています。選択し直してください。");
-        return;
+        return false;
       }
     }
     this.selected = undefined;
@@ -334,6 +387,7 @@ export class ArticleHighlightView {
     this.expected = null;
     this.note.value = "";
     this.showDraft();
+    return true;
   }
   private showDraft() {
     this.quote.textContent = this.draft?.quote ?? "";
