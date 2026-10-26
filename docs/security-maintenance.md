@@ -37,6 +37,7 @@ The lockfile uses the npm registry and SHA-512 integrity; npm verifies downloade
 `npm audit signatures` checks available registry signatures/provenance, not universal package authorship or the absence of malicious code.
 
 PR/main CI audits production **and development** dependencies before executing lint/tests.
+These checks remain active for documentation-only changes under [change-aware CI selection](ci-selection.md).
 The daily Ubuntu-only `security.yml` workflow repeats the audit and signature checks and runs the pinned Go vulnerability scanner.
 PR dependency review also rejects newly introduced advisories at low severity and above without posting PR comments.
 Go scanning covers reachable findings for the scanned platform; an exit-zero scan does not prove every platform or unknown vulnerability safe.

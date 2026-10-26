@@ -1,6 +1,7 @@
 name: Prototype checks
 on:
   pull_request:
+  workflow_dispatch:
   push:
     branches: [main]
 permissions:
@@ -9,7 +10,26 @@ concurrency:
   group: prototype-checks-${{ github.ref }}
   cancel-in-progress: true
 jobs:
-  workflow-result:
+  selection:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      web: ${{ steps.scope.outputs.web }}
+      harness: ${{ steps.scope.outputs.harness }}
+      apple: ${{ steps.scope.outputs.apple }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 26.12.1
+      - id: scope
+        run: node scripts/ci-selection.mjs select
+
+  checks:
+    needs: selection
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -25,20 +45,31 @@ jobs:
       - run: npm run security:audit
       - run: npm audit signatures
       - run: npm run lint
-      - run: npm run typecheck
-      - run: npm test
-      - run: npm run build
-      - run: npm run workers:build
-      - run: npm run test:workers
-      - run: npm exec --no -- playwright install --with-deps chromium
+      - run: node --test tests/server/ci-selection.test.mjs
+      - if: needs.selection.outputs.web == 'true'
+        run: npm run typecheck
+      - if: needs.selection.outputs.web == 'true'
+        run: npm test
+      - if: needs.selection.outputs.web == 'true'
+        run: npm run build
+      - if: needs.selection.outputs.web == 'true'
+        run: npm run workers:build
+      - if: needs.selection.outputs.web == 'true'
+        run: npm run test:workers
+      - if: needs.selection.outputs.web == 'true'
+        run: npm exec --no -- playwright install --with-deps chromium
       - name: Record browser validation source
+        id: browser-source
+        if: needs.selection.outputs.web == 'true'
         run: |
           mkdir -p test-results
           git rev-parse HEAD > test-results/source-sha.txt
-      - run: npm run test:browser
-      - run: npm run test:search-performance
+      - if: needs.selection.outputs.web == 'true'
+        run: npm run test:browser
+      - if: needs.selection.outputs.web == 'true'
+        run: npm run test:search-performance
       - name: Preserve browser validation evidence
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && needs.selection.outputs.web == 'true' && steps.browser-source.outcome == 'success' }}
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: browser-validation-${{ github.run_id }}-${{ github.run_attempt }}
@@ -46,9 +77,12 @@ jobs:
             test-results/
             .local-state/search-performance/results/**/measurements.json
           include-hidden-files: true
+          if-no-files-found: error
           retention-days: 14
 
   harness:
+    needs: selection
+    if: needs.selection.outputs.harness == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -69,6 +103,8 @@ jobs:
       - run: bash scripts/check-harness.sh
 
   apple:
+    needs: selection
+    if: needs.selection.outputs.apple == 'true'
     runs-on: macos-26
     timeout-minutes: 20
     steps:
@@ -84,3 +120,20 @@ jobs:
           -destination 'generic/platform=iOS Simulator'
           -derivedDataPath .local-state/ios-build
           CODE_SIGNING_ALLOWED=NO build
+
+  workflow-result:
+    if: ${{ always() }}
+    needs: [selection, checks, harness, apple]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 26.12.1
+      - name: Require every selected check
+        env:
+          NEEDS_JSON: ${{ toJSON(needs) }}
+        run: node scripts/ci-selection.mjs check
