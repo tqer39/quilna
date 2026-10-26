@@ -1328,10 +1328,15 @@ export async function feedReader(root: HTMLElement) {
   function render() {
     if (composing) return;
     renderCloud();
+    const selectedPosition = selected
+      ? articlePositions.get(selected)
+      : undefined;
+    const article =
+      selectedPosition === undefined ? undefined : articles[selectedPosition];
     if (readerIdentity !== selected) {
       cancelReading();
       readerIdentity = selected;
-      const active = articles.find((a) => a.id === selected);
+      const active = article;
       originalLanguage =
         articleLanguage(active?.content?.language) ||
         (active?.translation?.sourceText ===
@@ -1348,7 +1353,6 @@ export async function feedReader(root: HTMLElement) {
         : null;
     renderError();
     navigation.replaceChildren();
-    const article = articles.find((a) => a.id === selected);
     if (article || listResults.parentNode !== main) main.replaceChildren();
     listResults.replaceChildren();
     navigation.append(
@@ -1357,16 +1361,30 @@ export async function feedReader(root: HTMLElement) {
     );
     const menus = el("nav", undefined, "rss-filters");
     menus.setAttribute("aria-label", "記事の絞り込み");
+    // One allocation-free pass replaces six full-library filter arrays on
+    // every input/background update. Counts still reflect the current source.
+    let allCount = 0,
+      unreadCount = 0,
+      savedCount = 0,
+      pendingCount = 0;
+    for (const item of articles) {
+      if (!item.tags) pendingCount++;
+      if (source && item.feedUrl !== source) continue;
+      allCount++;
+      if (!item.read) unreadCount++;
+      if (item.saved) savedCount++;
+    }
     for (const [value, label] of [
       ["all", "すべての記事"],
       ["unread", "未読"],
       ["saved", "保存した記事"],
     ]) {
-      const count = articles
-        .filter((a) => !source || a.feedUrl === source)
-        .filter(
-          (a) => value === "all" || (value === "unread" ? !a.read : a.saved),
-        ).length;
+      const count =
+        value === "all"
+          ? allCount
+          : value === "unread"
+            ? unreadCount
+            : savedCount;
       const menu = button(`${label} · ${count}`, () => {
         filter = value;
         selected = null;
@@ -1981,7 +1999,6 @@ export async function feedReader(root: HTMLElement) {
       }
       for (const option of existingOptions.values()) option.remove();
       if (tagsSelect.value !== tagFilter) tagsSelect.value = tagFilter;
-      const pendingCount = articles.filter((article) => !article.tags).length;
       if (pendingCount || tagBatchController) {
         const classify = button(
           tagBatchController
@@ -2011,7 +2028,16 @@ export async function feedReader(root: HTMLElement) {
       const matched =
         query && searchIndex.ready ? searchIndex.search(query) : null;
       const preparing = !!query && !searchIndex.ready;
-      const visible = articles.filter(
+      // Sparse query matches already have IDs. Restore library order without
+      // scanning every article again; broad/no-query results use the full list.
+      const candidates =
+        matched && matched.size < articles.length / 4
+          ? Array.from(matched, (id) => articlePositions.get(id))
+              .filter((position): position is number => position !== undefined)
+              .sort((a, b) => a - b)
+              .map((position) => articles[position])
+          : articles;
+      const visible = candidates.filter(
         (a) =>
           !preparing &&
           (!matched || matched.has(a.id)) &&
