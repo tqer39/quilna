@@ -29,6 +29,7 @@ import {
   isLinkOnly,
 } from "./article-content";
 import { ArticleSpeech } from "./article-speech";
+import { appendArticleText } from "./article-code";
 import {
   CloudCollectionClient,
   CloudConnectionError,
@@ -1013,7 +1014,11 @@ export async function feedReader(root: HTMLElement) {
       render();
     }
   }
-  async function importContent(article: FeedArticle, insert = false) {
+  async function importContent(
+    article: FeedArticle,
+    insert = false,
+    restoreCode = false,
+  ) {
     if (!db || importing.has(article.id)) return;
     if (selected === article.id) cancelReading();
     importing.add(article.id);
@@ -1025,7 +1030,14 @@ export async function feedReader(root: HTMLElement) {
       } catch (error) {
         patch = { contentError: (error as Error).message };
       }
-      await updateArticleContent(db, article, patch, insert);
+      await updateArticleContent(
+        db,
+        article,
+        patch,
+        insert,
+        undefined,
+        restoreCode,
+      );
       await load(article.id);
       announceChange(article.id);
       problem = "";
@@ -1039,7 +1051,7 @@ export async function feedReader(root: HTMLElement) {
     } catch (error) {
       showError(
         (error as Error).message,
-        () => void importContent(article, insert),
+        () => void importContent(article, insert, restoreCode),
       );
     } finally {
       importing.delete(article.id);
@@ -1199,6 +1211,7 @@ export async function feedReader(root: HTMLElement) {
           }
         },
         automatic,
+        article.content?.codeRanges,
       );
       render();
       const result = await pending;
@@ -1689,6 +1702,29 @@ export async function feedReader(root: HTMLElement) {
       );
       notice.setAttribute("role", "status");
       articleNode.append(notice);
+      if (article.content && article.content.codeRanges === undefined) {
+        articleNode.append(
+          el(
+            "p",
+            "以前に取り込んだ本文にはコードの書式情報がありません。元サイトの本文が変わっていなければ書式を取り直せます。成功後は訳文を作り直します。",
+            "rss-content-note",
+          ),
+        );
+        const restore = button(
+          "コードの書式を取り直す",
+          () => void importContent(article, false, true),
+        );
+        restore.disabled = importingNow;
+        articleNode.append(restore);
+        if (article.contentError)
+          articleNode.append(
+            el(
+              "p",
+              `書式を取得できませんでした：${article.contentError} 保存済み本文は保持しています。`,
+              "rss-content-note",
+            ),
+          );
+      }
       if (article.url && !article.content) {
         const acquire = button(
           article.contentError ? "本文の取得を再試行" : "本文を取り込む",
@@ -1872,8 +1908,13 @@ export async function feedReader(root: HTMLElement) {
             "muted",
           ),
         );
-      for (const paragraph of text.split(/\n\s*\n/))
-        if (paragraph.trim()) body.append(el("p", paragraph));
+      appendArticleText(
+        body,
+        text,
+        displayTranslation
+          ? displayTranslation.codeRanges
+          : article.content?.codeRanges,
+      );
       articleNode.append(body);
       main.append(articleNode);
     } else {

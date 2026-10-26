@@ -1250,6 +1250,22 @@ header {
   white-space: pre-line;
   margin: 1.4em 0;
 }
+.rss-article-body code {
+  white-space: pre-wrap;
+  font-size: 0.9em;
+}
+.rss-article-body pre {
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 16px;
+  background: #eaf0eb;
+  border-radius: 6px;
+  line-height: 1.6;
+}
+.rss-article-body pre code {
+  white-space: pre;
+  overflow-wrap: normal;
+}
 .rss-content-note {
   font-size: 12px;
   color: #52666a;

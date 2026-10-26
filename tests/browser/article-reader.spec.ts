@@ -3,6 +3,9 @@ const url = "https://publisher.example.org/story";
 const paragraph =
   "This is the complete article about learning from original sources. It explains the research, its limitations, and why preserving evidence matters to a reader. ";
 const html = `<!doctype html><html lang="en"><head><title>Collected article</title></head><body><nav>Navigation junk</nav><article><h1>Collected article</h1><p>${paragraph.repeat(5)}</p><h2>Second section</h2><p>Final paragraph. ${paragraph.repeat(4)}</p></article><img src="https://tracker.example.org/pixel"><script>window.articleExecuted = true</script><iframe src="https://tracker.example.org/frame"></iframe></body></html>`;
+const codeExample =
+  'function deleteAlarm() {\n  const tag = "<img onerror=alert(1)>";\n\n\treturn tag;\n}';
+const codeHTML = `<!doctype html><html lang="en"><head><title>Collected article</title></head><body><article><h1>Collected article</h1><p>${paragraph.repeat(5)}</p><p>Call <code>deleteAlarm()</code> to cancel the scheduled work.</p><pre><code>${codeExample.replaceAll("<", "&lt;").replaceAll(">", "&gt;")}</code></pre><p>Final paragraph. ${paragraph.repeat(4)}</p></article></body></html>`;
 async function source(page: Page, fail = false) {
   await page.route("**/api/feeds/fetch", (route) =>
     route.fulfill(
@@ -137,6 +140,68 @@ async function translator(page: Page, delayed = false) {
     { delayed },
   );
 }
+test("code survives import, translation and offline reopen without reaching the translator", async ({
+  page,
+}) => {
+  await translator(page);
+  await page.route("**/api/feeds/fetch", (route) =>
+    route.fulfill({ json: { url, html: codeHTML } }),
+  );
+  await add(page);
+  const code = page.locator(".rss-article-body pre code");
+  await expect(code).toHaveText(codeExample, { useInnerText: false });
+  expect(await code.textContent()).toBe(codeExample);
+  await expect(page.locator(".rss-article-body p code")).toHaveText(
+    "deleteAlarm()",
+  );
+  await expect(page.locator(".rss-article-body img")).toHaveCount(0);
+  await page.getByRole("button", { name: "日本語に翻訳", exact: true }).click();
+  await expect(
+    page.getByText(
+      "日本語訳を保存しました。機械翻訳のため原文も確認してください。",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  expect(await code.textContent()).toBe(codeExample);
+  await expect(page.locator(".rss-article-body p code")).toHaveText(
+    "deleteAlarm()",
+  );
+  expect(
+    await page.evaluate(() =>
+      (
+        window as unknown as { translationCalls: string[] }
+      ).translationCalls.join("\n"),
+    ),
+  ).not.toMatch(/deleteAlarm|onerror|return tag/);
+  await source(page, true);
+  await reopen(page);
+  expect(await code.textContent()).toBe(codeExample);
+  await page
+    .getByRole("button", { name: "日本語訳を読む", exact: true })
+    .click();
+  expect(await code.textContent()).toBe(codeExample);
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+});
+test("code HTML line breaks remain literal newlines including consecutive br elements", async ({
+  page,
+}) => {
+  const withBreaks = codeHTML.replaceAll("\n", "<br>");
+  await page.route("**/api/feeds/fetch", (route) =>
+    route.fulfill({ json: { url, html: withBreaks } }),
+  );
+  await add(page);
+  await expect(page.locator(".rss-article-body pre code")).toHaveText(
+    codeExample,
+    { useInnerText: false },
+  );
+  expect(await page.locator(".rss-article-body pre code").textContent()).toBe(
+    codeExample,
+  );
+});
 test("translation is explicit, persists separately and original is retained", async ({
   page,
 }) => {
@@ -168,6 +233,170 @@ test("translation is explicit, persists separately and original is retained", as
   await expect(page.locator(".rss-article-body")).toContainText(
     "原文から翻訳した日本語",
   );
+});
+
+for (const changed of [false, true]) {
+  test(`legacy code formatting upgrade ${changed ? "refuses changed source without losing saved values" : "preserves flags and survives reload"}`, async ({
+    page,
+  }) => {
+    await page.route("**/api/feeds/fetch", (route) =>
+      route.fulfill({ json: { url, html: codeHTML } }),
+    );
+    await add(page);
+    await expect(page.locator(".rss-article-body pre code")).toHaveText(
+      codeExample,
+    );
+    const before = await page.evaluate(async () => {
+      const db = await new Promise<IDBDatabase>((resolve) => {
+        const r = indexedDB.open("tsumiki.rss.v1");
+        r.onsuccess = () => resolve(r.result);
+      });
+      return await new Promise<string>((resolve, reject) => {
+        const tx = db.transaction("articles", "readwrite");
+        const store = tx.objectStore("articles");
+        const all = store.getAll();
+        let saved = "";
+        all.onsuccess = () => {
+          const article = all.result[0];
+          delete article.content.codeRanges;
+          article.content.text = article.content.text
+            .replace(/[^\S\n]+/g, " ")
+            .replace(/\n\s*\n/g, "\n\n")
+            .trim();
+          article.translation = {
+            text: "以前の保存訳",
+            sourceText: article.content.text,
+            sourceLanguage: "en",
+            targetLanguage: "ja",
+          };
+          store.put(article);
+          saved = JSON.stringify(article);
+        };
+        tx.oncomplete = () => {
+          db.close();
+          resolve(saved);
+        };
+        tx.onerror = () => reject(tx.error);
+      });
+    });
+    await reopen(page);
+    await expect(
+      page.getByRole("button", { name: "コードの書式を取り直す", exact: true }),
+    ).toBeVisible();
+    if (changed)
+      await page.route("**/api/feeds/fetch", (route) =>
+        route.fulfill({
+          json: {
+            url,
+            html: codeHTML.replace(
+              "Final paragraph.",
+              "Changed source paragraph.",
+            ),
+          },
+        }),
+      );
+    await page
+      .getByRole("button", { name: "コードの書式を取り直す", exact: true })
+      .click();
+    if (changed) {
+      await expect(page.locator(".rss-error")).toContainText(
+        "以前の内容は保持しています",
+      );
+      const after = await page.evaluate(async () => {
+        const db = await new Promise<IDBDatabase>((resolve) => {
+          const r = indexedDB.open("tsumiki.rss.v1");
+          r.onsuccess = () => resolve(r.result);
+        });
+        return await new Promise<string>((resolve) => {
+          const tx = db.transaction("articles", "readonly");
+          const r = tx.objectStore("articles").getAll();
+          tx.oncomplete = () => {
+            db.close();
+            resolve(JSON.stringify(r.result[0]));
+          };
+        });
+      });
+      expect(after).toBe(before);
+      await page
+        .getByRole("button", { name: "日本語訳を読む", exact: true })
+        .click();
+      await expect(page.locator(".rss-article-body")).toContainText(
+        "以前の保存訳",
+      );
+    } else {
+      await expect(page.locator(".rss-article-body pre code")).toHaveText(
+        codeExample,
+      );
+      expect(
+        await page.locator(".rss-article-body pre code").textContent(),
+      ).toBe(codeExample);
+      await expect(
+        page.getByRole("button", { name: "日本語訳を読む", exact: true }),
+      ).toHaveCount(0);
+      await source(page, true);
+      await reopen(page);
+      expect(
+        await page.locator(".rss-article-body pre code").textContent(),
+      ).toBe(codeExample);
+      await expect(page.locator("#rss-save-article")).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
+    }
+  });
+}
+
+test("invalid saved code ranges report an error and retain the stored record", async ({
+  page,
+}) => {
+  await source(page);
+  await add(page);
+  await expect(page.locator(".rss-article-body")).toContainText(
+    "Final paragraph.",
+  );
+  await page.evaluate(async () => {
+    const db = await new Promise<IDBDatabase>((resolve) => {
+      const r = indexedDB.open("tsumiki.rss.v1");
+      r.onsuccess = () => resolve(r.result);
+    });
+    await new Promise<void>((resolve) => {
+      const tx = db.transaction("articles", "readwrite");
+      const store = tx.objectStore("articles");
+      const r = store.getAll();
+      r.onsuccess = () =>
+        store.put({
+          ...r.result[0],
+          content: {
+            ...r.result[0].content,
+            codeRanges: [{ start: -1, end: 2, block: true }],
+          },
+        });
+      tx.oncomplete = () => {
+        db.close();
+        resolve();
+      };
+    });
+  });
+  await page.reload();
+  await expect(page.locator(".rss-error")).toContainText(
+    "保存データの形式を確認できませんでした。データは削除していません",
+  );
+  expect(
+    await page.evaluate(async () => {
+      const db = await new Promise<IDBDatabase>((resolve) => {
+        const r = indexedDB.open("tsumiki.rss.v1");
+        r.onsuccess = () => resolve(r.result);
+      });
+      return await new Promise<number>((resolve) => {
+        const tx = db.transaction("articles", "readonly");
+        const r = tx.objectStore("articles").count();
+        tx.oncomplete = () => {
+          db.close();
+          resolve(r.result);
+        };
+      });
+    }),
+  ).toBe(1);
 });
 test("unsupported translation is disclosed without sending text externally", async ({
   page,

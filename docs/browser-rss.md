@@ -55,18 +55,21 @@ Alternatively, enter an article URL and select **記事として取り込む** t
 A failed import retains the saved link or RSS text and shows the failure with **本文の取得を再試行**.
 Links-only feed metadata is labeled explicitly; it is not presented as article prose.
 Mozilla Readability extracts text from inert HTML. The imported original is stored separately from the feed text and is retained across feed refreshes.
+Imported `pre` and `code` elements retain their text and UTF-16 ranges. Code blocks preserve indentation and newlines, and render in a horizontally scrollable block; inline code stays within its paragraph. Rendering creates text nodes, never mounts the source HTML, and rejects invalid saved ranges without deleting the library.
+Older imports remain readable. **コードの書式を取り直す** fetches formatting only when the source still matches the saved text after the old whitespace normalization; a changed source or failed fetch preserves the existing original and translation. A successful formatting upgrade keeps read/saved flags and manual tags, and clears the old translation so it can be translated again with code protection. RSS-only text and old imports without formatting metadata cannot reliably distinguish code.
 Login-required, script-rendered and restricted pages may not yield article text; no cookies or authentication are forwarded and access restrictions are not bypassed.
 Extraction is heuristic and may omit content; it does not guarantee a complete copy of every page.
 Images, executable markup and embedded content are not rendered. The original article opens only when selected.
 Limits are 50 subscriptions, 200 entries per feed response, 40,000 characters of RSS text, 200,000 characters of imported text and 400,000 characters of translated text.
 Over-limit imports fail visibly rather than silently saving a truncated original.
-There is no textbook generation, collection after the page closes or offline app installation in this slice.
+Textbook generation and offline app installation are not included in this reader slice. See [cloud collection](cloud-feed-collection.md) for collection after the page closes.
 
 ### Translation and speech
 
 Select the original language, then **日本語に翻訳**. Japanese is the default target; **設定** offers eight target languages, **ブラウザに合わせる** to follow the first browser language preference, and a persisted **記事を開いたら自動翻訳** option (off initially). Translation uses the browser's built-in Translator API only; the first use may download language data.
 Availability depends on the browser, language pair and device. Unsupported browsers show an explicit notice and do not send the article to an external translation service.
 One successful translation per article is saved separately with its source text and target language; **原文を読む** / **日本語訳を読む** switches views without replacing the original. The button label follows the chosen target. A different target replaces only the previous translation after success; it is never displayed as a translation into the new target.
+Code identified during import is excluded from translation and copied unchanged into the translated view, including inline identifiers. Prose on either side of inline code is translated separately; this can reduce fluency. Code-like text that the publisher did not mark as `pre`/`code` is not inferred or protected.
 Automatic translation reuses a saved translation only when the source text and target match. It uses the imported HTML language. When that is missing, the on-device Language Detector API checks samples of up to 2,000 characters from the beginning, middle and end. The samples must agree with confidence of at least 0.8; short text, unsupported languages, disagreement and low confidence require a manual language choice. This is a heuristic, not proof that the full article has one language. **原文の言語を判定** also allows an explicit check and correction. An unsupported browser target is disclosed instead of silently translating into another language. Background detection or translation asks for a button click when the browser needs activation to prepare model data. Browser language changes cancel pending work when **ブラウザに合わせる** is selected.
 Cancellation, disabling automatic translation, changing the target, or switching articles discards pending translations; failures retain the original and allow another attempt.
 Machine translation can be inaccurate. External translation services require a separate decision.

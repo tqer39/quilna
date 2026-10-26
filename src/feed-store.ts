@@ -7,6 +7,7 @@ import {
 } from "./article-tags";
 import type { Feed, FeedArticle } from "./feed-parser";
 import { articleTextLimit } from "./article-content";
+import { legacyArticleText, validCodeRanges } from "./article-code";
 import type { ArticleContent, ArticleTranslation } from "./article-content";
 import { articleURL } from "./feed-parser";
 const text = (value: unknown) =>
@@ -29,6 +30,7 @@ function validArticle(a: FeedArticle) {
       (a.content &&
         typeof a.content.text === "string" &&
         a.content.text.length <= articleTextLimit &&
+        validCodeRanges(a.content.text, a.content.codeRanges) &&
         text(a.content.url) &&
         articleURL(a.content.url, a.url) === a.content.url &&
         text(a.content.title) &&
@@ -38,6 +40,7 @@ function validArticle(a: FeedArticle) {
       (a.translation &&
         typeof a.translation.text === "string" &&
         a.translation.text.length <= articleTextLimit * 2 &&
+        validCodeRanges(a.translation.text, a.translation.codeRanges) &&
         typeof a.translation.sourceText === "string" &&
         a.translation.sourceText.length <= articleTextLimit &&
         text(a.translation.sourceLanguage) &&
@@ -257,6 +260,7 @@ export function updateArticleContent(
   },
   insert = false,
   signal?: AbortSignal,
+  restoreCode = false,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     signal?.throwIfAborted();
@@ -279,11 +283,25 @@ export function updateArticleContent(
         return;
       }
       // A slower import in another tab must not replace an already saved original.
-      if (patch.content && old?.content) return;
+      if (patch.content && old?.content) {
+        if (!restoreCode) return;
+        // Only enrich the exact old snapshot with formatting; never replace a
+        // changed source or another tab's successful upgrade.
+        if (old.content.codeRanges !== undefined) return;
+        if (
+          JSON.stringify(old.content) !== JSON.stringify(article.content) ||
+          legacyArticleText(patch.content.text) !== old.content.text
+        ) {
+          tx.abort();
+          return;
+        }
+      }
       // Do not attach a translation to a newer original from another tab.
       if (
         patch.translation &&
-        patch.translation.sourceText !== (old?.content?.text || old?.body)
+        (patch.translation.sourceText !== (old?.content?.text || old?.body) ||
+          JSON.stringify(article.content?.codeRanges ?? []) !==
+            JSON.stringify(old?.content?.codeRanges ?? []))
       ) {
         tx.abort();
         return;

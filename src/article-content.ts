@@ -1,5 +1,10 @@
 import { Readability } from "@mozilla/readability";
 import { sourceURL } from "./feed-discovery";
+import {
+  articleSegments,
+  serializeArticle,
+  type ArticleCodeRange,
+} from "./article-code";
 
 export type ArticleContent = {
   text: string;
@@ -7,12 +12,14 @@ export type ArticleContent = {
   title: string;
   language: string;
   fetchedAt: string;
+  codeRanges?: ArticleCodeRange[];
 };
 export type ArticleTranslation = {
   text: string;
   sourceText: string;
   sourceLanguage: string;
   targetLanguage: string;
+  codeRanges?: ArticleCodeRange[];
 };
 export const articleTextLimit = 200_000;
 
@@ -36,6 +43,11 @@ export function extractArticle(html: string, url: string): ArticleContent {
         element.removeAttribute(attr.name);
     }
   }
+  // Readability rewrites consecutive br elements into paragraphs. Preserve code
+  // line breaks first, inside the inert fragment, before that prose cleanup.
+  template.content
+    .querySelectorAll("pre br, code br")
+    .forEach((br) => br.replaceWith("\n"));
   const doc = document.implementation.createHTMLDocument("");
   doc.body.append(doc.importNode(template.content, true));
   doc.documentElement.lang = language;
@@ -44,20 +56,17 @@ export function extractArticle(html: string, url: string): ArticleContent {
     doc.body.querySelector("h1")?.textContent ||
     "";
   doc.body.querySelectorAll("title").forEach((n) => n.remove());
+  let codeRanges: ArticleCodeRange[] = [];
   const parsed = new Readability(doc, {
     maxElemsToParse: 20000,
     charThreshold: 140,
     serializer: (node) => {
-      (node as Element)
-        .querySelectorAll("p,div,li,h1,h2,h3,h4,h5,h6,blockquote,pre,br,tr")
-        .forEach((n) => n.append("\n\n"));
-      return (node.textContent ?? "")
-        .replace(/[^\S\n]+/g, " ")
-        .replace(/\n\s*\n/g, "\n\n")
-        .trim();
+      const serialized = serializeArticle(node);
+      codeRanges = serialized.codeRanges;
+      return serialized.text;
     },
   }).parse();
-  const text = parsed?.content?.trim();
+  const text = parsed?.content;
   if (!text || text.length < 140)
     throw Error(
       "記事本文を見つけられませんでした。ログインやサイト側の制限がある場合は元の記事を開いてください。",
@@ -72,6 +81,7 @@ export function extractArticle(html: string, url: string): ArticleContent {
     title: parsed?.title?.slice(0, 500) || new URL(url).hostname,
     language: language.slice(0, 35),
     fetchedAt: new Date().toISOString(),
+    codeRanges,
   };
 }
 
@@ -135,7 +145,9 @@ export async function translateArticle(
   signal: AbortSignal,
   progress: (message: string) => void,
   automatic = false,
+  codeRanges: ArticleCodeRange[] = [],
 ): Promise<ArticleTranslation> {
+  const segments = articleSegments(text, codeRanges);
   const factory = browserTranslator();
   if (!factory)
     throw Error(
@@ -173,42 +185,65 @@ export async function translateArticle(
   signal.addEventListener("abort", abort, { once: true });
   try {
     signal.throwIfAborted();
-    const chunks = text
-      .split(/\n\s*\n/)
-      .filter((p) => p.trim())
-      .flatMap((paragraph) => {
-        const pieces: string[] = [];
-        let rest = paragraph;
-        while (rest.length > 3000) {
-          const prefix = rest.slice(0, 3000);
-          const boundary = Math.max(
-            prefix.lastIndexOf(" "),
-            prefix.lastIndexOf("。"),
-          );
-          let end = boundary > 1500 ? boundary + 1 : 3000;
-          if (/[\uD800-\uDBFF]/.test(rest[end - 1])) end--;
-          pieces.push(rest.slice(0, end));
-          rest = rest.slice(end);
-        }
-        if (rest) pieces.push(rest);
-        return pieces;
-      });
-    const translated: string[] = [];
+    const chunks = segments.flatMap<{ text: string; code?: ArticleCodeRange }>(
+      (segment) => {
+        if (segment.code) return [{ text: segment.text, code: segment.code }];
+        return segment.text.split(/(\n\s*\n)/).flatMap((paragraph) => {
+          const pieces: string[] = [];
+          let rest = paragraph;
+          while (rest.length > 3000) {
+            const prefix = rest.slice(0, 3000);
+            const boundary = Math.max(
+              prefix.lastIndexOf(" "),
+              prefix.lastIndexOf("。"),
+            );
+            let end = boundary > 1500 ? boundary + 1 : 3000;
+            if (/[\uD800-\uDBFF]/.test(rest[end - 1])) end--;
+            pieces.push(rest.slice(0, end));
+            rest = rest.slice(end);
+          }
+          if (rest) pieces.push(rest);
+          return pieces.map((text) => ({ text, code: undefined }));
+        });
+      },
+    );
+    let translated = "";
+    const translatedCode: ArticleCodeRange[] = [];
     for (const [index, chunk] of chunks.entries()) {
+      signal.throwIfAborted();
+      if (chunk.code) {
+        translatedCode.push({
+          start: translated.length,
+          end: translated.length + chunk.text.length,
+          block: chunk.code.block,
+        });
+        translated += chunk.text;
+        continue;
+      }
+      if (!chunk.text.trim()) {
+        translated += chunk.text;
+        continue;
+      }
       progress(`翻訳中… ${index + 1}/${chunks.length}`);
-      const result = await translator.translate(chunk);
+      const result = await translator.translate(chunk.text.trim());
       signal.throwIfAborted();
       if (!result.trim())
         throw Error("翻訳結果が空でした。再試行してください。");
-      translated.push(result);
-      if (translated.join("\n\n").length > articleTextLimit * 2)
+      translated +=
+        (chunk.text.match(/^\s*/)?.[0] ?? "") +
+        result.trim() +
+        (chunk.text.match(/\s*$/)?.[0] ?? "");
+      if (translated.length > articleTextLimit * 2)
         throw Error("翻訳結果が大きすぎるため保存できません。");
     }
+    if (translated.length > articleTextLimit * 2)
+      throw Error("翻訳結果が大きすぎるため保存できません。");
     return {
-      text: translated.join("\n\n"),
+      text: translated,
       sourceText: text,
       sourceLanguage,
       targetLanguage,
+      codeRanges: translatedCode,
     };
   } finally {
     signal.removeEventListener("abort", abort);
