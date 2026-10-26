@@ -24,6 +24,15 @@ Article extraction uses `@mozilla/readability`, a shared browser dependency. No 
 `npm run build` creates static assets but does not create or deploy the RSS acquisition service.
 `vite preview` does not provide this endpoint. The optional [cloud collector](cloud-feed-collection.md) provides authenticated Workers acquisition for three explicitly supported publisher hosts; it is disabled by default.
 
+## Viewer designs
+
+**設定 → ビューアのデザイン** offers three built-in templates: **Studio** (default, bright cards), **Editorial** (warm paper, serif article text and a single-column list), and **Focus** (dark surfaces and a quiet single-column list).
+They share navigation, controls and article data. Switching applies immediately without interrupting the selected article or changing saved/read flags.
+The choice is stored for this browser origin in `quilna.reader.design.v1`; unknown values use Studio. Storage failures are visible, and a failed save still applies to the current page.
+Design choices use a labeled radio group with keyboard navigation and miniature previews. Controls retain a minimum 44 CSS-pixel height, narrow screens use a single column, and reduced-motion preferences suppress transitions.
+The article body comes before tag editing and translation/read-aloud controls. In-article links move focus to the body or tools without leaving the current article; narrow screens also offer an **記事へ** shortcut past collection controls.
+Color, type, spacing and surface tokens are grouped in `src/reader-design.css`. These templates currently apply to the browser RSS viewer; the sample lesson and native apps are not restyled. Native implementation and device verification remain pending under the browser-first product sequence.
+
 ## Automatic feed collection
 
 Subscribed feeds refresh every 15 minutes by default. **設定 → RSSの自動更新** offers 15, 30, 60 minutes or off; the choice is stored for this browser origin and updates other open tabs.
@@ -116,6 +125,8 @@ The representation is rebuilt after reload. Up to 16 recent queries are cached w
 Rendering computes menu and unclassified counts in one pass without full-library temporary filter arrays. Sparse search matches are mapped to their current library positions and sorted before the existing filters and pagination, preserving the same date/ID order.
 
 On 2026-10-27, Linux CI at `b88ec73bc98a35a5249cb61213f7e117b963d3a0` passed all 238 functional browser tests but failed the dense-tag search gate: one continuous-write manual-tag query took 204.4 ms. The [failed run and measurements](https://github.com/tqer39/quilna/actions/runs/40372100340) remain evidence. The allocation and sparse-candidate changes above address unnecessary rendering work; neither the 200 ms threshold nor the sample counts were relaxed. Hosted-CI validation is separate from local results. A later Linux run at `24ebc1d9023ca7577ee97807ea4f993511b0f85c` passed 240 functional tests but recorded 230.5 ms for the same broad query under continuous writes. That query matches 33,333 articles, exceeding the old per-query cache cap and forcing repeated full-text scans. The aggregate cache budget above keeps the prior overall ID bound while allowing that broad query to be maintained incrementally.
+
+The search configuration runs the same baseline and dense-tag gate for each of Studio, Editorial and Focus (six tests, 2,700 samples total). Each project seeds only its design preference before loading the isolated page; the corpus, queries, contention groups, timing boundaries and 200 ms limit are identical. Results are separated by project in the output directories.
 
 Run `npm run test:search-performance` for the isolated browser gate (`127.0.0.1:5199`, disposable browser profile). It uses 100,000 originals of approximately 2 KB and corresponding Japanese translations of approximately 2 KB, 30 first/repeated samples per fixed query, correctness oracles, all-page traversal, and idle/held-write/continuous-commit groups.
 A separate dense-tag run retains that text corpus: all articles have eight automatic suggestions, 33,333 have twelve overriding manual tags, and the others use their automatic tags. It keeps the three baseline queries and adds manual-tag text search, a tag/query intersection, an all-matching tag filter and a manual-state filter (630 samples across the same three groups, versus 270 baseline samples). Filter timing starts at the change event; query timing starts at input dispatch. Both end after two animation frames and correct identities/counts. The writer also changes a manual tag; the updated tag must become searchable. All 1,000 query matches and all 333 tag/query intersection matches are traversed separately for correctness.

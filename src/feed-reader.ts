@@ -40,6 +40,8 @@ import {
 } from "./cloud-collection";
 import { AuthClient } from "./auth-client";
 import { button, el } from "./ui";
+import { readerDesignSettings } from "./reader-design";
+import "./reader-design.css";
 import { parseFeed, type Feed, type FeedArticle } from "./feed-parser";
 import { discoverFeeds, sourceURL, type FeedCandidate } from "./feed-discovery";
 import {
@@ -56,6 +58,18 @@ import {
 
 export async function feedReader(root: HTMLElement) {
   document.title = "情報収集 | Quilna";
+  const designSettings = readerDesignSettings();
+  function readingJump(label: string, targetId: string) {
+    const link = el("a", label, "rss-text-link");
+    link.href = `?view=feeds#${targetId}`;
+    link.addEventListener("click", (event) => {
+      event.preventDefault();
+      const target = document.getElementById(targetId);
+      target?.focus({ preventScroll: true });
+      target?.scrollIntoView({ block: "start" });
+    });
+    return link;
+  }
   let db: IDBDatabase | null = null;
   let feeds: Feed[] = [],
     articles: FeedArticle[] = [];
@@ -140,8 +154,12 @@ export async function feedReader(root: HTMLElement) {
   const settingsTitle = el("h2", "設定・保存先");
   settingsTitle.id = "rss-settings-title";
   const settingsOpen = button("設定", () => settings.showModal());
+  const settingsClose = button("閉じる", () => settings.close());
+  settingsClose.className = "rss-settings-close";
   settings.append(
+    settingsClose,
     settingsTitle,
+    designSettings,
     el(
       "p",
       "記事・既読・保存済みの印は、このブラウザ内に保存します。これらの状態は別の端末やブラウザとは同期しません。ブラウザのデータを消去すると失われます。",
@@ -154,7 +172,6 @@ export async function feedReader(root: HTMLElement) {
       "p",
       "記事を開くと元サイトから本文を取り込み、このブラウザに保存します。取得できないときは理由と元のRSS情報を表示します。翻訳は対応ブラウザの端末内機能を使い、初回に翻訳データをダウンロードする場合があります。読み上げは端末内の音声を使います。教材生成は未接続です。",
     ),
-    button("閉じる", () => settings.close()),
   );
   const targetLabel = el("label", "ロケール（翻訳・読み上げ）");
   targetLabel.htmlFor = "rss-target-language";
@@ -225,7 +242,7 @@ export async function feedReader(root: HTMLElement) {
     autoLabel,
     preferenceNotice,
   );
-  settings.insertBefore(translationSettings, settings.children[1]);
+  settings.insertBefore(translationSettings, designSettings.nextSibling);
   window.addEventListener("languagechange", () => {
     browserLanguageOption.textContent = browserTargetLanguage()
       ? `ブラウザに合わせる（${browserLocale()}）`
@@ -278,12 +295,16 @@ export async function feedReader(root: HTMLElement) {
   );
   settings.insertBefore(refreshSettings, translationSettings);
   settings.addEventListener("close", () => settingsOpen.focus());
-  actions.append(lesson, settingsOpen);
+  const skipToArticles = readingJump("記事へ", "rss-main");
+  skipToArticles.classList.add("rss-skip-navigation");
+  actions.append(skipToArticles, lesson, settingsOpen);
   rootHeader.append(brand, actions);
   const layout = el("div", undefined, "rss-shell");
   const navigation = el("section", undefined, "rss-navigation");
   navigation.setAttribute("aria-label", "収集メニュー");
   const main = el("main", undefined, "rss-main");
+  main.id = "rss-main";
+  main.tabIndex = -1;
   // Keep list controls connected while background writes refresh the results.
   const listHeading = el("h1");
   listHeading.tabIndex = -1;
@@ -1713,7 +1734,7 @@ export async function feedReader(root: HTMLElement) {
         reasoning,
       );
       tagsPanel.append(editor);
-      articleNode.append(tagsPanel);
+
       const importingNow = importing.has(article.id);
       const notice = el(
         "p",
@@ -1768,8 +1789,17 @@ export async function feedReader(root: HTMLElement) {
           : undefined;
       const displayTranslation = translatedView && validTranslation;
       const text = displayTranslation ? displayTranslation.text : originalText;
+      let readingTools: HTMLElement | null = null;
       if (hasText) {
+        const shortcuts = el("nav", undefined, "rss-reading-shortcuts");
+        shortcuts.setAttribute("aria-label", "記事内の移動");
+        const jumpToBody = readingJump("本文を読む", "rss-article-body");
+        const jumpToTools = readingJump("翻訳・読み上げ", "rss-reading-tools");
+        shortcuts.append(jumpToBody, jumpToTools);
+        articleNode.append(shortcuts);
         const tools = el("section", undefined, "rss-reader-tools");
+        tools.id = "rss-reading-tools";
+        tools.tabIndex = -1;
         tools.setAttribute("aria-label", "翻訳と読み上げ");
         const langLabel = el("label", "原文の言語");
         langLabel.htmlFor = "rss-original-language";
@@ -1937,9 +1967,11 @@ export async function feedReader(root: HTMLElement) {
         );
         speechStatus.setAttribute("role", "status");
         tools.append(speechStatus);
-        articleNode.append(tools);
+        readingTools = tools;
       }
       const body = el("div", undefined, "rss-article-body");
+      body.id = "rss-article-body";
+      body.tabIndex = -1;
       body.lang = displayTranslation
         ? displayTranslation.targetLanguage
         : originalLanguage;
@@ -1964,7 +1996,8 @@ export async function feedReader(root: HTMLElement) {
           ? displayTranslation.codeRanges
           : article.content?.codeRanges,
       );
-      articleNode.append(body);
+      articleNode.append(body, tagsPanel);
+      if (readingTools) articleNode.append(readingTools);
       main.append(articleNode);
     } else {
       main.classList.remove("rss-reading");
