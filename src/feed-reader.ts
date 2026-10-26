@@ -89,6 +89,9 @@ export async function feedReader(root: HTMLElement) {
   let paginationKey = "";
   let tagFilter = "";
   const tagCounts = new Map<string, number>();
+  const emptyCounts = { all: 0, unread: 0, saved: 0, pending: 0 };
+  // null is the whole library; an empty feed URL is a standalone article.
+  const articleCounts = new Map<string | null, typeof emptyCounts>();
   let articlePositions = new Map<string, number>();
   const tagDrafts = new Map<string, string>();
   let tagEditorFor: string | null = null;
@@ -659,7 +662,16 @@ export async function feedReader(root: HTMLElement) {
       );
   }
   const articleLoads = new Map<string, number>();
-  function countTags(article: FeedArticle, direction: number) {
+  function countArticleMetadata(article: FeedArticle, direction: 1 | -1) {
+    for (const key of [null, article.feedUrl]) {
+      const counts = articleCounts.get(key) ?? { ...emptyCounts };
+      counts.all += direction;
+      if (!article.read) counts.unread += direction;
+      if (article.saved) counts.saved += direction;
+      if (!article.tags) counts.pending += direction;
+      if (counts.all) articleCounts.set(key, counts);
+      else articleCounts.delete(key);
+    }
     for (const tag of effectiveTags(article)) {
       const count = (tagCounts.get(tag) ?? 0) + direction;
       if (count > 0) tagCounts.set(tag, count);
@@ -683,9 +695,9 @@ export async function feedReader(root: HTMLElement) {
         old.fetchedAt !== article.fetchedAt
       )
         return load();
-      countTags(old, -1);
+      countArticleMetadata(old, -1);
       articles[index] = article;
-      countTags(article, 1);
+      countArticleMetadata(article, 1);
       searchIndex.update(article);
       return;
     }
@@ -706,7 +718,8 @@ export async function feedReader(root: HTMLElement) {
       articles.map((article, index) => [article.id, index]),
     );
     tagCounts.clear();
-    for (const article of articles) countTags(article, 1);
+    articleCounts.clear();
+    for (const article of articles) countArticleMetadata(article, 1);
     searchProblem = "";
     searchPreparation = searchIndex.prepare(articles);
     void searchPreparation
@@ -1391,19 +1404,11 @@ export async function feedReader(root: HTMLElement) {
     );
     const menus = el("nav", undefined, "rss-filters");
     menus.setAttribute("aria-label", "記事の絞り込み");
-    // One allocation-free pass replaces six full-library filter arrays on
-    // every input/background update. Counts still reflect the current source.
-    let allCount = 0,
-      unreadCount = 0,
-      savedCount = 0,
-      pendingCount = 0;
-    for (const item of articles) {
-      if (!item.tags) pendingCount++;
-      if (source && item.feedUrl !== source) continue;
-      allCount++;
-      if (!item.read) unreadCount++;
-      if (item.saved) savedCount++;
-    }
+    // Query input does not change these counts. Maintain them with the same
+    // committed article snapshots as search and tag metadata instead of
+    // walking the library on every render, including zero-result searches.
+    const counts = articleCounts.get(source || null) ?? emptyCounts;
+    const pendingCount = articleCounts.get(null)?.pending ?? 0;
     for (const [value, label] of [
       ["all", "すべての記事"],
       ["unread", "未読"],
@@ -1411,10 +1416,10 @@ export async function feedReader(root: HTMLElement) {
     ]) {
       const count =
         value === "all"
-          ? allCount
+          ? counts.all
           : value === "unread"
-            ? unreadCount
-            : savedCount;
+            ? counts.unread
+            : counts.saved;
       const menu = button(`${label} · ${count}`, () => {
         filter = value;
         selected = null;
