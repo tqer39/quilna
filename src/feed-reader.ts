@@ -25,6 +25,7 @@ import {
   readReaderPreferences,
 } from "./reader-preferences";
 import { ArticleSearch } from "./article-search";
+import { articlePage } from "./article-page";
 import {
   fetchArticle,
   browserTranslator,
@@ -2081,27 +2082,21 @@ export async function feedReader(root: HTMLElement) {
               .sort((a, b) => a - b)
               .map((position) => articles[position])
           : articles;
-      const visible = candidates.filter(
-        (a) =>
-          !preparing &&
-          (!matched || matched.has(a.id)) &&
-          (!source || a.feedUrl === source) &&
-          (!tagFilter ||
-            (tagFilter.startsWith("tag:")
-              ? effectiveTags(a).includes(tagFilter.slice(4))
-              : tagState(a) === tagFilter.slice(6))) &&
-          (filter === "all" || (filter === "saved" ? a.saved : !a.read)),
-      );
-      pageNumber = Math.min(
-        pageNumber,
-        Math.max(0, Math.ceil(visible.length / pageSize) - 1),
-      );
+      const result = articlePage(preparing ? [] : candidates, {
+        matched,
+        source,
+        filter,
+        tagFilter,
+        page: pageNumber,
+        pageSize,
+      });
+      pageNumber = result.page;
       const status = el(
         "p",
         searchProblem ||
           (preparing
             ? "検索を準備中です。入力した条件で準備後に検索します。"
-            : `${visible.length}件 · ${pageNumber * pageSize + (visible.length ? 1 : 0)}–${Math.min((pageNumber + 1) * pageSize, visible.length)}件を表示`),
+            : `${result.count}件 · ${pageNumber * pageSize + (result.count ? 1 : 0)}–${Math.min((pageNumber + 1) * pageSize, result.count)}件を表示`),
       );
       status.id = "rss-search-status";
       status.setAttribute("role", "status");
@@ -2125,10 +2120,7 @@ export async function feedReader(root: HTMLElement) {
         );
       const list = el("ul", undefined, "rss-article-list");
       list.setAttribute("aria-label", "記事一覧");
-      for (const item of visible.slice(
-        pageNumber * pageSize,
-        (pageNumber + 1) * pageSize,
-      )) {
+      for (const item of result.items) {
         const row = el("li");
         row.append(
           el(
@@ -2163,7 +2155,7 @@ export async function feedReader(root: HTMLElement) {
         list.append(row);
       }
       listResults.append(list);
-      if (visible.length > pageSize) {
+      if (result.count > pageSize) {
         const previous = button("前の50件", () => {
           pageNumber--;
           render();
@@ -2173,10 +2165,10 @@ export async function feedReader(root: HTMLElement) {
           pageNumber++;
           render();
         });
-        next.disabled = (pageNumber + 1) * pageSize >= visible.length;
+        next.disabled = (pageNumber + 1) * pageSize >= result.count;
         listResults.append(previous, next);
       }
-      if (!visible.length)
+      if (!result.count)
         listResults.append(
           el(
             "div",
