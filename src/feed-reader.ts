@@ -28,7 +28,7 @@ import {
   translateArticle,
   isLinkOnly,
 } from "./article-content";
-import { ArticleSpeech } from "./article-speech";
+import { ArticleSpeech, voiceKey } from "./article-speech";
 import { appendArticleText } from "./article-code";
 import {
   CloudCollectionClient,
@@ -1842,6 +1842,32 @@ export async function feedReader(root: HTMLElement) {
           status.setAttribute("role", "status");
           tools.append(status);
         }
+        const spokenLanguage = displayTranslation
+          ? displayTranslation.targetLanguage
+          : originalLanguage;
+        const voiceLabel = el("label", "読み上げ音声");
+        voiceLabel.htmlFor = "rss-speech-voice";
+        const voices = el("select");
+        voices.id = voiceLabel.htmlFor;
+        const choose = el("option", "音声を選択してください");
+        choose.value = "";
+        choose.disabled = true;
+        voices.append(choose);
+        for (const voice of speech.voices(spokenLanguage)) {
+          const option = el(
+            "option",
+            `${voice.name || voice.lang} (${voice.lang})${voice.default ? " · 既定" : ""}`,
+          );
+          option.value = voiceKey(voice);
+          voices.append(option);
+        }
+        const selectedVoice = speech.selectedVoice(spokenLanguage);
+        voices.value = selectedVoice ? voiceKey(selectedVoice) : "";
+        voices.disabled = !speech.voices(spokenLanguage).length;
+        voices.addEventListener("change", () =>
+          speech.selectVoice(spokenLanguage, voices.value),
+        );
+        tools.append(voiceLabel, voices);
         const rateLabel = el("label", "読み上げ速度");
         rateLabel.htmlFor = "rss-speech-rate";
         const rate = el("select");
@@ -1859,13 +1885,7 @@ export async function feedReader(root: HTMLElement) {
         });
         tools.append(rateLabel, rate);
         const speak = button("表示中の本文を読み上げ", () =>
-          speech.start(
-            text,
-            displayTranslation
-              ? displayTranslation.targetLanguage
-              : originalLanguage,
-            speechRate,
-          ),
+          speech.start(text, spokenLanguage, speechRate),
         );
         speak.disabled = !speech.supported || speech.state !== "idle";
         tools.append(speak);
@@ -1882,7 +1902,7 @@ export async function feedReader(root: HTMLElement) {
         const speechStatus = el(
           "p",
           speech.supported
-            ? speech.message || "端末内の音声で読み上げます。"
+            ? speech.message || speech.voiceNotice(spokenLanguage)
             : "このブラウザでは読み上げを利用できません。",
           "muted",
         );
@@ -2130,6 +2150,11 @@ export async function feedReader(root: HTMLElement) {
       );
   });
   await connect();
+  if (speech.supported) {
+    // The reader owns this document. Keep the listener through bfcache restores;
+    // navigation destroys it with the document, while pagehide already stops speech.
+    speechSynthesis.addEventListener?.("voiceschanged", () => render());
+  }
   renderCloud();
   await checkCloud();
   collector.start();

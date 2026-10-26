@@ -123,6 +123,9 @@ test("cloud results import after reopening, preserve newer local content and tol
   page,
 }) => {
   const state = initial();
+  // Cloud collection is active during seeding too: the initial page may read
+  // the seeded, overdue feed before its asynchronous startup has completed.
+  state.interval = 15;
   let loseAck = true,
     acknowledgements = 0;
   let foregroundRequests = 0;
@@ -154,7 +157,6 @@ test("cloud results import after reopening, preserve newer local content and tol
     return route.fulfill({ json: state });
   });
   await seed(page);
-  state.interval = 15;
   state.pending = [
     {
       id: snapshotId,

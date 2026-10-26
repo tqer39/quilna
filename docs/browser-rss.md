@@ -75,6 +75,7 @@ Cancellation, disabling automatic translation, changing the target, or switching
 Machine translation can be inaccurate. External translation services require a separate decision.
 
 **表示中の本文を読み上げ** speaks the displayed original or translation using a matching on-device voice.
+**読み上げ音声** lists only local voices for the displayed language. A saved choice takes precedence, then a voice reported as default by the browser, then a single available voice. Multiple non-default voices require an explicit choice instead of silently selecting the first installed voice. A missing saved voice also requires reselection. The choice is saved per language in this browser; storage failure is shown while allowing the current choice to work. Newly available voices update the list. Changing voices stops the previous reading.
 Pause, resume, stop and speed controls are provided. Leaving an article or changing language/view stops speech.
 Starting again after a paused stop, article navigation or speed change clears the speech engine's paused state after cancelling the previous queue, so the new reading can start without replaying cancelled text.
 If a chunk finishes just before pause, its delayed completion event preserves the paused controls; one resume action continues the next chunk.
@@ -85,6 +86,9 @@ Reading cached articles during a feed/API outage is supported while the local ap
 reopening the app with that server stopped is not implemented.
 
 On 2026-10-24, an isolated in-app browser origin imported a public article, saved its original, and produced and saved a Japanese translation with the real browser Translator API. Speech start/pause/stop controls were exercised with the real browser API; acoustic quality was not assessed. The language detector API was exposed but its model was unavailable in this host; its failure/manual-selection path was checked in the real UI, while successful, uncertain, mixed-language and cancelled detections were checked with test doubles. This is not full product usability acceptance.
+
+On 2026-10-27 the owner confirmed audible Japanese on the private deployment but reported noisy English that ended quickly (#69). This Mac's English voice list began with Albert; Samantha and Daniel were also available. Voice selection removes that implicit first-voice dependency, but manual acoustic verification remains required. Automated browser speech also ended immediately for Japanese that the owner could hear manually, so those event observations do not prove the host's audible behavior or resolution of the English symptom.
+The owner then manually tested the local corrected reader with **Samantha (en-US)** and confirmed normal English audio. This confirms that voice on this Mac; other voices, devices, and the deployment remain separate checks.
 
 ## Article tags
 
