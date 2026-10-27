@@ -52,6 +52,9 @@ func (e Engine) New(taskPath string) (*Run, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := verifySnapshots(task.ProtectedFiles); err != nil {
+		return nil, err
+	}
 	if _, err := gitRoot(task.Workspace); err != nil {
 		return nil, err
 	}
@@ -197,6 +200,9 @@ func (e Engine) Execute(ctx context.Context, id string, reconcileLocal bool) (*R
 		if fixedErr != nil || fixedHash != r.TaskHash {
 			return e.finish(r, "blocked", "fixed-task-modified")
 		}
+		if err := verifySnapshots(r.Task.ProtectedFiles); err != nil {
+			return e.finish(r, "blocked", err.Error())
+		}
 		if r.Operations >= r.Task.MaxOperations {
 			return e.finish(r, "blocked", "operation-budget-exhausted")
 		}
@@ -226,18 +232,23 @@ func (e Engine) Execute(ctx context.Context, id string, reconcileLocal bool) (*R
 		if err := e.Store.Save(r, false); err != nil {
 			return r, err
 		}
-		inputEvidence := append([]Evidence(nil), r.Evidence...)
+		inputEvidence := latestCheckEvidence(r)
 		for i := range inputEvidence {
 			inputEvidence[i].Log = filepath.Join(e.Store.Directory, inputEvidence[i].Log)
 		}
+		history, historyErr := summarizeHistory(r)
+		if historyErr != nil {
+			return e.finish(r, "blocked", historyErr.Error())
+		}
 		input, _ := json.Marshal(struct {
-			Goal       string     `json:"goal"`
-			Acceptance []string   `json:"acceptance"`
-			CodeHash   string     `json:"codeHash"`
-			TaskHash   string     `json:"taskHash"`
-			Findings   []string   `json:"findings"`
-			Evidence   []Evidence `json:"evidence"`
-		}{r.Task.Goal, r.Task.Acceptance, before, r.TaskHash, r.Findings, inputEvidence})
+			Goal       string         `json:"goal"`
+			Acceptance []string       `json:"acceptance"`
+			CodeHash   string         `json:"codeHash"`
+			TaskHash   string         `json:"taskHash"`
+			Findings   []string       `json:"findings"`
+			Evidence   []Evidence     `json:"evidence"`
+			History    HistorySummary `json:"history"`
+		}{r.Task.Goal, r.Task.Acceptance, before, r.TaskHash, r.Findings, inputEvidence, history})
 		var result processResult
 		started := time.Now().UTC()
 		switch r.Phase {
@@ -281,6 +292,13 @@ func (e Engine) Execute(ctx context.Context, id string, reconcileLocal bool) (*R
 		}
 		r.Pending.ObservedHash = after
 		r.Evidence = append(r.Evidence, Evidence{Model: r.Pending.Model, Operation: r.Operations, Phase: r.Phase, CodeHash: before, AfterHash: after, ExitCode: result.exitCode, Outcome: result.outcome, StartedAt: started.Format(time.RFC3339Nano), DurationMillis: result.duration.Milliseconds(), Log: logName, LogHash: logHash})
+		if r.Phase == "checks" {
+			index := r.CheckIndex
+			r.Evidence[len(r.Evidence)-1].CheckIndex = &index
+		}
+		if err := verifySnapshots(r.Task.ProtectedFiles); err != nil {
+			return e.finish(r, "blocked", err.Error())
+		}
 		if (effect == "verification" || effect == "model-review") && before != after {
 			return e.finish(r, "blocked", "verification-modified-code")
 		}
@@ -346,6 +364,9 @@ func (e Engine) Execute(ctx context.Context, id string, reconcileLocal bool) (*R
 }
 
 func (e Engine) verifyEvidence(r *Run) error {
+	if err := verifySnapshots(r.Task.ProtectedFiles); err != nil {
+		return err
+	}
 	for _, proof := range r.Evidence {
 		if !strings.HasPrefix(proof.Log, r.ID+"/") || filepath.Clean(proof.Log) != proof.Log {
 			return errors.New("evidence-path-invalid")
@@ -405,6 +426,9 @@ func (e Engine) recoverReview(ctx context.Context, r *Run) (*Run, error) {
 		return r, err
 	}
 	r.Evidence = append(r.Evidence, Evidence{Model: r.Pending.Model, Operation: r.Operations, Phase: "review-recovery", CodeHash: current, AfterHash: after, ExitCode: result.exitCode, Outcome: result.outcome, StartedAt: started.Format(time.RFC3339Nano), DurationMillis: result.duration.Milliseconds(), Log: logName, LogHash: logHash})
+	if err := verifySnapshots(r.Task.ProtectedFiles); err != nil {
+		return e.finish(r, "blocked", err.Error())
+	}
 	if current != after {
 		return e.finish(r, "blocked", "review-recovery-modified-code")
 	}
@@ -471,6 +495,9 @@ func (e Engine) recoverModelAction(ctx context.Context, r *Run, reconcile bool) 
 		return r, err
 	}
 	r.Evidence = append(r.Evidence, Evidence{Model: r.Pending.Model, Operation: r.Operations, Phase: r.Pending.Phase + "-recovery", CodeHash: before, AfterHash: after, ExitCode: result.exitCode, Outcome: result.outcome, StartedAt: started.Format(time.RFC3339Nano), DurationMillis: result.duration.Milliseconds(), Log: logName, LogHash: logHash})
+	if err := verifySnapshots(r.Task.ProtectedFiles); err != nil {
+		return e.finish(r, "blocked", err.Error())
+	}
 	if before != after {
 		return e.finish(r, "blocked", "model-recovery-modified-code")
 	}

@@ -13,6 +13,7 @@ import (
 )
 
 type Evidence struct {
+	CheckIndex     *int           `json:"checkIndex,omitempty"`
 	Model          *ModelMetadata `json:"model,omitempty"`
 	Operation      int            `json:"operation"`
 	Phase          string         `json:"phase"`
@@ -178,6 +179,11 @@ func (s *Store) Load(id string) (*Run, error) {
 	validPhase := r.Phase == "implement" || r.Phase == "checks" || r.Phase == "review" || r.Phase == "repair"
 	if !validPhase || r.CheckIndex < 0 || r.CheckIndex > len(r.Task.Checks) || (r.Phase == "checks" && r.CheckIndex == len(r.Task.Checks)) || r.Operations < 0 || r.Operations > r.Task.MaxOperations || r.Cycle < 0 || r.Cycle > r.Task.MaxRepairCycles || r.ElapsedMillis < 0 || len(r.Evidence) > 64 || !hashPattern.MatchString(r.CodeHash) {
 		return nil, errors.New("ledger-state-invalid")
+	}
+	for _, proof := range r.Evidence {
+		if proof.CheckIndex != nil && (proof.Phase != "checks" || *proof.CheckIndex < 0 || *proof.CheckIndex >= len(r.Task.Checks)) {
+			return nil, errors.New("ledger-evidence-invalid")
+		}
 	}
 	r.StopRequested = rows[0].Stop != 0
 	return &r, nil

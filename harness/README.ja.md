@@ -95,7 +95,7 @@ Git管理領域へファイルを書きません。
 この識別は、プロセス中に一時変更して元に戻す行為を検知する監視ではありません。
 
 各コマンドのstdinには、`goal`、`acceptance`、`codeHash`、`taskHash`、
-`findings`、`evidence`のJSONを渡します。reviewerのstdoutは次の形式のみです。
+`findings`、`evidence`、`history`のJSONを渡します。reviewerのstdoutは次の形式のみです。
 
 ```json
 {"decision":"approve","codeHash":"64文字の小文字SHA-256","findings":[]}
@@ -113,6 +113,43 @@ Codexのreviewには、範囲内で直せる指摘は`revise`、安全に達成�
 固定した担当指示で明示的に許可した場合は、実装・修正担当もローカルの予備検査を行えます。
 予備検査は合格証拠に含めず、ハーネス側の固定checksを別に実行します。
 macOSの開発ツールがsandbox外への一時書込を要求すると、担当内の予備検査は実行できません。
+
+## 検証用ファイルの固定と証拠の要約
+
+実装・修正を担当へ渡す前に、信頼する検証スクリプトと回帰テストを固定します。
+
+```bash
+/private/tmp/textbook-harness freeze-task \
+  -task /absolute/path/task.json \
+  -file /absolute/path/fixed-regression.swift \
+  -file /absolute/path/trusted-test-runner \
+  -output /absolute/path/task.frozen.json
+/private/tmp/textbook-harness run -task /absolute/path/task.frozen.json -state /absolute/path/state
+/private/tmp/textbook-harness summary -state /absolute/path/state -run RUN_ID
+```
+
+`freeze-task`は指定された目標・checks・review設定・上限を保ち、canonicalな絶対パス、内容のSHA-256、ファイルモードを持つ
+`protectedFiles`を追加します。元ファイルを上書きせず、新しい非公開ファイルを作成し、変更済みの固定ファイルを暗黙に再固定しません。
+出力先の親ディレクトリは先に作成してください。固定ファイルは編集対象workspaceの外にも置けます。
+明示したファイルだけが対象です。この省略可能なフィールドを持たない既存タスクの動作は変わりません。
+通常ファイルを最大256個、各256MiBまで扱います。欠落・symlink・内容やモードの変更・FIFOなどの通常ファイル以外を拒否し、FIFOの書込側を待ちません。
+エンジンは各操作の前後、復旧時、既存証拠の確認時に照合します。
+これはcheckpointでの変更検出であり、OSによる書込禁止や、checkpoint間に元へ戻された一時変更の検出ではありません。
+
+`summary`は記録されたソースハッシュに対する最新checks、終了コード、所要時間、ハッシュ付きログ参照と、
+過去の失敗数・修復回数・同一チェックの繰り返し・証拠に記録されたモデル利用量を返します。
+未完了の処理は`phase`と`pendingOperation`で別に示し、まだ証拠になっていない利用量を履歴カウンターで推測しません。
+終了コード0は要約の読取成功を意味し、現在の合格を意味しません。`status`と`stale`を併せて確認してください。
+チェック番号がない旧証拠の繰り返し回数は、推測せず不明（`null`）として返します。
+利用量はthread／turnの組ごとに記録された累積totalが最大のカウンターを採用し、復旧で同じturnを二重計上しません。
+カウンターを持つturn数と、turnの識別情報が不明な操作数を明示します。欠けた利用量は不明のままです。
+これは記録された累積リクエストカウンターであり、1回のコンテキスト長・金額・新たなモデル品質測定ではありません。
+
+モデルとコマンドへの入力には、現在のソースに対する最新checksと短い`history`要約を渡します。
+過去の証拠全体は台帳とログに残し、失敗数や修復回数を隠しません。
+詳細ログは必要なときに読み、再利用前に記録されたSHA-256を照合してください。
+保守された製品向けタスク生成、実行成果物のmanifest、代表タスクでの実モデル比較は後続作業です。
+ネイティブUIや実機が使えない場合は外部の前提条件として明示し、ソース修正を繰り返す理由にしません。
 
 ## 停止・再開と証拠
 

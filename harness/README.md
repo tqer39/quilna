@@ -95,7 +95,7 @@ Checkpoints made with an older encoding safely become stale and must be validate
 This identifies code snapshots; it does not monitor temporary changes that are reverted during a process.
 
 Each command receives JSON on stdin containing `goal`, `acceptance`, `codeHash`, `taskHash`,
-`findings`, and `evidence`. Reviewer stdout must use only this format:
+`findings`, `evidence`, and `history`. Reviewer stdout must use only this format:
 
 ```json
 {"decision":"approve","codeHash":"64文字の小文字SHA-256","findings":[]}
@@ -113,6 +113,46 @@ The harness does not reinterpret `reject` as a request for repair.
 Implementation and repair owners may also run local preliminary checks when explicitly permitted by their frozen role instructions.
 Preliminary checks are not acceptance evidence; the harness runs its fixed checks separately.
 Preliminary checks inside an owner's environment cannot run when macOS development tools require temporary writes outside the sandbox.
+
+## Fixed controls and concise evidence
+
+Freeze trusted check scripts and regression tests before assigning implementation or repair:
+
+```bash
+/private/tmp/textbook-harness freeze-task \
+  -task /absolute/path/task.json \
+  -file /absolute/path/fixed-regression.swift \
+  -file /absolute/path/trusted-test-runner \
+  -output /absolute/path/task.frozen.json
+/private/tmp/textbook-harness run -task /absolute/path/task.frozen.json -state /absolute/path/state
+/private/tmp/textbook-harness summary -state /absolute/path/state -run RUN_ID
+```
+
+`freeze-task` preserves the supplied goals, checks, review configuration, and limits, and adds
+`protectedFiles` entries containing canonical absolute paths, SHA-256 content hashes, and file modes.
+It creates a new private file without overwriting the original or silently refreezing changed controls.
+The parent directory must already exist. Controls may be outside the editable workspace.
+Only explicitly listed files are protected; tasks without this optional field retain their prior behavior.
+A maximum of 256 regular files, each at most 256 MiB, is supported. Missing files, symlinks,
+content/mode changes, and nonregular files such as FIFOs are refused without waiting for a FIFO writer.
+The engine verifies controls before and after operations, on recovery, and when checking existing evidence.
+This detects checkpoint changes; it is not an OS write prohibition or detection of transient changes reverted between checkpoints.
+
+`summary` reports the latest checks for the recorded source hash, exit codes, durations, and hash-linked log paths,
+plus historical failures, repair cycles, repeated check operations, and model usage from recorded evidence.
+`phase` and `pendingOperation` expose unfinished work separately; history counters do not estimate usage that has not reached evidence.
+Its exit code 0 means that the summary was read, not that the work is currently accepted; inspect `status` and `stale` together.
+Legacy evidence without check indices reports an unknown (`null`) repeated-check count rather than inventing one.
+Usage uses the highest recorded cumulative total for each distinct thread/turn, avoiding double counting after recovery.
+Coverage fields identify turns with counters and operations with unknown turn identity. Missing counters remain unknown.
+These are recorded cumulative request counters, not a single context-window size, a monetary bill, or a new measurement of model quality.
+
+Model and command inputs carry the latest checks for the current source and a compact `history` summary;
+older raw evidence remains in the ledger and logs. Previous failures and repair counts are not concealed.
+Read the full log only when needed and verify its recorded SHA-256 before reusing it.
+Maintained product-profile generation, runtime artifact manifests, and representative live-model comparisons
+remain follow-up work. Unavailable native UI or physical devices must remain explicit external prerequisites,
+not repeated source-repair attempts.
 
 ## Stop, resume, and evidence
 
