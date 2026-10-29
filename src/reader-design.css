@@ -860,3 +860,13 @@
   outline-offset: 2px;
   background: var(--viewer-soft);
 }
+
+.rss-quote-card {
+  overflow-wrap: anywhere;
+}
+.rss-quote-card blockquote {
+  white-space: pre-wrap;
+  margin-inline: 0;
+  padding-inline-start: 0.8rem;
+  border-inline-start: 3px solid var(--viewer-accent);
+}

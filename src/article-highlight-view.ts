@@ -62,7 +62,7 @@ export class ArticleHighlightView {
   private busy = false;
   private ready = false;
 
-  constructor() {
+  constructor(private readonly connect?: (quote: ArticleHighlight) => void) {
     this.root.id = "rss-highlights";
     this.root.tabIndex = -1;
     this.root.setAttribute("aria-label", "ハイライトとメモ");
@@ -566,6 +566,11 @@ export class ArticleHighlightView {
       });
       edit.disabled = remove.disabled = this.busy || !this.ready;
       item.append(jump, edit, remove);
+      if (this.connect) {
+        const connect = button("この引用をつなぐ", () => this.connect?.(h));
+        connect.disabled = this.busy || !this.ready;
+        item.append(connect);
+      }
       if (h.url && articleURL(h.url, h.url) === h.url) {
         const link = el("a", "引用元の記事を開く");
         link.href = h.url;

@@ -66,6 +66,7 @@ export class ArticleGraphView {
       quote: ArticleHighlight,
       signal: AbortSignal,
     ) => Promise<string>,
+    private readonly connect?: (quote: ArticleHighlight) => void,
   ) {
     this.root.id = "rss-graph";
     this.root.tabIndex = -1;
@@ -103,7 +104,11 @@ export class ArticleGraphView {
       else this.stop();
     });
     if (typeof BroadcastChannel !== "undefined")
-      for (const name of ["quilna.connections.v1", "quilna.highlights.v1"]) {
+      for (const name of [
+        "quilna.connections.v1",
+        "quilna.highlights.v1",
+        "quilna.quote-connections.v1",
+      ]) {
         const channel = new BroadcastChannel(name);
         channel.addEventListener("message", () => {
           if (this.details.open && this.root.isConnected) void this.load();
@@ -132,6 +137,12 @@ export class ArticleGraphView {
   detach() {
     this.stop();
     this.article = undefined;
+  }
+  showQuote(quote: ArticleHighlight) {
+    this.details.open = true;
+    this.focus({ kind: "quote", quote });
+    this.root.scrollIntoView({ block: "center" });
+    this.root.focus({ preventScroll: true });
   }
   private stop() {
     this.generation++;
@@ -307,6 +318,8 @@ export class ArticleGraphView {
           "muted",
         ),
       );
+      if (quote.note)
+        this.evidence.append(el("p", quote.note, "rss-highlight-memo"));
       const notice = el(
         "p",
         "表示中の本文と版・言語・引用が一致する場合だけ、その位置へ移動します。",
@@ -336,6 +349,10 @@ export class ArticleGraphView {
           });
       });
       this.evidence.append(reveal, notice);
+      if (this.connect)
+        this.evidence.append(
+          button("この引用のつながりを編集", () => this.connect?.(quote)),
+        );
     }
     for (const ref of edge.sources) this.evidence.append(this.source(ref));
     this.evidence.append(

@@ -30,6 +30,7 @@ import { ArticleListView } from "./article-list-view";
 import { ArticleHighlightView } from "./article-highlight-view";
 import { ArticleConnectionView } from "./article-connection-view";
 import { ArticleGraphView } from "./article-graph-view";
+import { QuoteConnectionView } from "./quote-connection-view";
 import { LearningCueView } from "./learning-cue-view";
 import {
   fetchArticle,
@@ -322,7 +323,13 @@ export async function feedReader(root: HTMLElement) {
     "気になる情報を集めて、読む。学びたい記事を保存しておきましょう。",
     "rss-lede",
   );
-  const highlights = new ArticleHighlightView();
+  const highlights = new ArticleHighlightView((quote) =>
+    quoteConnections.begin(quote),
+  );
+  const quoteConnections = new QuoteConnectionView(
+    () => articles,
+    (quote) => graph.showQuote(quote),
+  );
   const learning = new LearningCueView(
     (view, cue) => highlights.revealExcerpt(view, cue.start, cue.end),
     (view, cue) =>
@@ -356,6 +363,7 @@ export async function feedReader(root: HTMLElement) {
       if (position !== undefined) openArticle(articles[position]);
     },
     (quote, signal) => highlights.revealSaved(quote, signal),
+    (quote) => quoteConnections.begin(quote),
   );
   const listView = new ArticleListView({
     open: (id) => {
@@ -2086,6 +2094,7 @@ export async function feedReader(root: HTMLElement) {
         articleNode.append(
           body,
           panel,
+          quoteConnections.mount(article.id),
           learning.mount(readingView),
           connections.mount(article, relationLibraryRevision),
           graph.mount(article, relationLibraryRevision),
@@ -2093,6 +2102,7 @@ export async function feedReader(root: HTMLElement) {
         );
       } else {
         highlights.detach();
+        quoteConnections.detach();
         learning.detach();
         connections.detach();
         graph.detach();
@@ -2103,6 +2113,7 @@ export async function feedReader(root: HTMLElement) {
       main.append(articleNode);
     } else {
       highlights.detach();
+      quoteConnections.detach();
       learning.detach();
       connections.detach();
       graph.detach();

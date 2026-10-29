@@ -4,6 +4,10 @@ import {
   type ArticleReference,
 } from "./article-connections";
 import { readHighlights, type ArticleHighlight } from "./article-highlights";
+import {
+  readQuoteConnections,
+  readArticleQuoteConnections,
+} from "./quote-connections";
 import { effectiveTags, tagState } from "./article-tags";
 import type { FeedArticle } from "./feed-parser";
 
@@ -96,7 +100,9 @@ export async function graphNeighborhood(
       (h) => h.id === quoteId,
     );
     signal.throwIfAborted();
-    if (!quote)
+    const connections = await readQuoteConnections(quoteId);
+    signal.throwIfAborted();
+    if (!quote && !connections.length)
       return {
         center,
         edges: [],
@@ -105,19 +111,33 @@ export async function graphNeighborhood(
           "この引用は削除されています。元の記事から探索をやり直してください。",
         ],
       };
-    center = { kind: "quote", quote };
+    if (!quote)
+      notices.push(
+        "この引用は一覧から削除されています。関連を保存した時点の引用・メモを表示します。",
+      );
+    const source = quote ?? center.quote;
+    center = { kind: "quote", quote: source };
     edges.push({
-      node: { kind: "article", ref: quoteRef(quote) },
+      node: { kind: "article", ref: quoteRef(source) },
       kind: "quote",
-      reason: quote.note || "保存した引用と、その出典記事の関係です。",
-      sources: [quoteRef(quote)],
+      reason: source.note || "保存した引用と、その出典記事の関係です。",
+      sources: [quoteRef(source)],
     });
+    for (const c of connections)
+      edges.push({
+        node: { kind: "quote", quote: c.from.id === quoteId ? c.to : c.from },
+        kind: "linked",
+        reason: `${c.reason}（関連保存時の引用・メモ）`,
+        sources: [quoteRef(c.from), quoteRef(c.to)],
+      });
   } else {
     const ref = center.ref;
-    const [connections, highlights] = await Promise.allSettled([
-      readConnections(ref.id),
-      readHighlights(ref.id),
-    ]);
+    const [connections, highlights, quoteConnections] =
+      await Promise.allSettled([
+        readConnections(ref.id),
+        readHighlights(ref.id),
+        readArticleQuoteConnections(ref.id),
+      ]);
     signal.throwIfAborted();
     if (connections.status === "fulfilled") {
       for (const c of connections.value) {
@@ -144,6 +164,29 @@ export async function graphNeighborhood(
     } else
       notices.push(
         "引用を取得できません。再読み込みしてください。保存した記録は変更していません。",
+      );
+    if (quoteConnections.status === "fulfilled") {
+      const seen = new Set(
+        edges
+          .filter((e) => e.node.kind === "quote")
+          .map((e) => graphKey(e.node)),
+      );
+      for (const c of quoteConnections.value)
+        for (const h of [c.from, c.to]) {
+          const node: GraphNode = { kind: "quote", quote: h };
+          if (h.articleId !== ref.id || seen.has(graphKey(node))) continue;
+          seen.add(graphKey(node));
+          edges.push({
+            node,
+            kind: "quote",
+            reason:
+              "関連を保存した時点の引用・メモです。ハイライト一覧から削除された引用も残しています。",
+            sources: [quoteRef(h)],
+          });
+        }
+    } else
+      notices.push(
+        "引用のつながりを取得できません。再読み込みしてください。保存した記録は変更していません。",
       );
     const article = lookup(ref.id);
     if (article) {
