@@ -44,6 +44,24 @@ The first implementation slice is reading and persistent highlights, followed by
 Validate each slice with the owner in the browser. Textbook generation remains available as a later, optional deepening path from selected material rather than the default destination after reading.
 Read-aloud improvements must not displace these priorities, except when fixing a defect that blocks reading or risks saved data.
 
+## Reusable source documents
+
+The owner's proposal on 2026-10-30 is tracked in [Issue #74](https://github.com/tqer39/quilna/issues/74): reuse an already collected document as learning material for multiple users. This is a planned architecture, not enabled cross-user sharing. Current browser article IDs combine the feed URL and its item GUID; the cloud collector is an owner-isolated delivery queue, not a shared full-text catalog.
+
+| Record | Responsibility |
+| --- | --- |
+| Document ID | An opaque identity with access scope and verified source aliases. Different feeds can refer to the same document without sharing their subscribers. |
+| Immutable version ID | The exact extracted text, code ranges, language, provenance and extraction format/version. A representation hash detects identical versions; it does not establish document identity, ownership or access. |
+| User library record | A user's reference to a document and chosen version, with their own saved/read state, subscriptions and manual tags. |
+| Annotation or learning record | A user's quote, note, connection or answer attached to its source version. Updating a source must not relocate existing evidence. |
+| Derived artifact | A translation or analysis keyed by source version, language, processing method/version and relevant settings; personal inputs keep it outside the shared cache. |
+
+Reuse a valid cached version without downloading or extracting it again. Revalidate stale sources, using conditional requests where supported; changed content creates a new immutable version. Group concurrent requests within the same access scope and source identity, with persistent leases, expiry and idempotent writes. Retain source aliases and provenance when identical text appears at different URLs. Do not merge distinct documents by stripping arbitrary query parameters or trusting unverified cross-domain canonical declarations.
+
+Shared reuse requires an explicit sharing/access policy for the source. Publicly fetchable text is not automatically added to an unrestricted shared catalog. Keep private, authenticated and uploaded documents in their intended scope; knowing an ID or hash must not bypass authorization or reveal a private document's existence. Personal highlights, notes, learning history and subscriptions remain separate. This proposal does not add users to the current owner-only deployment or publish existing personal data.
+
+Implement and validate the common identity/version model with local fixtures before enabling a shared service. Preserve old browser IDs through a mapping so saved articles, highlights and connections survive migration. Cover two-user isolation and reuse, duplicate/concurrent acquisition, URL aliases and false merges, source updates, access revocation/retention, failure recovery and the existing 100,000-article/200 ms local search gate. Keep local copies for reading; shared storage does not make every read depend on the network. Source sharing/retention conditions and the deployment boundary must be resolved before shared delivery is enabled.
+
 ## Acceptance loop
 
 1. Start browser acceptance with subscriptions, an article list, reading, saving and reopening. Then validate highlights, learning cues, evidence-backed connections and their relationship view. Connect selected sources to optional textbook generation, contents/diagrams, questions/explanations and saved learning progress afterward.
