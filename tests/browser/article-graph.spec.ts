@@ -256,6 +256,18 @@ for (const design of ["studio", "editorial", "focus"])
       design,
     );
     await expect(page.locator(".rss-graph-node")).toHaveCount(8);
+    const connectionGap = await page
+      .locator(".rss-graph-canvas")
+      .evaluate((canvas) => {
+        const center = canvas
+          .querySelector(".rss-graph-center")!
+          .getBoundingClientRect();
+        const path = canvas
+          .querySelector(".rss-graph-edge")!
+          .getBoundingClientRect();
+        return Math.abs(center.bottom - path.top);
+      });
+    expect(connectionGap).toBeLessThan(1);
     await expect(page.getByRole("button", { name: "前の8件" })).toBeDisabled();
     await page.getByRole("button", { name: "次の8件" }).click();
     await expect(page.locator(".rss-graph-node")).toHaveCount(6);
