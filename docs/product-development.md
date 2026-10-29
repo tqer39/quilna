@@ -20,7 +20,7 @@ The owner's priority clarification on 2026-10-27 makes RSS reading and subscript
 Translation and read-aloud support reading; their controls and development work must remain secondary to collecting and reading articles.
 Use the reader locale as the translation default and allow changing it in settings, without making language or audio setup a prerequisite for reading.
 
-The following is the intended UI and implementation order. Persistent highlights/notes, reasoned related-article candidates, explicit article connections, source-bound optional learning questions and a focused relationship graph are implemented in the browser branch (see the [reader guide](browser-rss.md#highlights-and-notes)); quotation-level connections with preserved source snapshots are also implemented. The owner accepted the usability of the three viewer designs on 2026-10-27; this does not accept the whole browser product or the newer learning features:
+The following is the intended UI and implementation order. Persistent highlights/notes, reasoned related-article candidates, explicit article connections, source-bound optional learning questions and a focused relationship graph are implemented in the browser branch (see the [reader guide](browser-rss.md#highlights-and-notes)); quotation-level connections with preserved source snapshots and explicit reflections written by the reader are also implemented. The owner accepted the usability of the three viewer designs on 2026-10-27; this does not accept the whole browser product or the newer learning features:
 
 | Step | Main experience | Acceptance condition |
 | --- | --- | --- |

@@ -28,6 +28,7 @@ import { ArticleSearch } from "./article-search";
 import { articlePage } from "./article-page";
 import { ArticleListView } from "./article-list-view";
 import { ArticleHighlightView } from "./article-highlight-view";
+import { ArticleLearningView } from "./article-learning-view";
 import { ArticleConnectionView } from "./article-connection-view";
 import { ArticleGraphView } from "./article-graph-view";
 import { QuoteConnectionView } from "./quote-connection-view";
@@ -323,8 +324,12 @@ export async function feedReader(root: HTMLElement) {
     "気になる情報を集めて、読む。学びたい記事を保存しておきましょう。",
     "rss-lede",
   );
-  const highlights = new ArticleHighlightView((quote) =>
-    quoteConnections.begin(quote),
+  const highlights = new ArticleHighlightView(
+    (quote) => quoteConnections.begin(quote),
+    (quote) => learningRecords.begin(quote),
+  );
+  const learningRecords = new ArticleLearningView((quote, signal) =>
+    highlights.revealSaved(quote, signal),
   );
   const quoteConnections = new QuoteConnectionView(
     () => articles,
@@ -1873,6 +1878,7 @@ export async function feedReader(root: HTMLElement) {
         shortcuts.append(
           jumpToBody,
           readingJump("ハイライト・メモ", "rss-highlights"),
+          readingJump("自分の学び", "rss-learning-records"),
           readingJump("学ぶきっかけ", "rss-learning-cues"),
           readingJump("情報のつながり", "rss-connections"),
           readingJump("関係図", "rss-graph"),
@@ -2095,6 +2101,7 @@ export async function feedReader(root: HTMLElement) {
           body,
           panel,
           quoteConnections.mount(article.id),
+          learningRecords.mount(article.id),
           learning.mount(readingView),
           connections.mount(article, relationLibraryRevision),
           graph.mount(article, relationLibraryRevision),
@@ -2103,6 +2110,7 @@ export async function feedReader(root: HTMLElement) {
       } else {
         highlights.detach();
         quoteConnections.detach();
+        learningRecords.detach();
         learning.detach();
         connections.detach();
         graph.detach();
@@ -2114,6 +2122,7 @@ export async function feedReader(root: HTMLElement) {
     } else {
       highlights.detach();
       quoteConnections.detach();
+      learningRecords.detach();
       learning.detach();
       connections.detach();
       graph.detach();
