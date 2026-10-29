@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import type { FeedArticle } from "../../src/feed-parser";
 const url = "https://publisher.example.org/story";
 const paragraph =
   "This is the complete article about learning from original sources. It explains the research, its limitations, and why preserving evidence matters to a reader. ";
@@ -149,6 +150,7 @@ test("code survives import, translation and offline reopen without reaching the 
   );
   await add(page);
   const code = page.locator(".rss-article-body pre code");
+  await expect(code.locator(".hljs-keyword").first()).toBeVisible();
   await expect(code).toHaveText(codeExample, { useInnerText: false });
   expect(await code.textContent()).toBe(codeExample);
   await expect(page.locator(".rss-article-body p code")).toHaveText(
@@ -185,6 +187,7 @@ test("code survives import, translation and offline reopen without reaching the 
       () => document.documentElement.scrollWidth <= innerWidth,
     ),
   ).toBe(true);
+  await expect(code.locator(".hljs-keyword").first()).toBeVisible();
 });
 test("code HTML line breaks remain literal newlines including consecutive br elements", async ({
   page,
@@ -1330,4 +1333,194 @@ test("a losing cross-tab import cannot replace the language of the saved origina
     "en",
   );
   await other.close();
+});
+
+for (const design of ["Studio", "Editorial", "Focus"]) {
+  test(`${design} code syntax keeps contrast, exact selection and saved quote offsets`, async ({
+    page,
+  }, info) => {
+    await page.addInitScript((design) => {
+      localStorage.setItem("quilna.reader.design.v1", design.toLowerCase());
+      localStorage.setItem("quilna.feed.refresh.v1", "0");
+    }, design);
+    const sample =
+      "// Preserve 😀, whitespace and literal markup\n" +
+      codeExample +
+      "\nconst count = 42;\n";
+    const escaped = sample
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;");
+    await page.route("**/api/feeds/fetch", (route) =>
+      route.fulfill({
+        json: {
+          url,
+          html: codeHTML.replace(
+            /<pre>[\s\S]*?<\/pre>/,
+            `<pre><code>${escaped}</code></pre>`,
+          ),
+        },
+      }),
+    );
+    await add(page);
+    const code = page.locator(".rss-article-body pre code");
+    await expect(code.locator(".hljs-keyword").first()).toBeVisible();
+    expect(await code.textContent()).toBe(sample);
+    const colors = await code.evaluate((node) => {
+      const luminance = (color: string) => {
+        const channels = color
+          .match(/[\d.]+/g)!
+          .slice(0, 3)
+          .map(Number)
+          .map((v) => {
+            const s = v / 255;
+            return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+          });
+        return (
+          channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722
+        );
+      };
+      return Array.from(node.querySelectorAll("span")).map((span) => {
+        const color = getComputedStyle(span).color;
+        const fg = luminance(color);
+        let parent: Element | null = span;
+        let background = "rgba(0, 0, 0, 0)";
+        while (parent && background === "rgba(0, 0, 0, 0)") {
+          background = getComputedStyle(parent).backgroundColor;
+          parent = parent.parentElement;
+        }
+        const bg = luminance(background);
+        return {
+          color,
+          contrast: (Math.max(bg, fg) + 0.05) / (Math.min(bg, fg) + 0.05),
+        };
+      });
+    });
+    expect(new Set(colors.map((c) => c.color)).size).toBeGreaterThanOrEqual(4);
+    for (const c of colors) expect(c.contrast).toBeGreaterThanOrEqual(4.5);
+    if (info.project.name === "mobile")
+      await page.setViewportSize({ width: 320, height: 844 });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+    await code.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: info.outputPath(`syntax-${design}.png`) });
+    await expect(
+      page.getByRole("button", {
+        name: "引用の候補を探す",
+        exact: true,
+        includeHidden: true,
+      }),
+    ).toBeEnabled();
+    await reopen(page);
+    await expect(
+      page.getByRole("button", {
+        name: "引用の候補を探す",
+        exact: true,
+        includeHidden: true,
+      }),
+    ).toBeEnabled();
+    const selected = await code.evaluate((node) => {
+      const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+      const nodes: Text[] = [];
+      for (let n = walker.nextNode(); n; n = walker.nextNode())
+        nodes.push(n as Text);
+      const range = document.createRange();
+      range.setStart(nodes[0], 0);
+      range.setEnd(nodes.at(-1)!, nodes.at(-1)!.length);
+      const selection = getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      document.dispatchEvent(new Event("selectionchange"));
+      return range.toString();
+    });
+    expect(selected).toBe(sample);
+    await page
+      .getByRole("button", { name: "選択範囲をハイライト", exact: true })
+      .click();
+    await page
+      .getByRole("button", { name: "ハイライトを保存", exact: true })
+      .click();
+    await expect(page.locator("#rss-highlights summary")).toHaveText(
+      "ハイライト・メモ（1）",
+    );
+    expect(await code.textContent()).toBe(sample);
+    expect(await code.locator("mark").allTextContents()).not.toHaveLength(0);
+    const saved = await page.evaluate(async () => {
+      const path = "/src/feed-store.ts";
+      const db = await (await import(path)).openFeedLibrary();
+      const articles = await new Promise<FeedArticle[]>((resolve, reject) => {
+        const req = db.transaction("articles").objectStore("articles").getAll();
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+      db.close();
+      const highlightsPath = "/src/article-highlights.ts";
+      const records = await (
+        await import(highlightsPath)
+      ).readHighlights(articles[0].id);
+      return { text: articles[0].content!.text, record: records[0] };
+    });
+    expect(saved.record.quote).toBe(sample);
+    expect(saved.text.slice(saved.record.start, saved.record.end)).toBe(sample);
+    await reopen(page);
+    expect(await code.textContent()).toBe(sample);
+    await expect(code.locator(".hljs-keyword").first()).toBeVisible();
+    expect((await code.locator("mark").allTextContents()).join("")).toBe(
+      sample,
+    );
+  });
+}
+
+test("syntax rendering preserves literal text and safely falls back for large and unknown blocks", async ({
+  page,
+}) => {
+  await page.goto("/?view=feeds");
+  const results = await page.evaluate(async () => {
+    const path = "/src/article-code.ts";
+    const { appendArticleText } = await import(path);
+    const samples = [
+      'def greet(name):\n    # 日本語😀\n    return "Hello " + name\n',
+      '{"enabled":true,"count":42,"label":"<script>alert(1)</script>"}',
+      '<div class="card">hello &amp; world</div>',
+      'echo "Hello"\nexport NAME="reader"\n',
+      "ただの文章です。色を付けなくても読めます。",
+      "const value = 123;\n".repeat(1000),
+      "<img src=x onerror=alert(1)>\u0000\r\n",
+    ];
+    return samples.map((text) => {
+      const parent = document.createElement("div");
+      const offsets: { text: string; start: number }[] = [];
+      appendArticleText(
+        parent,
+        text,
+        [{ start: 0, end: text.length, block: true }],
+        (value: string, start: number) => {
+          offsets.push({ text: value, start });
+          return document.createTextNode(value);
+        },
+      );
+      return {
+        exact: parent.textContent === text,
+        offsetsValid: offsets.every(
+          (x) => text.slice(x.start, x.start + x.text.length) === x.text,
+        ),
+        colored: !!parent.querySelector("span"),
+        unsafe: !!parent.querySelector("img,script,iframe,svg"),
+        markup: parent.querySelectorAll("[onerror],[onclick]").length,
+      };
+    });
+  });
+  for (const result of results)
+    expect(result).toMatchObject({
+      exact: true,
+      offsetsValid: true,
+      unsafe: false,
+      markup: 0,
+    });
+  for (const result of results.slice(0, 4)) expect(result.colored).toBe(true);
+  expect(results[4].colored).toBe(false);
+  expect(results[5].colored).toBe(false);
 });

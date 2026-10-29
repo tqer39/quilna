@@ -1,3 +1,5 @@
+import { codeTokens } from "./code-syntax";
+
 // UTF-16 offsets into the accompanying text, never HTML or executable markup.
 export type ArticleCodeRange = { start: number; end: number; block: boolean };
 
@@ -114,6 +116,8 @@ export function appendArticleText(
     document.createTextNode(value),
 ) {
   let offset = 0;
+  let syntaxBudget = 20_000;
+  let syntaxBlocks = 0;
   let paragraph: HTMLParagraphElement | undefined;
   const getParagraph = () => {
     if (!paragraph) {
@@ -125,7 +129,25 @@ export function appendArticleText(
   for (const segment of articleSegments(text, ranges)) {
     if (segment.code) {
       const code = document.createElement("code");
-      code.append(renderText(segment.text, offset));
+      if (
+        segment.code.block &&
+        segment.text.length <= syntaxBudget &&
+        syntaxBlocks < 20
+      ) {
+        syntaxBudget -= segment.text.length;
+        syntaxBlocks++;
+        let position = offset;
+        for (const token of codeTokens(segment.text)) {
+          const node = renderText(token.text, position);
+          if (token.classes.length) {
+            const span = document.createElement("span");
+            span.classList.add(...token.classes);
+            span.append(node);
+            code.append(span);
+          } else code.append(node);
+          position += token.text.length;
+        }
+      } else code.append(renderText(segment.text, offset));
       if (segment.code.block) {
         paragraph = undefined;
         const pre = document.createElement("pre");

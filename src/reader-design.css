@@ -10,6 +10,11 @@
   --viewer-radius: 18px;
   --viewer-shadow: 0 6px 24px #25395d08;
   --viewer-reading-font: system-ui, -apple-system, sans-serif;
+  --syntax-keyword: #7c285f;
+  --syntax-string: #145b2a;
+  --syntax-title: #235e91;
+  --syntax-number: #774719;
+  --syntax-comment: #52616d;
   --line: var(--viewer-line);
   color-scheme: light;
   background: var(--viewer-bg);
@@ -40,6 +45,11 @@
   --viewer-shadow: none;
   --error-fg: #ffc0c7;
   --error-bg: #3c1e28;
+  --syntax-keyword: #e9a1cc;
+  --syntax-string: #a6d99b;
+  --syntax-title: #98c7ff;
+  --syntax-number: #f1c38e;
+  --syntax-comment: #b4c1d2;
   color-scheme: dark;
 }
 :root[data-reader-design] .rss-header {
@@ -201,6 +211,50 @@
 :root[data-reader-design] .rss-article-body pre {
   background: var(--viewer-soft);
   color: var(--viewer-text);
+}
+:root[data-reader-design] .rss-article-body code {
+  background: var(--viewer-soft);
+  color: inherit;
+}
+:root[data-reader-design] .rss-article-body pre code {
+  background: transparent;
+  padding: 0;
+}
+.rss-article-body
+  pre
+  :is(.hljs-keyword, .hljs-selector-tag, .hljs-tag, .hljs-meta) {
+  color: var(--syntax-keyword);
+}
+.rss-article-body pre :is(.hljs-string, .hljs-regexp, .hljs-addition) {
+  color: var(--syntax-string);
+}
+.rss-article-body
+  pre
+  :is(
+    .hljs-title,
+    .hljs-attr,
+    .hljs-attribute,
+    .hljs-built_in,
+    .hljs-name,
+    .hljs-selector-class
+  ) {
+  color: var(--syntax-title);
+}
+.rss-article-body
+  pre
+  :is(
+    .hljs-number,
+    .hljs-literal,
+    .hljs-type,
+    .hljs-symbol,
+    .hljs-variable,
+    .hljs-deletion
+  ) {
+  color: var(--syntax-number);
+}
+.rss-article-body pre :is(.hljs-comment, .hljs-quote) {
+  color: var(--syntax-comment);
+  font-style: italic;
 }
 :root[data-reader-design] .rss-reader-tools {
   background: var(--viewer-soft);
