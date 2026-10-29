@@ -29,6 +29,7 @@ import { articlePage } from "./article-page";
 import { ArticleListView } from "./article-list-view";
 import { ArticleHighlightView } from "./article-highlight-view";
 import { ArticleConnectionView } from "./article-connection-view";
+import { ArticleGraphView } from "./article-graph-view";
 import { LearningCueView } from "./learning-cue-view";
 import {
   fetchArticle,
@@ -343,6 +344,18 @@ export async function feedReader(root: HTMLElement) {
       const position = articlePositions.get(id);
       if (position !== undefined) openArticle(articles[position]);
     },
+  );
+  const graph = new ArticleGraphView(
+    () => articles,
+    (id) => {
+      const position = articlePositions.get(id);
+      return position === undefined ? undefined : articles[position];
+    },
+    (id) => {
+      const position = articlePositions.get(id);
+      if (position !== undefined) openArticle(articles[position]);
+    },
+    (quote, signal) => highlights.revealSaved(quote, signal),
   );
   const listView = new ArticleListView({
     open: (id) => {
@@ -1854,6 +1867,7 @@ export async function feedReader(root: HTMLElement) {
           readingJump("ハイライト・メモ", "rss-highlights"),
           readingJump("学ぶきっかけ", "rss-learning-cues"),
           readingJump("情報のつながり", "rss-connections"),
+          readingJump("関係図", "rss-graph"),
           jumpToTools,
         );
         articleNode.append(shortcuts);
@@ -2074,12 +2088,14 @@ export async function feedReader(root: HTMLElement) {
           panel,
           learning.mount(readingView),
           connections.mount(article, relationLibraryRevision),
+          graph.mount(article, relationLibraryRevision),
           tagsPanel,
         );
       } else {
         highlights.detach();
         learning.detach();
         connections.detach();
+        graph.detach();
         appendArticleText(sourceText, text, article.content?.codeRanges);
         articleNode.append(body, tagsPanel);
       }
@@ -2089,6 +2105,7 @@ export async function feedReader(root: HTMLElement) {
       highlights.detach();
       learning.detach();
       connections.detach();
+      graph.detach();
       main.classList.remove("rss-reading");
       listHeading.textContent =
         filter === "saved"

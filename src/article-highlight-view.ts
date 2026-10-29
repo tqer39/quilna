@@ -216,6 +216,25 @@ export class ArticleHighlightView {
     target.scrollIntoView({ block: "center" });
     return "根拠の本文を選択しました。";
   }
+  async revealSaved(quote: ArticleHighlight, signal: AbortSignal) {
+    if (signal.aborted) return "";
+    const view = this.view,
+      context = this.context;
+    if (!view || quote.articleId !== view.articleId)
+      return "先に引用元の記事を開いてください。現在の本文の位置は変更していません。";
+    const version = await highlightVersion(
+      view.original,
+      view.text,
+      view.view,
+      view.language,
+    );
+    if (signal.aborted) return "";
+    if (context !== this.context)
+      return "本文が切り替わりました。引用を開き直してください。";
+    if (!highlightMatches(quote, { ...view, version }, view.text))
+      return "別の本文の版・言語の引用です。位置を移さず保持しています。";
+    return this.revealExcerpt(view, quote.start, quote.end);
+  }
   private controls() {
     this.selection.disabled = this.busy || !this.ready || !this.selected;
     this.selection.hidden = this.selection.disabled;
