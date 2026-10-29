@@ -108,6 +108,43 @@ export function serializeArticle(node: Node): {
   return { text, codeRanges };
 }
 
+const copyControls = new WeakMap<
+  HTMLElement,
+  Map<number, { text: string; host: HTMLElement }>
+>();
+
+function codeCopyControl(text: string) {
+  const host = document.createElement("div");
+  host.className = "rss-code-tools";
+  // Keep controls outside the source text used for selection and saved quotes.
+  const root = host.attachShadow({ mode: "open" });
+  const button = document.createElement("button");
+  button.type = "button";
+  button.part.add("copy-button");
+  button.textContent = "コピー";
+  button.setAttribute("aria-label", "コードをコピー");
+  const status = document.createElement("span");
+  status.part.add("copy-status");
+  status.setAttribute("role", "status");
+  button.addEventListener("click", async () => {
+    if (button.disabled) return;
+    button.disabled = true;
+    status.textContent = "コピー中…";
+    try {
+      if (!navigator.clipboard?.writeText) throw new Error("unavailable");
+      await navigator.clipboard.writeText(text);
+      status.textContent = "コピーしました";
+    } catch {
+      status.textContent =
+        "コピーできませんでした。コードを選択してコピーしてください。";
+    } finally {
+      button.disabled = false;
+    }
+  });
+  root.append(button, status);
+  return host;
+}
+
 export function appendArticleText(
   parent: HTMLElement,
   text: string,
@@ -115,6 +152,12 @@ export function appendArticleText(
   renderText: (text: string, start: number) => Node = (value) =>
     document.createTextNode(value),
 ) {
+  const previousControls = copyControls.get(parent);
+  const currentControls = new Map<
+    number,
+    { text: string; host: HTMLElement }
+  >();
+  copyControls.set(parent, currentControls);
   let offset = 0;
   let syntaxBudget = 20_000;
   let syntaxBlocks = 0;
@@ -152,7 +195,16 @@ export function appendArticleText(
         paragraph = undefined;
         const pre = document.createElement("pre");
         pre.append(code);
-        parent.append(pre);
+        const block = document.createElement("div");
+        block.className = "rss-code-block";
+        const previous = previousControls?.get(offset);
+        const control =
+          previous?.text === segment.text
+            ? previous
+            : { text: segment.text, host: codeCopyControl(segment.text) };
+        currentControls.set(offset, control);
+        block.append(control.host, pre);
+        parent.append(block);
       } else getParagraph().append(code);
       offset += segment.text.length;
       continue;

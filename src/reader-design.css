@@ -220,6 +220,51 @@
   background: transparent;
   padding: 0;
 }
+.rss-code-block {
+  margin-block: 1em;
+  min-width: 0;
+}
+.rss-article-body .rss-code-block pre {
+  margin-top: 0;
+  border-start-start-radius: 0;
+  border-start-end-radius: 0;
+}
+.rss-code-tools {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  padding: 8px 12px;
+  background: var(--viewer-soft);
+  border-radius: 6px 6px 0 0;
+  border-bottom: 1px solid var(--viewer-line);
+  font-family: system-ui, sans-serif;
+  user-select: none;
+}
+.rss-code-tools::part(copy-button) {
+  min-height: 44px;
+  padding: 6px 14px;
+  border: 1px solid var(--viewer-line);
+  border-radius: 8px;
+  background: var(--viewer-surface);
+  color: var(--viewer-text);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.rss-code-tools::part(copy-button):focus-visible {
+  outline: 2px solid var(--viewer-accent);
+  outline-offset: 2px;
+}
+.rss-code-tools::part(copy-button):disabled {
+  cursor: wait;
+}
+.rss-code-tools::part(copy-status) {
+  color: var(--viewer-text);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
 .rss-article-body
   pre
   :is(.hljs-keyword, .hljs-selector-tag, .hljs-tag, .hljs-meta) {

@@ -143,7 +143,9 @@ async function translator(page: Page, delayed = false) {
 }
 test("code survives import, translation and offline reopen without reaching the translator", async ({
   page,
+  context,
 }) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
   await translator(page);
   await page.route("**/api/feeds/fetch", (route) =>
     route.fulfill({ json: { url, html: codeHTML } }),
@@ -153,6 +155,13 @@ test("code survives import, translation and offline reopen without reaching the 
   await expect(code.locator(".hljs-keyword").first()).toBeVisible();
   await expect(code).toHaveText(codeExample, { useInnerText: false });
   expect(await code.textContent()).toBe(codeExample);
+  await page.getByRole("button", { name: "コードをコピー" }).click();
+  await expect(page.locator(".rss-code-tools").getByRole("status")).toHaveText(
+    "コピーしました",
+  );
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    codeExample,
+  );
   await expect(page.locator(".rss-article-body p code")).toHaveText(
     "deleteAlarm()",
   );
@@ -165,6 +174,13 @@ test("code survives import, translation and offline reopen without reaching the 
     ),
   ).toBeVisible();
   expect(await code.textContent()).toBe(codeExample);
+  await page.getByRole("button", { name: "コードをコピー" }).click();
+  await expect(page.locator(".rss-code-tools").getByRole("status")).toHaveText(
+    "コピーしました",
+  );
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    codeExample,
+  );
   await expect(page.locator(".rss-article-body p code")).toHaveText(
     "deleteAlarm()",
   );
@@ -178,10 +194,24 @@ test("code survives import, translation and offline reopen without reaching the 
   await source(page, true);
   await reopen(page);
   expect(await code.textContent()).toBe(codeExample);
+  await page.getByRole("button", { name: "コードをコピー" }).click();
+  await expect(page.locator(".rss-code-tools").getByRole("status")).toHaveText(
+    "コピーしました",
+  );
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    codeExample,
+  );
   await page
     .getByRole("button", { name: "日本語訳を読む", exact: true })
     .click();
   expect(await code.textContent()).toBe(codeExample);
+  await page.getByRole("button", { name: "コードをコピー" }).click();
+  await expect(page.locator(".rss-code-tools").getByRole("status")).toHaveText(
+    "コピーしました",
+  );
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    codeExample,
+  );
   expect(
     await page.evaluate(
       () => document.documentElement.scrollWidth <= innerWidth,
