@@ -1,5 +1,6 @@
 // Isolated runtime fixture only. Production exports no catalog or test identity route.
 import { DurableObject } from "cloudflare:workers";
+import { createArticleLoader } from "../../workers/article-loader.mjs";
 import { DocumentCatalog } from "../../workers/document-catalog.mjs";
 const url = "https://publisher.example.org/article";
 export class CatalogFixture extends DurableObject {
@@ -13,19 +14,7 @@ export class CatalogFixture extends DurableObject {
       sourceURL: url,
       authorize: async (principal) =>
         principal === "alice" || (scope === "shared" && principal === "bob"),
-      load: async (_url, previous) => {
-        const response = await fetch(url, {
-          headers: previous?.validators
-            ? { "If-None-Match": previous.validators.etag }
-            : {},
-        });
-        if (response.status === 304) return { url, notModified: true };
-        if (!response.ok) throw Error("fixture-fetch");
-        return {
-          content: await response.json(),
-          validators: { url, etag: response.headers.get("ETag") },
-        };
-      },
+      load: createArticleLoader(),
     });
     const principal = request.headers.get("X-Test-Principal");
     try {

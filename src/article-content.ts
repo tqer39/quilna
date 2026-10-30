@@ -1,4 +1,4 @@
-import { Readability } from "@mozilla/readability";
+import { extractArticleDocument } from "./article-extraction";
 import { sourceURL } from "./feed-discovery";
 import type { DocumentReference } from "./source-document";
 import { articleTextLimit } from "./document-format";
@@ -6,11 +6,7 @@ import {
   validSourceValidators,
   type SourceValidators,
 } from "./http-validators.mjs";
-import {
-  articleSegments,
-  serializeArticle,
-  type ArticleCodeRange,
-} from "./article-code";
+import { articleSegments, type ArticleCodeRange } from "./article-code";
 
 export type ArticleContent = {
   text: string;
@@ -32,64 +28,11 @@ export { articleTextLimit } from "./document-format";
 
 export function extractArticle(html: string, url: string): ArticleContent {
   sourceURL(url);
-  if (html.length > 2_000_000)
-    throw Error("記事が大きすぎるため取り込めませんでした。");
-  // Never mount remote nodes. A template avoids subresource requests during parsing.
-  const template = document.createElement("template");
-  template.innerHTML = html;
-  const language =
-    /<html\b[^>]*\blang=["']([a-zA-Z-]+)["']/i.exec(html)?.[1] ?? "";
-  template.content
-    .querySelectorAll(
-      "script,style,iframe,object,embed,img,picture,video,audio,source,link,meta,base,form,nav,footer,template,svg,math,[hidden],[aria-hidden='true']",
-    )
-    .forEach((n) => n.remove());
-  for (const element of Array.from(template.content.querySelectorAll("*"))) {
-    for (const attr of Array.from(element.attributes)) {
-      if (!["class", "id", "lang", "dir"].includes(attr.name))
-        element.removeAttribute(attr.name);
-    }
-  }
-  // Readability rewrites consecutive br elements into paragraphs. Preserve code
-  // line breaks first, inside the inert fragment, before that prose cleanup.
-  template.content
-    .querySelectorAll("pre br, code br")
-    .forEach((br) => br.replaceWith("\n"));
-  const doc = document.implementation.createHTMLDocument("");
-  doc.body.append(doc.importNode(template.content, true));
-  doc.documentElement.lang = language;
-  doc.title =
-    doc.body.querySelector("title")?.textContent ||
-    doc.body.querySelector("h1")?.textContent ||
-    "";
-  doc.body.querySelectorAll("title").forEach((n) => n.remove());
-  let codeRanges: ArticleCodeRange[] = [];
-  const parsed = new Readability(doc, {
-    maxElemsToParse: 20000,
-    charThreshold: 140,
-    serializer: (node) => {
-      const serialized = serializeArticle(node);
-      codeRanges = serialized.codeRanges;
-      return serialized.text;
-    },
-  }).parse();
-  const text = parsed?.content;
-  if (!text || text.length < 140)
-    throw Error(
-      "記事本文を見つけられませんでした。ログインやサイト側の制限がある場合は元の記事を開いてください。",
-    );
-  if (text.length > articleTextLimit)
-    throw Error(
-      "本文が20万文字を超えるため取り込めませんでした。元の記事を開いてください。",
-    );
-  return {
-    text,
+  return extractArticleDocument(
+    html,
     url,
-    title: parsed?.title?.slice(0, 500) || new URL(url).hostname,
-    language: language.slice(0, 35),
-    fetchedAt: new Date().toISOString(),
-    codeRanges,
-  };
+    document.implementation.createHTMLDocument(""),
+  );
 }
 
 export async function fetchArticle(

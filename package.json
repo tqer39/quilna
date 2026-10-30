@@ -26,6 +26,7 @@
     "better-auth": "1.7.7",
     "highlight.js": "11.12.0",
     "jose": "^6.2.12",
+    "linkedom": "0.18.14",
     "zod": "^4.6.7"
   },
   "devDependencies": {

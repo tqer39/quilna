@@ -23,6 +23,7 @@ test(
         logLevel: "silent",
       })
     ).outputFiles[0].text;
+    let failExtraction = false;
     let outbound = 0,
       release,
       started;
@@ -38,8 +39,9 @@ test(
       title: "Shared fixture",
       language: "en",
       fetchedAt: "2026-10-30T00:00:00.000Z",
-      codeRanges: [],
+      codeRanges: [{ start: 0, end: 180000, block: true }],
     };
+    const html = `<html lang="en"><title>Shared fixture</title><body><article><pre>${content.text}</pre></article></body></html>`;
     const options = {
       modules: true,
       script,
@@ -57,9 +59,15 @@ test(
           started();
           await gate;
         }
+        if (failExtraction)
+          return new Response("<h1>Sign in</h1><form>Password</form>", {
+            headers: { "Content-Type": "text/html" },
+          });
         if (request.headers.get("If-None-Match") === '"runtime-v1"')
           return new Response(null, { status: 304 });
-        return Response.json(content, { headers: { ETag: '"runtime-v1"' } });
+        return new Response(html, {
+          headers: { "Content-Type": "text/html", ETag: '"runtime-v1"' },
+        });
       },
     };
     let mf = new Miniflare(convertV4MiniflareOptions(options));
@@ -85,6 +93,7 @@ test(
     release();
     const first = await firstRequest;
     assert.equal(first.status, 200);
+    content.fetchedAt = first.value.version.content.fetchedAt;
     assert.deepEqual(first.value.version.content, content);
     const second = await call("/shared/acquire", "bob");
     assert.deepEqual(second.value.version, first.value.version);
@@ -98,10 +107,24 @@ test(
     assert.deepEqual(unchanged.value.version, first.value.version);
     assert.equal(outbound, 2);
     assert.equal((await call("/shared/history")).value.versions.length, 1);
+    failExtraction = true;
+    const failed = await call("/shared/acquire?force", "bob");
+    assert.equal(failed.status, 409);
+    assert.deepEqual((await call("/shared/read")).value, first.value.version);
+    assert.equal((await call("/shared/history")).value.versions.length, 1);
+    failExtraction = false;
+    assert.deepEqual(
+      (await call("/shared/acquire?force", "bob")).value.version,
+      first.value.version,
+    );
+    assert.equal(outbound, 4);
     const privateDoc = await call("/private/acquire");
-    assert.equal(outbound, 3);
+    assert.equal(outbound, 5);
     assert.notEqual(privateDoc.value.document.id, first.value.document.id);
-    assert.deepEqual(privateDoc.value.version.content, content);
+    assert.deepEqual(
+      { ...privateDoc.value.version.content, fetchedAt: content.fetchedAt },
+      content,
+    );
     assert.equal((await call("/private/read", "bob")).status, 404);
     assert.equal((await call("/shared/read", "eve")).status, 404);
   },
