@@ -142,11 +142,19 @@ test("keyboard workflow saves only after explicit input and submit", async ({
 }) => {
   await fixture(page);
   await page.locator("#rss-highlights summary").focus();
+  await page.evaluate(() =>
+    speechSynthesis.dispatchEvent(new Event("voiceschanged")),
+  );
+  await expect(page.locator("#rss-highlights summary")).toBeFocused();
   await page.keyboard.press("Enter");
   const start = page
     .getByRole("button", { name: "この引用から学びを記録", exact: true })
     .first();
   await start.focus();
+  await page.evaluate(() =>
+    speechSynthesis.dispatchEvent(new Event("voiceschanged")),
+  );
+  await expect(start).toBeFocused();
   await page.keyboard.press("Enter");
   const input = page.getByLabel("学んだこと・自分の説明（必須）");
   await input.focus();

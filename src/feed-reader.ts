@@ -2344,9 +2344,18 @@ export async function feedReader(root: HTMLElement) {
                     : "まだ記事がありません。配信元を更新してください。",
       });
     }
-    if (activeId) {
-      const restored = document.getElementById(activeId);
-      restored?.focus({ preventScroll: true });
+    // Persistent reader panels are detached and reattached during a refresh.
+    // Keep their focused controls, including summary/buttons without an ID.
+    const restored =
+      focused instanceof HTMLElement &&
+      focused !== document.body &&
+      focused.isConnected
+        ? focused
+        : activeId
+          ? document.getElementById(activeId)
+          : null;
+    if (restored) {
+      restored.focus({ preventScroll: true });
       if (selection && restored instanceof HTMLInputElement)
         restored.setSelectionRange(selection[0], selection[1]);
     }
