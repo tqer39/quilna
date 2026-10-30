@@ -16,6 +16,7 @@ export type ArticleContent = {
   fetchedAt: string;
   codeRanges?: ArticleCodeRange[];
   document?: DocumentReference;
+  sourceTags?: string[];
 };
 export type ArticleTranslation = {
   text: string;

@@ -1012,3 +1012,8 @@
   border-inline-start: 3px solid var(--viewer-accent, #28625f);
   padding-inline: 1rem;
 }
+
+.rss-tag-summary {
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}

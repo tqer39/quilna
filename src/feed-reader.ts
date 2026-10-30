@@ -9,7 +9,11 @@ import {
   refreshIntervals,
   withFeedRefreshLock,
 } from "./feed-auto-refresh";
-import { effectiveTags, tagState } from "./article-tags";
+import {
+  effectiveTags,
+  needsTagClassification,
+  tagSummary,
+} from "./article-tags";
 import {
   browserLanguageDetector,
   detectArticleLanguage,
@@ -180,7 +184,7 @@ export async function feedReader(root: HTMLElement) {
   const brand = el("a", "Quilna", "brand");
   brand.href = "/?view=feeds";
   const actions = el("div", undefined, "rss-header-actions");
-  const lesson = el("a", "サンプル教材", "rss-text-link");
+  const lesson = el("a", "デモ教材を開く", "rss-text-link");
   lesson.href = "/?view=lesson#read";
   const settings = el("dialog", undefined, "rss-settings");
   settings.setAttribute("aria-labelledby", "rss-settings-title");
@@ -205,7 +209,7 @@ export async function feedReader(root: HTMLElement) {
     ),
     el(
       "p",
-      "記事を開くと選択した取得先から本文を取り込み、このブラウザに保存します。取得できないときは理由と元のRSS情報を表示します。翻訳は対応ブラウザの端末内機能を使い、初回に翻訳データをダウンロードする場合があります。読み上げは端末内の音声を使います。教材生成は未接続です。",
+      "記事を開くと選択した取得先から本文を取り込み、このブラウザに保存します。取得できないときは理由と元のRSS情報を表示します。翻訳は対応ブラウザの端末内機能を使い、初回に翻訳データをダウンロードする場合があります。読み上げは端末内の音声を使います。",
     ),
   );
   const backupSettings = new LibraryBackupView(async () => {
@@ -339,7 +343,18 @@ export async function feedReader(root: HTMLElement) {
   settings.addEventListener("close", () => settingsOpen.focus());
   const skipToArticles = readingJump("記事へ", "rss-main");
   skipToArticles.classList.add("rss-skip-navigation");
-  actions.append(skipToArticles, lesson, settingsOpen);
+  const demo = el("section");
+  demo.setAttribute("aria-label", "デモ教材");
+  demo.append(
+    el("h3", "デモ教材"),
+    el(
+      "p",
+      "CAAを題材にした固定のデモ教材です。収集した記事から作られた教材ではありません。以前の学習記録も引き続き利用できます。",
+    ),
+    lesson,
+  );
+  settingsBody.append(demo);
+  actions.append(skipToArticles, settingsOpen);
   rootHeader.append(brand, actions);
   const layout = el("div", undefined, "rss-shell");
   const navigation = el("section", undefined, "rss-navigation");
@@ -903,7 +918,7 @@ export async function feedReader(root: HTMLElement) {
       counts.all += direction;
       if (!article.read) counts.unread += direction;
       if (article.saved) counts.saved += direction;
-      if (!article.tags) counts.pending += direction;
+      if (needsTagClassification(article)) counts.pending += direction;
       if (counts.all) articleCounts.set(key, counts);
       else articleCounts.delete(key);
     }
@@ -1654,7 +1669,7 @@ export async function feedReader(root: HTMLElement) {
     const controller = new AbortController();
     tagBatchController = controller;
     const pending = articles
-      .filter((article) => !article.tags)
+      .filter(needsTagClassification)
       .map((article) => article.id);
     let done = 0;
     tagProgress = `タグを判定中：0/${pending.length}件`;
@@ -1705,7 +1720,8 @@ export async function feedReader(root: HTMLElement) {
       void importContent(article);
     else autoTranslateSelected();
     if (!article.read) void change(article, "read", true);
-    if (!article.tags) void updateTags(article, undefined, true);
+    if (needsTagClassification(article))
+      void updateTags(article, undefined, true);
   }
   const date = (value: string | null) =>
     value
@@ -1884,19 +1900,15 @@ export async function feedReader(root: HTMLElement) {
       tagsPanel.setAttribute("aria-label", "記事のタグ");
       tagsPanel.append(
         el("h2", "タグ"),
-        el(
-          "p",
-          `${tagState(article)}：${effectiveTags(article).join("・") || "タグなし"}`,
-          "rss-tag-summary",
-        ),
+        el("p", tagSummary(article), "rss-tag-summary"),
       );
       const tagForm = el("form");
-      const tagLabel = el("label", "タグを編集（カンマ区切り）");
+      const tagLabel = el("label", "自分のタグを編集（カンマ区切り）");
       tagLabel.htmlFor = "rss-article-tags";
       const tagInput = el("input");
       tagInput.id = tagLabel.htmlFor;
       tagInput.value =
-        tagDrafts.get(article.id) ?? effectiveTags(article).join(", ");
+        tagDrafts.get(article.id) ?? article.manualTags?.join(", ") ?? "";
       tagInput.maxLength = 500;
       tagInput.addEventListener("compositionstart", () => {
         composing = true;
@@ -1916,9 +1928,18 @@ export async function feedReader(root: HTMLElement) {
         event.preventDefault();
         void updateTags(article, tagInput.value.split(/[,、\n]/));
       });
-      tagForm.append(tagLabel, tagInput, saveTags);
+      tagForm.append(
+        el(
+          "p",
+          "自分のタグは配信元・Quilnaの自動タグと別に保存します。空欄で保存しても他のタグは消えません。",
+          "muted",
+        ),
+        tagLabel,
+        tagInput,
+        saveTags,
+      );
       const resetTags = button(
-        "自動判定に戻す",
+        "自分のタグを解除",
         () => void updateTags(article),
       );
       resetTags.disabled = changingTags.has(article.id);
@@ -1931,7 +1952,7 @@ export async function feedReader(root: HTMLElement) {
           el(
             "p",
             article.tags.state === "no-content"
-              ? "本文がないため分類できません。"
+              ? "本文や題名に分類の手掛かりがありません。"
               : "分類に十分な手掛かりがありません。手動でタグを設定できます。",
           ),
         );
@@ -1943,7 +1964,7 @@ export async function feedReader(root: HTMLElement) {
       reasoning.append(
         el(
           "p",
-          "本文・題名・原文と一致する訳文の語句から端末内で判定します。内容理解による分類ではないため、必要に応じて訂正してください。",
+          "配信元のタグ・本文・題名・原文と一致する訳文の語句から端末内で判定します。内容理解による分類ではないため、目安として使い、自分のタグで整理してください。",
           "muted",
         ),
       );

@@ -33,6 +33,7 @@ async function fixture(page: Page, design = "studio") {
           published: null,
           fetchedAt: "2026-10-30T00:00:00Z",
           body: `Evidence ${id}. Another point.`,
+          sourceTags: ["RSS category"],
           read: true,
           saved: id === "a",
           content: {
@@ -40,6 +41,7 @@ async function fixture(page: Page, design = "studio") {
             title: `Quote article ${id}`,
             url: `https://example.org/${id}`,
             language: "en",
+            sourceTags: ["Original category"],
             fetchedAt: "2026-10-30T00:00:00Z",
           },
         });

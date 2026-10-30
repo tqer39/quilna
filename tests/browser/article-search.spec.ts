@@ -253,7 +253,7 @@ test("background control removal, reordering and deletion preserve focus on surv
                 ...(action === "classify"
                   ? {
                       tags: {
-                        version: 1,
+                        version: 2,
                         state: "unclassified",
                         suggestions: [],
                       },

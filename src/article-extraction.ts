@@ -1,3 +1,4 @@
+import { normalizeSourceTags } from "./source-tags";
 import { Readability } from "@mozilla/readability";
 import type { ArticleContent } from "./article-content";
 import { articleTextLimit, type ArticleCodeRange } from "./document-format";
@@ -29,6 +30,44 @@ export function extractArticleDocument(
     for (const child of Array.from(node.childNodes))
       stack.push({ node: child, depth: depth + 1 });
   }
+  // Zenn publishes article topics in inert page data rather than standard meta tags.
+  let siteTags: string[] = [];
+  if (new URL(url).hostname === "zenn.dev") {
+    const data = template.content.querySelector(
+      'script#__NEXT_DATA__[type="application/json"]',
+    )?.textContent;
+    if (data) {
+      try {
+        const topics: unknown = JSON.parse(data)?.props?.pageProps?.topics;
+        if (Array.isArray(topics))
+          siteTags = topics.flatMap((topic) =>
+            topic && typeof topic.name === "string" ? [topic.name] : [],
+          );
+      } catch {
+        // Missing or changed publisher metadata must not prevent reading the body.
+      }
+    }
+  }
+  const sourceTags = normalizeSourceTags([
+    ...siteTags,
+    ...Array.from(template.content.querySelectorAll("meta")).flatMap((meta) => {
+      const name = (
+        meta.getAttribute("property") ||
+        meta.getAttribute("name") ||
+        ""
+      ).toLowerCase();
+      const content = meta.getAttribute("content") || "";
+      return name === "article:tag"
+        ? [content]
+        : name === "keywords"
+          ? content.split(/[,、]/)
+          : [];
+    }),
+    ...Array.from(
+      template.content.querySelectorAll('article a[rel~="tag"]'),
+      (node) => node.textContent || "",
+    ),
+  ]);
   prepareFragment?.(template.content);
   // Native template parsing discards these wrappers; DOM-only parsers retain them.
   for (const wrapper of Array.from(
@@ -84,5 +123,6 @@ export function extractArticleDocument(
     language: language.slice(0, 35),
     fetchedAt: new Date().toISOString(),
     codeRanges,
+    ...(sourceTags.length ? { sourceTags } : {}),
   };
 }

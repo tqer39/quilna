@@ -1,4 +1,4 @@
-import { effectiveTags, tagState } from "./article-tags";
+import { tagSummary } from "./article-tags";
 import { isLinkOnly } from "./article-content";
 import type { FeedArticle } from "./feed-parser";
 import { button, el } from "./ui";
@@ -136,10 +136,7 @@ export class ArticleListView {
           (isLinkOnly(article.body) ? "本文なし・リンク情報のみ" : article.body)
         ).slice(0, 160),
       );
-      text(
-        row.tags,
-        `${tagState(article)}：${effectiveTags(article).join("・") || "タグなし"}`,
-      );
+      text(row.tags, tagSummary(article));
       rows.set(article.id, row);
     }
     children(

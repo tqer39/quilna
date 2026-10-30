@@ -1,3 +1,4 @@
+import { normalizeSourceTags } from "./source-tags";
 import type { FeedRefreshFailure } from "./feed-auto-refresh";
 import type { ArticleTags } from "./article-tags";
 import type { ArticleContent, ArticleTranslation } from "./article-content";
@@ -16,6 +17,7 @@ export type FeedArticle = {
   translation?: ArticleTranslation;
   tags?: ArticleTags;
   manualTags?: string[];
+  sourceTags?: string[];
 };
 export type Feed = {
   url: string;
@@ -137,6 +139,15 @@ export function parseFeed(
       saved: false,
       read: false,
       fetchedAt,
+      sourceTags: normalizeSourceTags(
+        children(entry, "category").map((category) =>
+          atom
+            ? category.getAttribute("label") ||
+              category.getAttribute("term") ||
+              ""
+            : plain(category.textContent ?? "", 61),
+        ),
+      ),
     });
   }
   if (entries.length && !articles.size)

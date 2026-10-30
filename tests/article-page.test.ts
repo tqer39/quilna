@@ -55,7 +55,7 @@ test("all matches are counted and ordered pages clamp correctly when the library
   expect(first.items[0].id).toBe("0");
 });
 
-test("tag, source, search and read filters intersect without reviving overridden automatic tags", () => {
+test("tag, source, search and read filters intersect across independent tag layers", () => {
   const tags = {
     version: 1 as const,
     state: "classified" as const,
@@ -72,6 +72,8 @@ test("tag, source, search and read filters intersect without reviving overridden
   const tagged = { ...all, tagFilter: "tag:技術・開発" };
   expect(ids(articlePage(articles, tagged).items)).toEqual([
     "auto",
+    "removed",
+    "manual",
     "other-source",
     "read",
   ]);
@@ -80,7 +82,7 @@ test("tag, source, search and read filters intersect without reviving overridden
       articlePage(articles, { ...tagged, source: "source-a", filter: "unread" })
         .items,
     ),
-  ).toEqual(["auto"]);
+  ).toEqual(["auto", "removed", "manual"]);
   expect(
     ids(
       articlePage(articles, {
@@ -99,6 +101,9 @@ test("tag, source, search and read filters intersect without reviving overridden
   expect(articlePage(articles, { ...all, matched: new Set() }).count).toBe(0);
   articles[0] = { ...articles[0], manualTags: ["仕事"] };
   expect(ids(articlePage(articles, tagged).items)).toEqual([
+    "auto",
+    "removed",
+    "manual",
     "other-source",
     "read",
   ]);

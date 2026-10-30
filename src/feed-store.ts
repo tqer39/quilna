@@ -1,3 +1,4 @@
+import { validSourceTags } from "./source-tags";
 import { feedFailure } from "./feed-auto-refresh";
 import {
   classifyArticle,
@@ -27,11 +28,14 @@ export function validArticle(a: FeedArticle) {
     (a.contentError === undefined || text(a.contentError)) &&
     (a.tags === undefined || validArticleTags(a.tags)) &&
     (a.manualTags === undefined || validManualTags(a.manualTags)) &&
+    (a.sourceTags === undefined || validSourceTags(a.sourceTags)) &&
     (a.content === undefined ||
       (a.content &&
         typeof a.content.text === "string" &&
         a.content.text.length <= articleTextLimit &&
         validCodeRanges(a.content.text, a.content.codeRanges) &&
+        (a.content.sourceTags === undefined ||
+          validSourceTags(a.content.sourceTags)) &&
         (a.content.document === undefined ||
           validDocumentReference(a.content.document)) &&
         text(a.content.url) &&

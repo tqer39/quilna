@@ -1,4 +1,5 @@
 :root {
+  scrollbar-gutter: stable;
   font-family:
     system-ui,
     -apple-system,
@@ -1422,4 +1423,10 @@ header {
   flex: 0 0 auto;
   width: 22px;
   height: 22px;
+}
+
+@supports not (scrollbar-gutter: stable) {
+  :root {
+    overflow-y: scroll;
+  }
 }
