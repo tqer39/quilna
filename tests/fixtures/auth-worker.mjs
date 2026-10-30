@@ -177,13 +177,14 @@ export async function authWorkerFixture(
       );
   }
   if (documents)
-    await (
-      await mf.getD1Database("DOCUMENT_ACCESS_DB")
-    ).exec(
-      (await readFile("migrations/documents/0001_access.sql", "utf8"))
-        .replace(/^--.*$/gm, "")
-        .replaceAll("\n", " "),
-    );
+    for (const file of ["0001_access.sql", "0002_source_aliases.sql"])
+      await (
+        await mf.getD1Database("DOCUMENT_ACCESS_DB")
+      ).exec(
+        (await readFile("migrations/documents/" + file, "utf8"))
+          .replace(/^--.*$/gm, "")
+          .replaceAll("\n", " "),
+      );
   const browser = () => {
     const jar = new Map();
     return {

@@ -33,6 +33,14 @@ export class SourceDocument extends DurableObject {
         scope,
         request: input,
       } = commandSchema.parse(await readBody(request));
+      const initial = await documentAccess(
+        this.env,
+        owner,
+        input.url,
+        input.audience,
+      );
+      if (initial.scope !== scope) throw Error("document-unavailable");
+      const sourceURL = initial.url;
       const authorize = async (principal) => {
         if (principal !== owner) return false;
         const access = await documentAccess(
@@ -41,26 +49,26 @@ export class SourceDocument extends DurableObject {
           input.url,
           input.audience,
         );
-        return access.scope === scope && access.url === input.url;
+        return access.scope === scope && access.url === sourceURL;
       };
       if (!(await authorize(owner))) throw Error("document-unavailable");
-      const id = await documentIdentity(scope, input.url);
+      const id = await documentIdentity(scope, sourceURL);
       if (
         this.ctx.id.toString() !== this.env.DOCUMENTS.idFromName(id).toString()
       )
         throw Error("document-unavailable");
       const catalog = new DocumentCatalog(this.ctx.storage, {
         scope,
-        sourceURL: input.url,
+        sourceURL,
         authorize,
         load: createArticleLoader({
           blockedHosts: this.env.APP_ORIGIN
             ? [new URL(this.env.APP_ORIGIN).hostname]
             : [],
           send: (target, options) => {
-            // Sharing permission names one exact source, not arbitrary redirect
-            // destinations. Alias approval is a separate, unimplemented policy.
-            if (input.audience === "shared" && target !== input.url)
+            // Approved aliases resolve before acquisition. Fetch only the exact
+            // policy source; a redirect is not another alias grant.
+            if (input.audience === "shared" && target !== sourceURL)
               throw Error("document-unavailable");
             return fetch(target, options);
           },

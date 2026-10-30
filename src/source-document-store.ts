@@ -22,7 +22,7 @@ export const documentDatabase = "quilna.documents.v1";
 export async function openDocuments(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     let failed = false;
-    const request = indexedDB.open(documentDatabase, 2);
+    const request = indexedDB.open(documentDatabase, 3);
     request.onupgradeneeded = (event) => {
       if (event.oldVersion < 1) {
         const docs = request.result.createObjectStore("documents", {
@@ -39,9 +39,13 @@ export async function openDocuments(): Promise<IDBDatabase> {
         );
         versions.createIndex("history", ["documentId", "createdAt", "id"]);
       }
+      if (event.oldVersion < 2)
+        request
+          .transaction!.objectStore("documents")
+          .createIndex("url", "sourceURL");
       request
         .transaction!.objectStore("documents")
-        .createIndex("url", "sourceURL");
+        .createIndex("aliases", "sourceAliases", { multiEntry: true });
     };
     request.onerror = request.onblocked = () => {
       failed = true;
@@ -69,15 +73,28 @@ export async function documentSources(url: string): Promise<SourceDocument[]> {
     (db) =>
       new Promise<SourceDocument[]>((resolve, reject) => {
         const tx = db.transaction("documents"),
-          get = tx.objectStore("documents").index("url").getAll(normalized);
-        tx.oncomplete = () => resolve(get.result);
+          get = tx.objectStore("documents").index("url").getAll(normalized),
+          aliases = tx
+            .objectStore("documents")
+            .index("aliases")
+            .getAll(normalized);
+        tx.oncomplete = () =>
+          resolve([
+            ...new Map(
+              [...get.result, ...aliases.result].map((d: SourceDocument) => [
+                d.id,
+                d,
+              ]),
+            ).values(),
+          ]);
         tx.onerror = tx.onabort = () => reject(failed());
       }),
   );
   for (const doc of result) {
     if (
       !validSourceDocument(doc) ||
-      doc.sourceURL !== normalized ||
+      (doc.sourceURL !== normalized &&
+        !doc.sourceAliases?.includes(normalized)) ||
       !(await verifyDocumentIdentity(doc))
     )
       throw failed();

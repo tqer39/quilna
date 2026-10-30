@@ -1,4 +1,5 @@
 import { test, expect, type Page } from "@playwright/test";
+import type { SourceDocument } from "../../src/source-document";
 const url = "https://example.org/reusable",
   account = "a".repeat(64),
   other = "b".repeat(64);
@@ -82,7 +83,7 @@ async function connect(
     { account, mode },
   );
 }
-async function acquire(page: Page) {
+async function acquire(page: Page, address = url) {
   return page.evaluate(async (url) => {
     const path = "/src/document-acquisition.ts",
       client = new (await import(path)).DocumentAcquisition();
@@ -91,7 +92,7 @@ async function acquire(page: Page) {
     } catch (e) {
       return { result: null, error: (e as Error).message };
     }
-  }, url);
+  }, address);
 }
 async function current(page: Page, scope = shared) {
   return page.evaluate(
@@ -139,6 +140,85 @@ test("two isolated browser profiles retain shared server identities and original
     expect(a.result?.content.fetchedAt).toBe(value.version.content.fetchedAt);
   } finally {
     await secondContext.close();
+  }
+});
+
+test("an alias requires an explicit response binding to the requested URL and retains one canonical version", async ({
+  page,
+  browser,
+}) => {
+  await blank(page);
+  const value = await pair(page),
+    alias = url + "?utm_source=approved";
+  await connect(page, value);
+  expect((await acquire(page, alias)).error).toContain("本文を確認できません");
+  expect(await current(page)).toBeUndefined();
+  const resolution = { requestedURL: alias, sourceURL: url, scope: shared };
+  for (const invalid of [
+    { ...resolution, requestedURL: url },
+    { ...resolution, sourceURL: alias },
+    { ...resolution, scope: "shared:wrong:1" },
+  ]) {
+    await page.route("**/api/documents/acquire", (r) =>
+      r.fulfill({ json: { ...value, resolution: invalid } }),
+    );
+    expect((await acquire(page, alias)).error).toContain(
+      "本文を確認できません",
+    );
+    expect(await current(page)).toBeUndefined();
+  }
+  await page.route("**/api/documents/acquire", (r) =>
+    r.fulfill({ json: { ...value, resolution } }),
+  );
+  const result = await acquire(page, alias);
+  expect(result.error).toBe("");
+  expect(result.result?.content.document?.sourceURL).toBe(url);
+  expect((await current(page))?.version).toEqual(value.version);
+  expect((await acquire(page)).error).toBe("");
+  expect((await current(page))?.version).toEqual(value.version);
+  const archive = await page.evaluate(
+    async ({ alias, value }) => {
+      const path = "/src/source-document-store.ts",
+        backupPath = "/src/library-backup.ts";
+      const docs = await import(path);
+      await docs.retainDocument(alias, {
+        ...value.version.content,
+        text: "Older browser original",
+      });
+      const sources = await docs.documentSources(alias);
+      const { blob } = await (await import(backupPath)).exportLibrary();
+      return {
+        sources,
+        bytes: Array.from(new Uint8Array(await blob.arrayBuffer())),
+      };
+    },
+    { alias, value },
+  );
+  expect(archive.sources).toHaveLength(2);
+  expect(
+    archive.sources.find((d: SourceDocument) => d.id === value.document.id)
+      ?.sourceAliases,
+  ).toEqual([alias]);
+  const fresh = await browser.newContext(),
+    restored = await fresh.newPage();
+  try {
+    await blank(restored);
+    const sources = await restored.evaluate(
+      async ({ bytes, alias }) => {
+        const path = "/src/library-backup.ts",
+          docsPath = "/src/source-document-store.ts";
+        const backup = await import(path);
+        const preview = await backup.validateBackup(
+          new File([new Uint8Array(bytes)], "aliases.quilna.gz"),
+        );
+        await backup.restoreBackup(preview.id);
+        return (await import(docsPath)).documentSources(alias);
+      },
+      { bytes: archive.bytes, alias },
+    );
+    expect(sources).toEqual(archive.sources);
+  } finally {
+    await fresh.close();
   }
 });
 
@@ -308,200 +388,226 @@ test("remote persistence is immutable, retains earlier revisions and rolls back 
   expect(result.history.versions).toHaveLength(2);
 });
 
-test("v1 storage upgrades preserve browser originals and add source history lookup", async ({
-  page,
-}) => {
-  await blank(page);
-  const value = await pair(page, "browser-private");
-  const result = await page.evaluate(
-    async ({ value, url }) => {
-      await new Promise<void>((resolve, reject) => {
-        const r = indexedDB.open("quilna.documents.v1", 1);
-        r.onupgradeneeded = () => {
-          const d = r.result.createObjectStore("documents", { keyPath: "id" }),
-            v = r.result.createObjectStore("versions", { keyPath: "id" });
-          d.createIndex("source", ["scope", "sourceURL"], { unique: true });
-          v.createIndex(
-            "representation",
-            ["documentId", "representationHash"],
-            { unique: true },
-          );
-          v.createIndex("history", ["documentId", "createdAt", "id"]);
-          d.put(value.document);
-          v.put(value.version);
+for (const schemaVersion of [1, 2])
+  test(`v${schemaVersion} storage upgrades preserve browser originals and add source history lookup`, async ({
+    page,
+  }) => {
+    await blank(page);
+    const value = await pair(page, "browser-private");
+    const result = await page.evaluate(
+      async ({ value, url, schemaVersion }) => {
+        await new Promise<void>((resolve, reject) => {
+          const r = indexedDB.open("quilna.documents.v1", schemaVersion);
+          r.onupgradeneeded = () => {
+            const d = r.result.createObjectStore("documents", {
+                keyPath: "id",
+              }),
+              v = r.result.createObjectStore("versions", { keyPath: "id" });
+            d.createIndex("source", ["scope", "sourceURL"], { unique: true });
+            if (schemaVersion === 2) d.createIndex("url", "sourceURL");
+            v.createIndex(
+              "representation",
+              ["documentId", "representationHash"],
+              { unique: true },
+            );
+            v.createIndex("history", ["documentId", "createdAt", "id"]);
+            d.put(value.document);
+            v.put(value.version);
+          };
+          r.onsuccess = () => {
+            r.result.close();
+            resolve();
+          };
+          r.onerror = () => reject(r.error);
+        });
+        const path = "/src/source-document-store.ts",
+          lib = await import(path);
+        return {
+          sources: await lib.documentSources(url),
+          current: await lib.currentDocument(url),
         };
-        r.onsuccess = () => {
-          r.result.close();
-          resolve();
-        };
-        r.onerror = () => reject(r.error);
-      });
-      const path = "/src/source-document-store.ts",
-        lib = await import(path);
-      return {
-        sources: await lib.documentSources(url),
-        current: await lib.currentDocument(url),
-      };
-    },
-    { value, url },
-  );
-  expect(result.sources).toEqual([value.document]);
-  expect(result.current).toEqual({
-    document: value.document,
-    version: value.version,
+      },
+      { value, url, schemaVersion },
+    );
+    expect(result.sources).toEqual([value.document]);
+    expect(result.current).toEqual({
+      document: value.document,
+      version: value.version,
+    });
   });
-});
 
 for (const design of ["studio", "editorial", "focus"])
-  test(`${design} reader switches acquisition while preserving personal flags, old histories and offline content`, async ({
-    page,
-  }, info) => {
-    await blank(page);
-    const value = await pair(page);
-    await connect(page, value);
-    await page.evaluate(
-      async ({ url, design }) => {
-        localStorage.removeItem("quilna.document-acquisition.v1");
-        localStorage.setItem("quilna.reader.design.v1", design);
-        localStorage.setItem("quilna.feed.refresh.v1", "0");
+  for (const aliasMode of [false, true])
+    test(`${design} ${aliasMode ? "alias" : "exact"} reader switches acquisition while preserving personal flags, old histories and offline content`, async ({
+      page,
+    }, info) => {
+      await blank(page);
+      const value = await pair(page);
+      const articleURL = aliasMode ? url + "?utm_source=approved" : url;
+      await connect(page, value);
+      if (aliasMode)
+        await page.route("**/api/documents/acquire", (r) =>
+          r.fulfill({
+            json: {
+              ...value,
+              resolution: {
+                requestedURL: articleURL,
+                sourceURL: url,
+                scope: shared,
+              },
+            },
+          }),
+        );
+      await page.evaluate(
+        async ({ url, design }) => {
+          localStorage.removeItem("quilna.document-acquisition.v1");
+          localStorage.setItem("quilna.reader.design.v1", design);
+          localStorage.setItem("quilna.feed.refresh.v1", "0");
+          const path = "/src/feed-store.ts",
+            lib = await import(path),
+            db = await lib.openFeedLibrary();
+          await new Promise<void>((resolve, reject) => {
+            const tx = db.transaction("articles", "readwrite");
+            tx.objectStore("articles").put({
+              id: "a",
+              url,
+              title: "Local article",
+              body: "RSS summary",
+              feedUrl: "",
+              saved: true,
+              read: true,
+              published: null,
+              fetchedAt: new Date().toISOString(),
+            });
+            tx.oncomplete = () => resolve();
+            tx.onabort = () => reject(tx.error);
+          });
+          db.close();
+        },
+        { url: articleURL, design },
+      );
+      let originalFetches = 0;
+      await page.route("**/api/collection", (r) =>
+        r.fulfill({ status: 404, json: {} }),
+      );
+      await page.route("**/api/feeds/fetch", (r) => {
+        originalFetches++;
+        return r.fulfill({
+          json: {
+            url,
+            html: `<html lang="en"><title>Local article</title><article><p>${"Browser original stays available for offline reading. ".repeat(12)}</p></article></html>`,
+          },
+        });
+      });
+      const posted: unknown[] = [];
+      page.on("request", (r) => {
+        if (r.url().endsWith("/documents/acquire")) {
+          posted.push(r.postDataJSON());
+          expect(r.headers()["x-document-account"]).toBe(account);
+          expect(r.headers()["x-csrf-token"]).toBe(
+            "synthetic-token-for-client-fixture",
+          );
+        }
+      });
+      await page.goto("/?view=feeds");
+      await page
+        .getByRole("button", { name: "Local article", exact: true })
+        .click();
+      await expect(page.locator(".rss-source-text")).toContainText(
+        "Browser original",
+      );
+      await page.getByRole("button", { name: "設定", exact: true }).click();
+      await page
+        .getByLabel("新しく取り込む本文の取得先")
+        .selectOption("shared");
+      await expect(page.getByRole("dialog")).toContainText(
+        "取得先を保存しました",
+      );
+      await page
+        .getByLabel("新しく取り込む本文の取得先")
+        .scrollIntoViewIfNeeded();
+      await page.screenshot({ path: info.outputPath("document-settings.png") });
+      await page.getByRole("button", { name: "閉じる", exact: true }).click();
+      const history = page.locator(".rss-document-history");
+      await history.locator("summary").click();
+      await history
+        .getByRole("button", { name: "元サイトの更新を確認" })
+        .click();
+      await expect(page.locator(".rss-source-text")).toContainText(
+        "Cloud revision 1",
+      );
+      await expect(history.getByLabel("履歴の取得先")).toBeVisible();
+      const browserScope = await history
+        .getByLabel("履歴の取得先")
+        .locator("option")
+        .filter({ hasText: "このブラウザ用" })
+        .getAttribute("value");
+      await history.getByLabel("履歴の取得先").selectOption(browserScope!);
+      await history
+        .getByRole("button", { name: "この本文を表示", exact: true })
+        .click();
+      await expect(page.locator(".rss-source-text")).toContainText(
+        "Browser original",
+      );
+      await history.getByLabel("履歴の取得先").selectOption(value.document.id);
+      await history
+        .getByRole("button", { name: "この本文を表示", exact: true })
+        .click();
+      await expect(page.locator(".rss-source-text")).toContainText(
+        "Cloud revision 1",
+      );
+      await page.route("**/api/documents/acquire", (r) =>
+        r.fulfill({ status: 404, json: { status: "document-unavailable" } }),
+      );
+      await history
+        .getByRole("button", { name: "元サイトの更新を確認" })
+        .click();
+      await expect(
+        page.getByText(/この本文はクラウドで利用できないか/).first(),
+      ).toBeVisible();
+      await expect(page.locator(".rss-source-text")).toContainText(
+        "Cloud revision 1",
+      );
+      expect(originalFetches).toBe(1);
+      expect(posted).toEqual(
+        Array.from({ length: 2 }, () => ({
+          url: articleURL,
+          audience: "shared",
+          force: true,
+        })),
+      );
+      const saved = await page.evaluate(async () => {
         const path = "/src/feed-store.ts",
           lib = await import(path),
           db = await lib.openFeedLibrary();
-        await new Promise<void>((resolve, reject) => {
-          const tx = db.transaction("articles", "readwrite");
-          tx.objectStore("articles").put({
-            id: "a",
-            url,
-            title: "Local article",
-            body: "RSS summary",
-            feedUrl: "",
-            saved: true,
-            read: true,
-            published: null,
-            fetchedAt: new Date().toISOString(),
-          });
-          tx.oncomplete = () => resolve();
-          tx.onabort = () => reject(tx.error);
-        });
-        db.close();
-      },
-      { url, design },
-    );
-    let originalFetches = 0;
-    await page.route("**/api/collection", (r) =>
-      r.fulfill({ status: 404, json: {} }),
-    );
-    await page.route("**/api/feeds/fetch", (r) => {
-      originalFetches++;
-      return r.fulfill({
-        json: {
-          url,
-          html: `<html lang="en"><title>Local article</title><article><p>${"Browser original stays available for offline reading. ".repeat(12)}</p></article></html>`,
-        },
+        try {
+          return await lib.readArticle(db, "a");
+        } finally {
+          db.close();
+        }
       });
+      expect(saved.url).toBe(articleURL);
+      expect(saved.saved).toBe(true);
+      expect(saved.read).toBe(true);
+      expect(saved.content.document.versionId).toBe(value.version.id);
+      await page.setViewportSize({ width: 320, height: 800 });
+      expect(
+        await page.evaluate(
+          () => document.documentElement.scrollWidth <= innerWidth,
+        ),
+      ).toBe(true);
+      await history.getByLabel("履歴の取得先").scrollIntoViewIfNeeded();
+      await page.screenshot({ path: info.outputPath("document-history.png") });
+      await page.reload();
+      await expect(
+        page.getByRole("button", { name: "Cloud 1", exact: true }),
+      ).toBeVisible();
+      await page.context().setOffline(true);
+      await page.getByRole("button", { name: "Cloud 1", exact: true }).click();
+      await expect(page.locator(".rss-source-text")).toContainText(
+        "Cloud revision 1",
+      );
     });
-    const posted: unknown[] = [];
-    page.on("request", (r) => {
-      if (r.url().endsWith("/documents/acquire")) {
-        posted.push(r.postDataJSON());
-        expect(r.headers()["x-document-account"]).toBe(account);
-        expect(r.headers()["x-csrf-token"]).toBe(
-          "synthetic-token-for-client-fixture",
-        );
-      }
-    });
-    await page.goto("/?view=feeds");
-    await page
-      .getByRole("button", { name: "Local article", exact: true })
-      .click();
-    await expect(page.locator(".rss-source-text")).toContainText(
-      "Browser original",
-    );
-    await page.getByRole("button", { name: "設定", exact: true }).click();
-    await page.getByLabel("新しく取り込む本文の取得先").selectOption("shared");
-    await expect(page.getByRole("dialog")).toContainText(
-      "取得先を保存しました",
-    );
-    await page
-      .getByLabel("新しく取り込む本文の取得先")
-      .scrollIntoViewIfNeeded();
-    await page.screenshot({ path: info.outputPath("document-settings.png") });
-    await page.getByRole("button", { name: "閉じる", exact: true }).click();
-    const history = page.locator(".rss-document-history");
-    await history.locator("summary").click();
-    await history.getByRole("button", { name: "元サイトの更新を確認" }).click();
-    await expect(page.locator(".rss-source-text")).toContainText(
-      "Cloud revision 1",
-    );
-    await expect(history.getByLabel("履歴の取得先")).toBeVisible();
-    const browserScope = await history
-      .getByLabel("履歴の取得先")
-      .locator("option")
-      .filter({ hasText: "このブラウザ用" })
-      .getAttribute("value");
-    await history.getByLabel("履歴の取得先").selectOption(browserScope!);
-    await history
-      .getByRole("button", { name: "この本文を表示", exact: true })
-      .click();
-    await expect(page.locator(".rss-source-text")).toContainText(
-      "Browser original",
-    );
-    await history.getByLabel("履歴の取得先").selectOption(value.document.id);
-    await history
-      .getByRole("button", { name: "この本文を表示", exact: true })
-      .click();
-    await expect(page.locator(".rss-source-text")).toContainText(
-      "Cloud revision 1",
-    );
-    await page.route("**/api/documents/acquire", (r) =>
-      r.fulfill({ status: 404, json: { status: "document-unavailable" } }),
-    );
-    await history.getByRole("button", { name: "元サイトの更新を確認" }).click();
-    await expect(
-      page.getByText(/この本文はクラウドで利用できないか/).first(),
-    ).toBeVisible();
-    await expect(page.locator(".rss-source-text")).toContainText(
-      "Cloud revision 1",
-    );
-    expect(originalFetches).toBe(1);
-    expect(posted).toEqual(
-      Array.from({ length: 2 }, () => ({
-        url,
-        audience: "shared",
-        force: true,
-      })),
-    );
-    const saved = await page.evaluate(async () => {
-      const path = "/src/feed-store.ts",
-        lib = await import(path),
-        db = await lib.openFeedLibrary();
-      try {
-        return await lib.readArticle(db, "a");
-      } finally {
-        db.close();
-      }
-    });
-    expect(saved.saved).toBe(true);
-    expect(saved.read).toBe(true);
-    expect(saved.content.document.versionId).toBe(value.version.id);
-    await page.setViewportSize({ width: 320, height: 800 });
-    expect(
-      await page.evaluate(
-        () => document.documentElement.scrollWidth <= innerWidth,
-      ),
-    ).toBe(true);
-    await history.getByLabel("履歴の取得先").scrollIntoViewIfNeeded();
-    await page.screenshot({ path: info.outputPath("document-history.png") });
-    await page.reload();
-    await expect(
-      page.getByRole("button", { name: "Cloud 1", exact: true }),
-    ).toBeVisible();
-    await page.context().setOffline(true);
-    await page.getByRole("button", { name: "Cloud 1", exact: true }).click();
-    await expect(page.locator(".rss-source-text")).toContainText(
-      "Cloud revision 1",
-    );
-  });
 
 test("private mode persists the signed-in scope, refuses oversized data and leaves settings unchanged when service is disabled", async ({
   page,

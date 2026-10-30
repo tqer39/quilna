@@ -31,7 +31,7 @@ export async function documentAccess(
     throw Error("document-unconfigured");
   // A new first-primary session for every check avoids reusing a stale replica
   // bookmark when a grant is withdrawn during network or storage work.
-  const row = await env.DOCUMENT_ACCESS_DB.withSession("first-primary")
+  let row = await env.DOCUMENT_ACCESS_DB.withSession("first-primary")
     .prepare(
       `SELECT p.id, p.revision, p.expires, p.evidence
       FROM document_policies p JOIN document_members m ON m.policy_id = p.id
@@ -39,10 +39,52 @@ export async function documentAccess(
     )
     .bind(url, owner)
     .first();
+  let resolvedURL = url,
+    aliasExpires = Infinity;
+  if (!row) {
+    row = await env.DOCUMENT_ACCESS_DB.withSession("first-primary")
+      .prepare(
+        `SELECT p.id, p.revision, p.expires, p.evidence, p.source_url,
+          a.expires AS alias_expires, a.evidence AS alias_evidence
+        FROM document_aliases a
+        JOIN document_policies p ON p.id = a.policy_id
+        JOIN document_members m ON m.policy_id = p.id
+        WHERE a.alias_url = ? AND a.enabled = 1 AND p.enabled = 1
+          AND a.policy_revision = p.revision AND m.owner_hash = ?
+          AND NOT EXISTS (SELECT 1 FROM document_policies WHERE source_url = a.alias_url)`,
+      )
+      .bind(url, owner)
+      .first();
+    if (row) {
+      const alias = z
+        .object({
+          source_url: z.string(),
+          alias_expires: z
+            .number()
+            .int()
+            .positive()
+            .max(Number.MAX_SAFE_INTEGER),
+          alias_evidence: z.string().min(5).max(2000),
+        })
+        .parse(row);
+      aliasExpires = alias.alias_expires;
+      resolvedURL = cloudFeedURL(
+        alias.source_url,
+        env.APP_ORIGIN ? [new URL(env.APP_ORIGIN).hostname] : [],
+      ).href;
+      if (resolvedURL !== alias.source_url) throw Error("document-unavailable");
+    }
+  }
   if (!row) throw Error("document-unavailable");
-  const policy = policySchema.parse(row);
-  if (policy.expires <= now()) throw Error("document-unavailable");
-  return { url, scope: `shared:${policy.id}:${policy.revision}` };
+  const policy = policySchema.parse({
+    id: row.id,
+    revision: row.revision,
+    expires: row.expires,
+    evidence: row.evidence,
+  });
+  if (Math.min(policy.expires, aliasExpires) <= now())
+    throw Error("document-unavailable");
+  return { url: resolvedURL, scope: `shared:${policy.id}:${policy.revision}` };
 }
 
 export const documentRequest = z.discriminatedUnion("action", [

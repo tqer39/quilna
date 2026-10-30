@@ -63,8 +63,8 @@ async function settings(page, mode) {
   await expect(page.getByRole("dialog")).toContainText("取得先を保存しました");
   await page.getByRole("button", { name: "閉じる", exact: true }).click();
 }
-async function subscribe(page) {
-  await page.getByLabel("サイト・RSSのURL").fill(feedURL);
+async function subscribe(page, address = feedURL) {
+  await page.getByLabel("サイト・RSSのURL").fill(address);
   await page
     .getByRole("button", { name: "フィードを探す", exact: true })
     .click();
@@ -93,9 +93,15 @@ async function storedArticles(page) {
   });
 }
 
-test("real browser login, RSS import and scoped server extraction preserve shared originals and private reading state", async ({
-  browser,
-}, info) => {
+for (const aliasMode of [false, true])
+  test(`real browser login and ${aliasMode ? "approved alias" : "exact source"} RSS preserve shared originals and private reading state`, async ({
+    browser,
+  }, info) => {
+    await runReaderScenario(browser, info, aliasMode);
+  });
+async function runReaderScenario(browser, info, aliasMode) {
+  const aliasURL = articleURL + "?utm_source=approved",
+    aliasFeed = feedURL + "?reader=b";
   const cleanup = [],
     cleanupErrors = [],
     contexts = [],
@@ -117,6 +123,16 @@ test("real browser login, RSS import and scoped server extraction preserve share
         server: { host: "127.0.0.1", port, https: true, logRequests: false },
         assets: await assets(),
         sourceResponses: {
+          [aliasFeed]: () =>
+            new Response(
+              xml
+                .replace(articleURL, aliasURL)
+                .replace(
+                  "<guid>one</guid>",
+                  "<guid>other-publisher-guid</guid>",
+                ),
+              { headers: { "Content-Type": "application/rss+xml" } },
+            ),
           [feedURL]: () =>
             new Response(xml, {
               headers: { "Content-Type": "application/rss+xml" },
@@ -129,7 +145,9 @@ test("real browser login, RSS import and scoped server extraction preserve share
           if (fail) return new Response("unavailable", { status: 503 });
           return new Response(
             `<html lang="en"><title>Runtime original ${version}</title><article><p>${`Runtime version ${version} explains how information connects through carefully retained source evidence. `.repeat(12)}</p><pre><code>const value = ${version};\n  console.log(value);\n</code></pre></article></html>`,
-            { headers: { "Content-Type": "text/html", ETag: `"v${version}"` } },
+            {
+              headers: { "Content-Type": "text/html", ETag: `"v${version}"` },
+            },
           );
         },
       },
@@ -196,6 +214,16 @@ test("real browser login, RSS import and scoped server extraction preserve share
         "Synthetic fixture publisher permits offline test reuse",
       )
       .run();
+    if (aliasMode)
+      await db
+        .prepare("INSERT INTO document_aliases VALUES(?,?,1,1,?,?)")
+        .bind(
+          aliasURL,
+          policyId,
+          Date.now() + 3600000,
+          "Synthetic explicit same-source evidence",
+        )
+        .run();
     for (const account of [a.account, b.account])
       await db
         .prepare(
@@ -205,7 +233,7 @@ test("real browser login, RSS import and scoped server extraction preserve share
         .run();
     await settings(a.page, "shared");
     await settings(b.page, "shared");
-    await subscribe(a.page);
+    await subscribe(a.page, aliasMode ? aliasFeed : feedURL);
     await subscribe(b.page);
     const firstResponse = a.page.waitForResponse(
       (r) => r.url() === origin + "/api/documents/acquire",
@@ -243,6 +271,16 @@ test("real browser login, RSS import and scoped server extraction preserve share
     const [aStored] = await storedArticles(a.page),
       [bStored] = await storedArticles(b.page);
     expect(aStored.content.document).toEqual(bStored.content.document);
+    expect(aStored.url).toBe(aliasMode ? aliasURL : articleURL);
+    expect(bStored.url).toBe(articleURL);
+    if (aliasMode) {
+      expect(aStored.id).not.toBe(bStored.id);
+      expect(first.resolution).toEqual({
+        requestedURL: aliasURL,
+        sourceURL: articleURL,
+        scope: first.document.scope,
+      });
+    }
     expect(aStored.saved).toBe(true);
     expect(bStored.saved).toBe(false);
     expect(bStored.content.fetchedAt).toBe(first.version.content.fetchedAt);
@@ -251,6 +289,10 @@ test("real browser login, RSS import and scoped server extraction preserve share
     );
     const history = a.page.locator(".rss-document-history");
     await history.locator("summary").click();
+    if (aliasMode) {
+      await expect(history).toContainText("許可済みの共通本文を表示しています");
+      await expect(history).toContainText(aliasURL);
+    }
     version = 2;
     await history.getByRole("button", { name: "元サイトの更新を確認" }).click();
     await expect(a.page.locator(".rss-source-text")).toContainText(
@@ -320,4 +362,4 @@ test("real browser login, RSS import and scoped server extraction preserve share
       if (result.status === "rejected") cleanupErrors.push(result.reason);
   }
   expect(cleanupErrors).toEqual([]);
-});
+}

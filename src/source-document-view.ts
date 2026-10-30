@@ -14,6 +14,7 @@ import {
 export class SourceDocumentView {
   readonly root = el("details", undefined, "rss-document-history");
   private readonly status = el("p", "", "muted");
+  private readonly provenance = el("p", "", "muted");
   private readonly list = el("div");
   private readonly sources = el("select");
   private readonly sourceLabel = el("label", "履歴の取得先");
@@ -29,6 +30,7 @@ export class SourceDocumentView {
   );
   private generation = 0;
   private active?: ArticleContent;
+  private requestedURL?: string;
   private busy = false;
   private articleId?: string;
   private readonly channel =
@@ -54,6 +56,7 @@ export class SourceDocumentView {
         "このブラウザに保存した本文の版です。更新を確認しても過去の本文は保持します。既読・保存・引用は記事ごとに残ります。",
         "muted",
       ),
+      this.provenance,
       this.refresh,
       this.sourceLabel,
       this.sources,
@@ -73,13 +76,27 @@ export class SourceDocumentView {
         void this.load();
     });
   }
-  show(content: ArticleContent | undefined, busy = false, articleId?: string) {
+  show(
+    content: ArticleContent | undefined,
+    busy = false,
+    articleId?: string,
+    requestedURL?: string,
+  ) {
     const moved = this.articleId !== articleId;
     this.articleId = articleId;
     const changed =
       moved ||
       this.active?.document?.versionId !== content?.document?.versionId;
     this.active = content;
+    this.requestedURL = requestedURL;
+    const alias =
+      !!requestedURL &&
+      !!content?.document?.scope.startsWith("shared:") &&
+      requestedURL !== content.document.sourceURL;
+    this.provenance.hidden = !alias;
+    this.provenance.textContent = alias
+      ? `許可済みの共通本文を表示しています。登録したURL: ${requestedURL} / 本文の出典: ${content!.document!.sourceURL}`
+      : "";
     this.busy = busy;
     this.root.hidden = !content;
     this.refresh.disabled = busy;
@@ -123,7 +140,9 @@ export class SourceDocumentView {
     this.status.textContent = "本文の保存履歴を読み込んでいます…";
     try {
       if (!older) {
-        const sources = await documentSources(ref.sourceURL);
+        const sources = await documentSources(
+          this.requestedURL || ref.sourceURL,
+        );
         if (generation !== this.generation || !this.root.open) return;
         this.documents = sources;
         this.sources.replaceChildren();

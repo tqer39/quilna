@@ -212,7 +212,11 @@ export class DocumentAcquisition {
       typeof result.reused !== "boolean" ||
       !validSourceDocument(d) ||
       !validDocumentVersion(v) ||
-      d.sourceURL !== normalized ||
+      (d.sourceURL !== normalized &&
+        (preference.mode !== "shared" ||
+          result.resolution?.requestedURL !== normalized ||
+          result.resolution?.sourceURL !== d.sourceURL ||
+          result.resolution?.scope !== d.scope)) ||
       (preference.mode === "private"
         ? d.scope !== `private:${preference.account}`
         : shared.length !== 3 ||
@@ -226,7 +230,7 @@ export class DocumentAcquisition {
     check();
     if (!latest.enabled || latest.account !== preference.account)
       throw Error(accountChanged);
-    const retained = await retainRemoteDocument(d, v, signal);
+    const retained = await retainRemoteDocument(d, v, signal, normalized);
     check();
     return {
       content: versionContent(retained.version),

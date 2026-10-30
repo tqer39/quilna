@@ -1,4 +1,5 @@
 import { openDocuments, documentDatabase } from "./source-document-store";
+import { sourceURL } from "./feed-discovery";
 import {
   validSourceDocument,
   validDocumentVersion,
@@ -48,6 +49,7 @@ export async function retainRemoteDocument(
   document: SourceDocument,
   version: DocumentVersion,
   signal: AbortSignal,
+  requestedURL = document.sourceURL,
 ) {
   if (
     !validSourceDocument(document) ||
@@ -60,6 +62,9 @@ export async function retainRemoteDocument(
     !(await verifyDocumentIdentity(document)) ||
     !(await verifyDocumentIdentity(version))
   )
+    throw invalid();
+  const requested = sourceURL(requestedURL);
+  if (requested !== document.sourceURL && !document.scope.startsWith("shared:"))
     throw invalid();
   const incoming = cleanDocument(document),
     immutable = cleanVersion(version);
@@ -102,10 +107,23 @@ export async function retainRemoteDocument(
             abort();
             return;
           }
+          const aliases = [
+            ...new Set([
+              ...(previous?.sourceAliases ?? []),
+              ...(requested !== incoming.sourceURL ? [requested] : []),
+            ]),
+          ];
+          if (aliases.length > 50) throw invalid();
           if (!stored) versions.add(immutable);
           // Late responses can add historical evidence but cannot rewind the latest pointer.
-          if (!previous || previous.revision < incoming.revision)
-            docs.put(incoming);
+          const current =
+            !previous || previous.revision < incoming.revision
+              ? incoming
+              : previous;
+          docs.put({
+            ...current,
+            ...(aliases.length ? { sourceAliases: aliases } : {}),
+          });
         } catch {
           abort();
         }

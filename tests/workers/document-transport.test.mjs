@@ -56,13 +56,14 @@ async function fixture(t, { enabled = true, outbound } = {}) {
     await rm(dir, { recursive: true, force: true });
   });
   const db = () => mf.getD1Database("DOCUMENT_ACCESS_DB");
-  await (
-    await db()
-  ).exec(
-    (await readFile("migrations/documents/0001_access.sql", "utf8"))
-      .replace(/^--.*$/gm, "")
-      .replaceAll("\n", " "),
-  );
+  for (const file of ["0001_access.sql", "0002_source_aliases.sql"])
+    await (
+      await db()
+    ).exec(
+      (await readFile("migrations/documents/" + file, "utf8"))
+        .replace(/^--.*$/gm, "")
+        .replaceAll("\n", " "),
+    );
   const tokens = new Map();
   async function call(
     action,
@@ -114,6 +115,25 @@ async function fixture(t, { enabled = true, outbound } = {}) {
     call,
     db,
     grant,
+    alias: async (
+      address = url + "?utm_source=approved",
+      expires = Date.now() + 3600000,
+    ) => {
+      await (
+        await db()
+      )
+        .prepare(
+          "INSERT INTO document_aliases(alias_url,policy_id,policy_revision,enabled,expires,evidence) VALUES(?,?,1,1,?,?)",
+        )
+        .bind(
+          address,
+          policyId,
+          expires,
+          "Synthetic evidence: same original and delivery terms",
+        )
+        .run();
+      return address;
+    },
     calls: () => calls,
     restart: async () => {
       await mf.dispose();
@@ -331,5 +351,144 @@ test(
     assert.equal(result.status, 404);
     assert.equal(result.value.version, undefined);
     assert.equal(f.calls(), 1);
+  },
+);
+
+test(
+  "approved exact aliases reuse the canonical original across users and restart without fetching aliases",
+  { timeout: 20000 },
+  async (t) => {
+    const f = await fixture(t);
+    await f.grant();
+    const alias = await f.alias();
+    const a = await f.call("acquire", {
+      body: { url: alias, audience: "shared" },
+    });
+    assert.equal(a.status, 200, JSON.stringify(a.value));
+    assert.equal(a.value.document.sourceURL, url);
+    assert.deepEqual(a.value.resolution, {
+      requestedURL: alias,
+      sourceURL: url,
+      scope: a.value.document.scope,
+    });
+    const b = await f.call("acquire", {
+      user: "bob",
+      body: { url, audience: "shared" },
+    });
+    assert.equal(b.status, 200);
+    assert.deepEqual(a.value.version, b.value.version);
+    assert.equal(f.calls(), 1);
+    const unknown = await f.call("acquire", {
+      body: { url: url + "?utm_source=not-approved", audience: "shared" },
+    });
+    assert.equal(unknown.status, 404);
+    await f.restart();
+    const read = await f.call("read", {
+      body: { url: alias, audience: "shared" },
+    });
+    assert.equal(read.status, 200);
+    assert.deepEqual(read.value, {
+      ...a.value.version,
+      account: a.value.account,
+      resolution: a.value.resolution,
+    });
+    await (await f.db()).prepare("UPDATE document_aliases SET enabled=0").run();
+    const denied = await f.call("read", {
+      body: { url: alias, audience: "shared" },
+    });
+    assert.equal(denied.status, 404);
+    assert.equal(denied.value.version, undefined);
+    assert.equal(
+      (await f.call("read", { body: { url, audience: "shared" } })).status,
+      200,
+    );
+    assert.equal(f.calls(), 1);
+  },
+);
+
+test(
+  "expired aliases, stale policy revisions and aliases colliding with another source cannot grant access",
+  { timeout: 20000 },
+  async (t) => {
+    const f = await fixture(t);
+    await f.grant();
+    const alias = await f.alias();
+    const expired = await f.alias(url + "?expired=1", 1);
+    assert.equal(
+      (await f.call("acquire", { body: { url: expired, audience: "shared" } }))
+        .status,
+      404,
+    );
+    const db = await f.db();
+    await db.prepare("UPDATE document_policies SET revision=2").run();
+    assert.equal(
+      (await f.call("acquire", { body: { url: alias, audience: "shared" } }))
+        .status,
+      404,
+    );
+    await db.prepare("UPDATE document_aliases SET policy_revision=2").run();
+    await db
+      .prepare("INSERT INTO document_policies VALUES(?,?,1,1,?,?)")
+      .bind(
+        "88888888-8888-4888-8888-888888888888",
+        alias,
+        Date.now() + 3600000,
+        "Independent source without membership",
+      )
+      .run();
+    assert.equal(
+      (await f.call("acquire", { body: { url: alias, audience: "shared" } }))
+        .status,
+      404,
+    );
+    assert.equal(f.calls(), 0);
+  },
+);
+
+test(
+  "removing an alias while its canonical original is fetched prevents delivery and leaves canonical access usable",
+  { timeout: 20000 },
+  async (t) => {
+    let enter, release;
+    const entered = new Promise((r) => {
+        enter = r;
+      }),
+      gate = new Promise((r) => {
+        release = r;
+      });
+    t.after(() => release());
+    const f = await fixture(t, {
+      outbound: async () => {
+        enter();
+        await gate;
+        return new Response(
+          "<article><p>" +
+            "Exact source evidence. ".repeat(25) +
+            "</p></article>",
+          { headers: { "Content-Type": "text/html" } },
+        );
+      },
+    });
+    await f.grant();
+    const alias = await f.alias();
+    const pending = f.call("acquire", {
+      body: { url: alias, audience: "shared" },
+    });
+    await entered;
+    await (await f.db()).prepare("DELETE FROM document_aliases").run();
+    release();
+    const denied = await pending;
+    assert.equal(denied.status, 404);
+    assert.equal(denied.value.version, undefined);
+    assert.equal(
+      (
+        await f.call("acquire", {
+          user: "bob",
+          body: { url, audience: "shared" },
+        })
+      ).status,
+      200,
+    );
+    assert.equal(f.calls(), 2);
   },
 );

@@ -34,7 +34,11 @@ import { LibraryBackupView } from "./library-backup-view";
 import { SourceDocumentView } from "./source-document-view";
 import { DocumentAcquisition } from "./document-acquisition";
 import { documentAcquisitionSettings } from "./document-acquisition-view";
-import { retainDocument, readDocumentVersion } from "./source-document-store";
+import {
+  retainDocument,
+  readDocumentVersion,
+  documentSources,
+} from "./source-document-store";
 import { versionContent, type DocumentVersion } from "./source-document";
 import { ArticleConnectionView } from "./article-connection-view";
 import { ArticleGraphView } from "./article-graph-view";
@@ -1380,17 +1384,21 @@ export async function feedReader(root: HTMLElement) {
   }
   async function chooseDocumentVersion(version: DocumentVersion) {
     const article = articles.find((a) => a.id === selected);
-    if (
-      !db ||
-      !article?.content?.document ||
-      importing.has(article.id) ||
-      sourceURL(article.url) !== version.sourceURL
-    )
-      return;
+    if (!db || !article?.content?.document || importing.has(article.id)) return;
     importing.add(article.id);
     cancelReading();
     render();
     try {
+      const sources = await documentSources(article.url);
+      if (
+        !sources.some(
+          (source) =>
+            source.id === version.documentId &&
+            source.scope === version.scope &&
+            source.sourceURL === version.sourceURL,
+        )
+      )
+        throw Error("この記事の本文の保存履歴を確認できません。");
       const stored = await readDocumentVersion(
         version.documentId,
         version.id,
@@ -1933,7 +1941,12 @@ export async function feedReader(root: HTMLElement) {
       tagsPanel.append(editor);
 
       const importingNow = importing.has(article.id);
-      documentHistory.show(article.content, importingNow, article.id);
+      documentHistory.show(
+        article.content,
+        importingNow,
+        article.id,
+        article.url,
+      );
       const notice = el(
         "p",
         importingNow

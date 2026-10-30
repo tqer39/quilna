@@ -23,6 +23,7 @@ export type SourceDocument = {
   checkedAt: string;
   revision: number;
   validators?: SourceValidators;
+  sourceAliases?: string[];
 };
 export type DocumentVersion = {
   id: string;
@@ -67,6 +68,13 @@ export function validSourceDocument(v: unknown): v is SourceDocument {
     scope(v.scope) &&
     documentURL(v.sourceURL) &&
     documentUUID(v.currentVersionId) &&
+    (v.sourceAliases === undefined ||
+      (Array.isArray(v.sourceAliases) &&
+        v.sourceAliases.length <= 50 &&
+        new Set(v.sourceAliases).size === v.sourceAliases.length &&
+        v.sourceAliases.every(
+          (url) => documentURL(url) && url !== v.sourceURL,
+        ))) &&
     (v.validators === undefined || validSourceValidators(v.validators)) &&
     timestamp(v.checkedAt) &&
     Number.isSafeInteger(v.revision) &&

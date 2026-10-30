@@ -1,5 +1,6 @@
 import { hash } from "./crypto.mjs";
 import { documentIdentity } from "../src/source-document.ts";
+import { sourceURL } from "../src/feed-discovery.ts";
 import {
   documentAccess,
   documentRequest,
@@ -59,7 +60,7 @@ export class DocumentGateway {
           body: JSON.stringify({
             owner,
             scope: access.scope,
-            request: { ...input, url: access.url },
+            request: input,
           }),
         }),
       );
@@ -69,11 +70,24 @@ export class DocumentGateway {
       const current = await documentAccess(
         this.env,
         owner,
-        access.url,
+        input.url,
         input.audience,
       );
-      if (current.scope !== access.scope) throw Error("document-unavailable");
-      return json(response.status, { ...value, account: owner });
+      if (current.scope !== access.scope || current.url !== access.url)
+        throw Error("document-unavailable");
+      return json(response.status, {
+        ...value,
+        account: owner,
+        ...(access.url !== sourceURL(input.url)
+          ? {
+              resolution: {
+                requestedURL: sourceURL(input.url),
+                sourceURL: access.url,
+                scope: access.scope,
+              },
+            }
+          : {}),
+      });
     } catch (error) {
       const failure = documentError(error);
       return json(failure.code, { status: failure.status, account: owner });
