@@ -1,4 +1,5 @@
 import { CollectionNavigation } from "./collection-navigation";
+import { documentPolicySettings } from "./document-policy-view";
 import {
   FeedAutoRefresh,
   feedLockSupported,
@@ -211,6 +212,7 @@ export async function feedReader(root: HTMLElement) {
   });
   settings.append(backupSettings.root);
   settings.append(documentAcquisitionSettings(documentAcquisition));
+  settings.append(documentPolicySettings());
   const targetLabel = el("label", "ロケール（翻訳・読み上げ）");
   targetLabel.htmlFor = "rss-target-language";
   const targetLanguage = el("select");

@@ -20,6 +20,7 @@ export async function authWorkerFixture(
     missing = {},
     migrate = true,
     documents = false,
+    documentManagement = false,
     articleResponse,
     sourceResponses = {},
     origin = authFixtureOrigin,
@@ -177,7 +178,11 @@ export async function authWorkerFixture(
       );
   }
   if (documents)
-    for (const file of ["0001_access.sql", "0002_source_aliases.sql"])
+    for (const file of [
+      "0001_access.sql",
+      "0002_source_aliases.sql",
+      ...(documentManagement ? ["0003_policy_management.sql"] : []),
+    ])
       await (
         await mf.getD1Database("DOCUMENT_ACCESS_DB")
       ).exec(
@@ -262,7 +267,13 @@ export async function authWorkerFixture(
         waiting = r;
       }),
     release: () => release?.(),
-    restart: async () => {
+    restart: async (documentAdmin) => {
+      if (documentAdmin !== undefined) {
+        assert.match(documentAdmin, /^[a-f0-9]{64}$/);
+        assert.equal(documentManagement, true);
+        config.bindings.DOCUMENT_ADMIN_ENABLED = "true";
+        config.bindings.DOCUMENT_ADMIN_OWNER_HASH = documentAdmin;
+      }
       await mf.dispose();
       mf = new Miniflare(convertV4MiniflareOptions(config));
       await mf.ready;

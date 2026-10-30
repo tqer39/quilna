@@ -6,7 +6,6 @@ import { authWorkerFixture } from "../fixtures/auth-worker.mjs";
 
 const articleURL = "https://publisher.example.org/article";
 const feedURL = "https://publisher.example.org/feed.xml";
-const policyId = "77777777-7777-4777-8777-777777777777";
 const xml = `<rss version="2.0"><channel><title>Runtime news</title><item><guid>one</guid><title>Runtime article</title><link>${articleURL}</link><description>Summary from the runtime feed.</description></item></channel></rss>`;
 // The OS selects an unused loopback port. A race is a setup failure, never permission to reuse another server.
 async function freePort() {
@@ -177,6 +176,7 @@ async function runReaderScenario(browser, info, aliasMode) {
       {
         entry: "tests/runtime/reader-entry.mjs",
         documents: true,
+        documentManagement: true,
         missing: { RSS_COLLECTION_ENABLED: "true" },
         origin,
         server: { host: "127.0.0.1", port, https: true, logRequests: false },
@@ -261,35 +261,77 @@ async function runReaderScenario(browser, info, aliasMode) {
     const a = await login("a"),
       b = await login("b");
     expect(a.account).not.toBe(b.account);
+    await f.restart(a.account);
+    const admin = a.page.locator(".rss-policy-settings");
+    async function openAdmin() {
+      await a.page.getByRole("button", { name: "設定", exact: true }).click();
+      if (!(await admin.evaluate((n) => n.open)))
+        await admin.locator("summary").click();
+    }
+    async function saveAdmin() {
+      await admin
+        .getByRole("button", { name: "変更内容を確認", exact: true })
+        .click();
+      await admin
+        .getByRole("button", { name: "この内容を保存", exact: true })
+        .click();
+      await expect(admin.getByRole("status")).toContainText(
+        "共有設定を保存しました",
+      );
+      await a.page.getByRole("button", { name: "閉じる", exact: true }).click();
+    }
+    await openAdmin();
+    await admin
+      .getByRole("button", { name: "管理者として接続を確認", exact: true })
+      .click();
+    await expect(admin.getByRole("status")).toContainText(
+      "管理者の接続を確認しました",
+    );
+    await admin
+      .getByRole("button", { name: "共有する出典を登録", exact: true })
+      .click();
+    await admin.getByLabel("出典の記事URL", { exact: true }).fill(articleURL);
+    await admin
+      .getByLabel("本文を共有できる根拠", { exact: true })
+      .fill("Synthetic fixture publisher permits offline test reuse");
+    await admin
+      .getByLabel("指定した利用者への本文共有を有効にする", { exact: true })
+      .check();
+    if (aliasMode) {
+      await admin
+        .getByRole("button", { name: "別名URLを追加", exact: true })
+        .click();
+      await admin.getByLabel("別名URL", { exact: true }).fill(aliasURL);
+      await admin
+        .getByLabel("同じ記事と判断した根拠", { exact: true })
+        .fill("Synthetic explicit same-source evidence");
+      await admin.getByLabel("この別名を有効にする", { exact: true }).check();
+      await admin
+        .getByLabel("現在の共有条件で、同じ記事を指すことを確認しました", {
+          exact: true,
+        })
+        .check();
+    }
+    await saveAdmin();
     const db = await f.documentDB();
-    await db
+    const initialPolicy = await db
       .prepare(
-        "INSERT INTO document_policies(id,source_url,revision,enabled,expires,evidence) VALUES(?,?,1,1,?,?)",
+        "SELECT id, revision, management_revision FROM document_policies WHERE source_url=?",
       )
-      .bind(
-        policyId,
-        articleURL,
-        Date.now() + 3600000,
-        "Synthetic fixture publisher permits offline test reuse",
-      )
-      .run();
-    if (aliasMode)
-      await db
-        .prepare("INSERT INTO document_aliases VALUES(?,?,1,1,?,?)")
-        .bind(
-          aliasURL,
-          policyId,
-          Date.now() + 3600000,
-          "Synthetic explicit same-source evidence",
-        )
-        .run();
-    for (const account of [a.account, b.account])
-      await db
-        .prepare(
-          "INSERT INTO document_members(policy_id,owner_hash) VALUES(?,?)",
-        )
-        .bind(policyId, account)
-        .run();
+      .bind(articleURL)
+      .first();
+    expect(initialPolicy.revision).toBe(1);
+    expect(initialPolicy.management_revision).toBe(1);
+    await b.page.getByRole("button", { name: "設定", exact: true }).click();
+    const nonadmin = b.page.locator(".rss-policy-settings");
+    await nonadmin.locator("summary").click();
+    await nonadmin
+      .getByRole("button", { name: "管理者として接続を確認", exact: true })
+      .click();
+    await expect(nonadmin.getByRole("status")).toContainText(
+      "管理を利用できません",
+    );
+    await b.page.getByRole("button", { name: "閉じる", exact: true }).click();
     await settings(a.page, "shared");
     await settings(b.page, "shared");
     await subscribe(a.page, aliasMode ? aliasFeed : feedURL);
@@ -316,6 +358,19 @@ async function runReaderScenario(browser, info, aliasMode) {
       "aria-pressed",
       "true",
     );
+    await openAdmin();
+    await admin
+      .getByLabel("共有する利用者ID（1行に1人）", { exact: true })
+      .fill(a.account + "\n" + b.account);
+    await saveAdmin();
+    const addedPolicy = await db
+      .prepare(
+        "SELECT revision, management_revision FROM document_policies WHERE id=?",
+      )
+      .bind(initialPolicy.id)
+      .first();
+    expect(addedPolicy.revision).toBe(1);
+    expect(addedPolicy.management_revision).toBe(2);
     const bBefore = await storedArticles(b.page);
     expect(bBefore[0].read).toBe(false);
     expect(bBefore[0].saved).toBe(false);
@@ -372,12 +427,11 @@ async function runReaderScenario(browser, info, aliasMode) {
       "Runtime version 2",
     );
     expect(articleFetches).toBe(3);
-    await db
-      .prepare(
-        "DELETE FROM document_members WHERE policy_id=? AND owner_hash=?",
-      )
-      .bind(policyId, b.account)
-      .run();
+    await openAdmin();
+    await admin
+      .getByLabel("共有する利用者ID（1行に1人）", { exact: true })
+      .fill(a.account);
+    await saveAdmin();
     await b.page.locator(".rss-document-history summary").click();
     await b.page.getByRole("button", { name: "元サイトの更新を確認" }).click();
     await expect(

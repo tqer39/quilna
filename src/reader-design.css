@@ -915,3 +915,61 @@
   white-space: normal;
   margin: 4px;
 }
+
+.rss-policy-settings {
+  margin-block: 1.4rem;
+  border-block: 1px solid var(--viewer-line, #d7ded9);
+  padding-block: 1rem;
+  overflow-wrap: anywhere;
+}
+.rss-policy-settings summary {
+  cursor: pointer;
+  font-weight: 650;
+}
+.rss-policy-settings :is(form, fieldset, label) {
+  min-width: 0;
+}
+.rss-policy-settings fieldset {
+  display: grid;
+  gap: 0.8rem;
+  margin-block: 1rem;
+  border: 1px solid var(--viewer-line, #d7ded9);
+  border-radius: 10px;
+  padding: 0.8rem;
+}
+.rss-policy-settings label {
+  display: block;
+}
+.rss-policy-settings :is(input:not([type="checkbox"]), textarea) {
+  display: block;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  margin-top: 0.35rem;
+  font: inherit;
+  border: 1px solid var(--viewer-line, #d7ded9);
+  border-radius: 8px;
+  padding: 0.65rem;
+  color: var(--viewer-text, #18333b);
+  background: var(--viewer-surface, white);
+}
+.rss-policy-settings textarea {
+  resize: vertical;
+}
+.rss-policy-settings input[type="checkbox"] {
+  margin-right: 0.6rem;
+}
+.rss-policy-settings button {
+  max-width: 100%;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  margin: 0.3rem 0.3rem 0.3rem 0;
+}
+.rss-policy-settings :is(input, textarea):focus-visible {
+  outline: 2px solid var(--viewer-accent, #28625f);
+  outline-offset: 2px;
+}
+.rss-policy-review {
+  border-inline-start: 3px solid var(--viewer-accent, #28625f);
+  padding-inline: 1rem;
+}
