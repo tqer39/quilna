@@ -118,7 +118,10 @@ export class ArticleHighlightView {
     this.root.append(this.selection, this.status, this.details);
     document.addEventListener("selectionchange", () => this.captureSelection());
     this.channel?.addEventListener("message", (event) => {
-      if (event.data === this.view?.articleId && this.root.isConnected) {
+      if (
+        (event.data === this.view?.articleId || event.data === "changed") &&
+        this.root.isConnected
+      ) {
         if (this.busy) this.refreshPending = true;
         else void this.load();
       }

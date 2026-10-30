@@ -29,6 +29,7 @@ import { articlePage } from "./article-page";
 import { ArticleListView } from "./article-list-view";
 import { ArticleHighlightView } from "./article-highlight-view";
 import { ArticleLearningView } from "./article-learning-view";
+import { LibraryBackupView } from "./library-backup-view";
 import { ArticleConnectionView } from "./article-connection-view";
 import { ArticleGraphView } from "./article-graph-view";
 import { QuoteConnectionView } from "./quote-connection-view";
@@ -184,6 +185,11 @@ export async function feedReader(root: HTMLElement) {
       "記事を開くと元サイトから本文を取り込み、このブラウザに保存します。取得できないときは理由と元のRSS情報を表示します。翻訳は対応ブラウザの端末内機能を使い、初回に翻訳データをダウンロードする場合があります。読み上げは端末内の音声を使います。教材生成は未接続です。",
     ),
   );
+  const backupSettings = new LibraryBackupView(async () => {
+    await load();
+    render();
+  });
+  settings.append(backupSettings.root);
   const targetLabel = el("label", "ロケール（翻訳・読み上げ）");
   targetLabel.htmlFor = "rss-target-language";
   const targetLanguage = el("select");

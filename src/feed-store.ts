@@ -14,7 +14,7 @@ const text = (value: unknown) =>
   typeof value === "string" && value.length <= 40000;
 const timestamp = (value: unknown) =>
   text(value) && Number.isFinite(Date.parse(value as string));
-function validArticle(a: FeedArticle) {
+export function validArticle(a: FeedArticle) {
   return (
     a &&
     [a.id, a.feedUrl, a.title, a.url, a.body, a.fetchedAt].every(text) &&
@@ -91,7 +91,7 @@ export function openFeedLibrary(): Promise<IDBDatabase> {
     };
   });
 }
-function validFeed(feed: Feed) {
+export function validFeed(feed: Feed) {
   return (
     feed &&
     text(feed.url) &&

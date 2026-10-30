@@ -150,8 +150,8 @@ export class ArticleConnectionView {
         this.article &&
         this.details.open &&
         this.root.isConnected &&
-        Array.isArray(event.data) &&
-        event.data.includes(this.article.id)
+        (event.data === "changed" ||
+          (Array.isArray(event.data) && event.data.includes(this.article.id)))
       ) {
         if (this.busy) this.refreshPending = true;
         else void this.load();

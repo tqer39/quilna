@@ -92,7 +92,7 @@ export class ArticleLearningView {
     });
     this.channel?.addEventListener("message", (event) => {
       if (
-        event.data === this.articleId &&
+        (event.data === this.articleId || event.data === "changed") &&
         this.root.isConnected &&
         this.details.open &&
         !this.busy
