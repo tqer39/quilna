@@ -24,6 +24,7 @@ async function fixture(page: Page, initial: DocumentPolicy | null = null) {
     enabled: true,
     account,
     mode: "ok",
+    hold: null as Promise<void> | null,
     saves: 0,
     statuses: 0,
     requests: [] as string[],
@@ -61,6 +62,7 @@ async function fixture(page: Page, initial: DocumentPolicy | null = null) {
         status: 409,
         json: { account, status: "document-conflict" },
       });
+    if (state.hold) await state.hold;
     const old = state.policy;
     state.policy = {
       ...body,
@@ -423,4 +425,50 @@ test("an uncertain create keeps its draft and can reopen the committed source wi
     root.getByLabel("出典の記事URL", { exact: true }),
   ).toHaveAttribute("readonly", "");
   expect(state.saves).toBe(1);
+});
+
+test("a second pending save replaces the previous success notice until its own commit is confirmed", async ({
+  page,
+}) => {
+  const { state, root } = await fixture(page, saved());
+  await edit(root);
+  await root
+    .getByLabel("本文を共有できる根拠", { exact: true })
+    .fill("First confirmed permission update");
+  await preview(root);
+  await root
+    .getByRole("button", { name: "この内容を保存", exact: true })
+    .click();
+  await expect(root.getByRole("status")).toContainText(
+    "共有設定を保存しました",
+  );
+  expect(state.policy?.managementRevision).toBe(2);
+  let release!: () => void;
+  state.hold = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  try {
+    await root
+      .getByLabel("共有する利用者ID（1行に1人）", { exact: true })
+      .fill(account + "\n" + other);
+    await preview(root);
+    await root
+      .getByRole("button", { name: "この内容を保存", exact: true })
+      .click();
+    await expect.poll(() => state.saves).toBe(2);
+    expect(state.policy?.managementRevision).toBe(2);
+    await expect(root.getByRole("status")).toHaveText(
+      "共有設定を保存しています…",
+    );
+    await expect(
+      root.getByRole("button", { name: "この内容を保存", exact: true }),
+    ).toBeDisabled();
+  } finally {
+    release();
+  }
+  await expect(root.getByRole("status")).toContainText(
+    "共有設定を保存しました",
+  );
+  expect(state.policy?.managementRevision).toBe(3);
+  expect(state.policy?.members).toEqual([account, other]);
 });

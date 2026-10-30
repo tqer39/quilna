@@ -133,6 +133,7 @@ export function documentPolicySettings(client = new DocumentPolicyClient()) {
   ) {
     if (busy) return;
     busy = true;
+    if (mutating) notice.textContent = "共有設定を保存しています…";
     controls();
     const current = controller;
     try {
