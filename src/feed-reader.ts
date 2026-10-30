@@ -189,9 +189,11 @@ export async function feedReader(root: HTMLElement) {
   const settingsOpen = button("設定", () => settings.showModal());
   const settingsClose = button("閉じる", () => settings.close());
   settingsClose.className = "rss-settings-close";
-  settings.append(
-    settingsClose,
-    settingsTitle,
+  const settingsHeader = el("div", undefined, "rss-settings-header");
+  const settingsBody = el("div", undefined, "rss-settings-body");
+  settingsHeader.append(settingsTitle, settingsClose);
+  settings.append(settingsHeader, settingsBody);
+  settingsBody.append(
     designSettings,
     el(
       "p",
@@ -210,9 +212,9 @@ export async function feedReader(root: HTMLElement) {
     await load();
     render();
   });
-  settings.append(backupSettings.root);
-  settings.append(documentAcquisitionSettings(documentAcquisition));
-  settings.append(documentPolicySettings());
+  settingsBody.append(backupSettings.root);
+  settingsBody.append(documentAcquisitionSettings(documentAcquisition));
+  settingsBody.append(documentPolicySettings());
   const targetLabel = el("label", "ロケール（翻訳・読み上げ）");
   targetLabel.htmlFor = "rss-target-language";
   const targetLanguage = el("select");
@@ -282,7 +284,7 @@ export async function feedReader(root: HTMLElement) {
     autoLabel,
     preferenceNotice,
   );
-  settings.insertBefore(translationSettings, designSettings.nextSibling);
+  settingsBody.insertBefore(translationSettings, designSettings.nextSibling);
   window.addEventListener("languagechange", () => {
     browserLanguageOption.textContent = browserTargetLanguage()
       ? `ブラウザに合わせる（${browserLocale()}）`
@@ -333,7 +335,7 @@ export async function feedReader(root: HTMLElement) {
     refreshSelect,
     refreshNotice,
   );
-  settings.insertBefore(refreshSettings, translationSettings);
+  settingsBody.insertBefore(refreshSettings, translationSettings);
   settings.addEventListener("close", () => settingsOpen.focus());
   const skipToArticles = readingJump("記事へ", "rss-main");
   skipToArticles.classList.add("rss-skip-navigation");
@@ -569,7 +571,7 @@ export async function feedReader(root: HTMLElement) {
     cloudFailures,
     cloudRetry,
   );
-  settings.insertBefore(cloudSection, translationSettings);
+  settingsBody.insertBefore(cloudSection, translationSettings);
   function renderCloud() {
     const failures = cloudState ? cloudClient.failures(cloudState) : [];
     cloudRetry.hidden = !failures.length;
