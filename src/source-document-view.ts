@@ -1,12 +1,24 @@
 import { button, el } from "./ui";
-import { documentHistory, documentDatabase } from "./source-document-store";
+import {
+  documentHistory,
+  documentDatabase,
+  documentSources,
+} from "./source-document-store";
 import type { ArticleContent } from "./article-content";
-import type { DocumentVersion } from "./source-document";
+import {
+  browserDocumentScope,
+  type SourceDocument,
+  type DocumentVersion,
+} from "./source-document";
 
 export class SourceDocumentView {
   readonly root = el("details", undefined, "rss-document-history");
   private readonly status = el("p", "", "muted");
   private readonly list = el("div");
+  private readonly sources = el("select");
+  private readonly sourceLabel = el("label", "履歴の取得先");
+  private sourceId?: string;
+  private documents: SourceDocument[] = [];
   private readonly previous = button(
     "以前の本文を見る",
     () => void this.load(true),
@@ -29,6 +41,12 @@ export class SourceDocumentView {
     private readonly choose: (version: DocumentVersion) => Promise<void>,
     private readonly prepare: () => Promise<void>,
   ) {
+    this.sources.id = "rss-document-history-source";
+    this.sourceLabel.htmlFor = this.sources.id;
+    this.sources.addEventListener("change", () => {
+      this.sourceId = this.sources.value;
+      void this.load();
+    });
     this.root.append(
       el("summary", "本文の保存履歴"),
       el(
@@ -37,6 +55,8 @@ export class SourceDocumentView {
         "muted",
       ),
       this.refresh,
+      this.sourceLabel,
+      this.sources,
       this.status,
       this.list,
       this.previous,
@@ -63,6 +83,7 @@ export class SourceDocumentView {
     this.busy = busy;
     this.root.hidden = !content;
     this.refresh.disabled = busy;
+    this.sources.disabled = busy;
     for (const button of Array.from(this.list.querySelectorAll("button")))
       button.disabled =
         busy || button.dataset.version === content?.document?.versionId;
@@ -70,8 +91,10 @@ export class SourceDocumentView {
       this.root.open = false;
       this.status.textContent = "";
       this.cursor = undefined;
+      this.sourceId = undefined;
     }
     if (changed) {
+      this.sourceId = content?.document?.documentId;
       this.generation++;
       this.list.replaceChildren();
       this.previous.hidden = true;
@@ -99,9 +122,40 @@ export class SourceDocumentView {
     this.previous.disabled = true;
     this.status.textContent = "本文の保存履歴を読み込んでいます…";
     try {
+      if (!older) {
+        const sources = await documentSources(ref.sourceURL);
+        if (generation !== this.generation || !this.root.open) return;
+        this.documents = sources;
+        this.sources.replaceChildren();
+        for (const doc of sources) {
+          const kind =
+            doc.scope === browserDocumentScope
+              ? "このブラウザ用"
+              : doc.scope.startsWith("private:")
+                ? "クラウドの個人用"
+                : doc.scope.startsWith("shared:")
+                  ? "許可された共有本文"
+                  : "取り込んだ保存履歴";
+          const option = el(
+            "option",
+            `${kind} · ${new Date(doc.checkedAt).toLocaleString("ja-JP")}${doc.id === ref.documentId ? " · 表示中の取得先" : ""}`,
+          );
+          option.value = doc.id;
+          this.sources.append(option);
+        }
+        if (!sources.some((d) => d.id === this.sourceId))
+          this.sourceId = ref.documentId;
+        this.sources.value = this.sourceId ?? ref.documentId;
+        this.sources.hidden = this.sourceLabel.hidden = sources.length < 2;
+      }
+      const source = this.documents.find((d) => d.id === this.sourceId);
+      if (!source)
+        throw Error(
+          "本文の保存履歴を確認できません。以前の本文は保持しています。",
+        );
       const result = await documentHistory(
-        ref.documentId,
-        ref.scope,
+        source.id,
+        source.scope,
         older ? this.cursor : undefined,
       );
       if (generation !== this.generation || !this.root.open) return;
@@ -138,7 +192,7 @@ export class SourceDocumentView {
       this.previous.hidden = !result.more;
       this.previous.disabled = false;
       this.status.textContent = result.versions.length
-        ? "選んだ版をこの記事の本文として表示できます。共有サービスへの公開はしていません。"
+        ? "このブラウザに保存した版を選んで表示できます。既読・保存・引用はそのまま残ります。"
         : "保存された本文がありません。";
     } catch (error) {
       if (generation !== this.generation) return;

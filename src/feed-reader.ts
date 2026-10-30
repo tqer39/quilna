@@ -31,11 +31,9 @@ import { ArticleHighlightView } from "./article-highlight-view";
 import { ArticleLearningView } from "./article-learning-view";
 import { LibraryBackupView } from "./library-backup-view";
 import { SourceDocumentView } from "./source-document-view";
-import {
-  acquireDocument,
-  retainDocument,
-  readDocumentVersion,
-} from "./source-document-store";
+import { DocumentAcquisition } from "./document-acquisition";
+import { documentAcquisitionSettings } from "./document-acquisition-view";
+import { retainDocument, readDocumentVersion } from "./source-document-store";
 import { versionContent, type DocumentVersion } from "./source-document";
 import { ArticleConnectionView } from "./article-connection-view";
 import { ArticleGraphView } from "./article-graph-view";
@@ -117,6 +115,7 @@ export async function feedReader(root: HTMLElement) {
   const pageSize = 50;
   let epoch = 0;
   const importing = new Set<string>();
+  const documentAcquisition = new DocumentAcquisition();
   let addingArticle = false;
   let refreshInterval = readRefreshInterval();
   let collectionProblem = "";
@@ -196,7 +195,7 @@ export async function feedReader(root: HTMLElement) {
     ),
     el(
       "p",
-      "記事を開くと元サイトから本文を取り込み、このブラウザに保存します。取得できないときは理由と元のRSS情報を表示します。翻訳は対応ブラウザの端末内機能を使い、初回に翻訳データをダウンロードする場合があります。読み上げは端末内の音声を使います。教材生成は未接続です。",
+      "記事を開くと選択した取得先から本文を取り込み、このブラウザに保存します。取得できないときは理由と元のRSS情報を表示します。翻訳は対応ブラウザの端末内機能を使い、初回に翻訳データをダウンロードする場合があります。読み上げは端末内の音声を使います。教材生成は未接続です。",
     ),
   );
   const backupSettings = new LibraryBackupView(async () => {
@@ -204,6 +203,7 @@ export async function feedReader(root: HTMLElement) {
     render();
   });
   settings.append(backupSettings.root);
+  settings.append(documentAcquisitionSettings(documentAcquisition));
   const targetLabel = el("label", "ロケール（翻訳・読み上げ）");
   targetLabel.htmlFor = "rss-target-language";
   const targetLanguage = el("select");
@@ -1163,15 +1163,19 @@ export async function feedReader(root: HTMLElement) {
     importing.add(article.id);
     render();
     try {
+      const acquisition = documentAcquisition.snapshot();
       let patch;
       try {
         const seed =
           article.content ??
           articles.find((a) => a.url === article.url && a.content)?.content;
-        if (seed) await retainDocument(article.url, seed, { seed: true });
-        const acquired = await acquireDocument(article.url, {
-          force: restoreCode || refreshOriginal,
-        });
+        if (seed && !seed.document)
+          await retainDocument(article.url, seed, { seed: true });
+        const acquired = await documentAcquisition.acquire(
+          article.url,
+          restoreCode || refreshOriginal,
+          acquisition,
+        );
         patch =
           (refreshOriginal || restoreCode) && acquired.warning
             ? { contentError: acquired.warning }
@@ -1179,12 +1183,13 @@ export async function feedReader(root: HTMLElement) {
       } catch (error) {
         patch = { contentError: (error as Error).message };
       }
+      acquisition.check();
       await updateArticleContent(
         db,
         article,
         patch,
         insert,
-        undefined,
+        acquisition.signal,
         restoreCode,
         refreshOriginal ? "replace" : "preserve",
       );
@@ -1251,7 +1256,7 @@ export async function feedReader(root: HTMLElement) {
       !db ||
       !article?.content?.document ||
       importing.has(article.id) ||
-      article.content.document.documentId !== version.documentId
+      sourceURL(article.url) !== version.sourceURL
     )
       return;
     importing.add(article.id);
@@ -1261,7 +1266,7 @@ export async function feedReader(root: HTMLElement) {
       const stored = await readDocumentVersion(
         version.documentId,
         version.id,
-        article.content.document.scope,
+        version.scope,
       );
       await updateArticleContent(
         db,

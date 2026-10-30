@@ -22,21 +22,26 @@ export const documentDatabase = "quilna.documents.v1";
 export async function openDocuments(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     let failed = false;
-    const request = indexedDB.open(documentDatabase, 1);
-    request.onupgradeneeded = () => {
-      const docs = request.result.createObjectStore("documents", {
-        keyPath: "id",
-      });
-      docs.createIndex("source", ["scope", "sourceURL"], { unique: true });
-      const versions = request.result.createObjectStore("versions", {
-        keyPath: "id",
-      });
-      versions.createIndex(
-        "representation",
-        ["documentId", "representationHash"],
-        { unique: true },
-      );
-      versions.createIndex("history", ["documentId", "createdAt", "id"]);
+    const request = indexedDB.open(documentDatabase, 2);
+    request.onupgradeneeded = (event) => {
+      if (event.oldVersion < 1) {
+        const docs = request.result.createObjectStore("documents", {
+          keyPath: "id",
+        });
+        docs.createIndex("source", ["scope", "sourceURL"], { unique: true });
+        const versions = request.result.createObjectStore("versions", {
+          keyPath: "id",
+        });
+        versions.createIndex(
+          "representation",
+          ["documentId", "representationHash"],
+          { unique: true },
+        );
+        versions.createIndex("history", ["documentId", "createdAt", "id"]);
+      }
+      request
+        .transaction!.objectStore("documents")
+        .createIndex("url", "sourceURL");
     };
     request.onerror = request.onblocked = () => {
       failed = true;
@@ -56,6 +61,28 @@ export async function openDocuments(): Promise<IDBDatabase> {
       resolve(db);
     };
   });
+}
+// Read only this source's metadata, never scan the article library or version bodies.
+export async function documentSources(url: string): Promise<SourceDocument[]> {
+  const normalized = sourceURL(url);
+  const result = await withDatabase(
+    (db) =>
+      new Promise<SourceDocument[]>((resolve, reject) => {
+        const tx = db.transaction("documents"),
+          get = tx.objectStore("documents").index("url").getAll(normalized);
+        tx.oncomplete = () => resolve(get.result);
+        tx.onerror = tx.onabort = () => reject(failed());
+      }),
+  );
+  for (const doc of result) {
+    if (
+      !validSourceDocument(doc) ||
+      doc.sourceURL !== normalized ||
+      !(await verifyDocumentIdentity(doc))
+    )
+      throw failed();
+  }
+  return result;
 }
 function failed(error?: unknown) {
   return (
