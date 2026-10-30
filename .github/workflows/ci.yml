@@ -36,6 +36,7 @@ jobs:
           mkdir -p test-results
           git rev-parse HEAD > test-results/source-sha.txt
       - run: npm run test:browser
+      - run: npm run test:reader-runtime
       - id: search
         run: npm run test:search-performance
       - name: Preserve browser validation evidence

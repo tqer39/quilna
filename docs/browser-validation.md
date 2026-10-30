@@ -12,7 +12,7 @@ With the pinned Node runtime and installed lockfile dependencies, run from the c
 mise exec -- npm run check:browser
 ```
 
-This serial entry point stops on the first failure: `npm run lint` → `npm test` → `npm run build` → `npm run test:browser` → `npm run test:search-performance`.
+This serial entry point stops on the first failure: `npm run lint` → `npm test` → `npm run build` → `npm run test:browser` → `npm run test:reader-runtime` → `npm run test:search-performance`.
 Lint includes documentation and security-policy checks; build includes the TypeScript check. The individual commands remain available for targeted repair and fixed harness stages. This command does not install dependencies, invoke models, push, deploy, or build native apps.
 Chromium must already be installed with the maintained Playwright version; installation is an explicit setup step (`npm exec --no -- playwright install chromium`).
 Live vulnerability scanning remains separate (`npm run security:audit`), with registry signatures, dependency review and Go scanning in the existing workflows. Workers changes also require the existing Workers build/tests.
@@ -21,15 +21,19 @@ The functional suite owns `127.0.0.1:5197` and the performance suite owns `127.0
 Playwright uses disposable contexts, and fixtures populate only synthetic data in their own origin/profile. The server test suite also briefly reserves both test ports to check that unrelated servers are rejected before any test executes. Do not run it concurrently with either browser suite. Authentication/provider responses are mocked by the relevant tests. This is not live account, synchronization, translation-quality or physical-phone acceptance.
 See the official [web-server behavior](https://playwright.dev/docs/test-webserver) and [JSON reporter](https://playwright.dev/docs/test-reporters#json-reporter).
 
+The reader runtime suite builds fresh browser assets and serves them over loopback HTTPS on an ephemeral port. It uses real Better Auth, D1 and SQLite-backed Durable Objects, with only Google and publisher responses replaced by offline fixtures. Two disposable browser profiles exercise login, RSS subscription, shared extraction/reuse, separate saved/read state, version updates, failed refresh, permission withdrawal, restart and retained offline history at desktop/mobile widths. The test-only entry permits two synthetic accounts and gates assets; it does not replace the production asset-gate tests or establish live sharing acceptance. Unexpected browser/Worker outbound requests are rejected.
+
 ## Evidence and repair
 
-Functional test results are written to `test-results/browser.json`, with failure traces under `test-results/chromium/`. Search test results are in `test-results/search.json`, with all measured samples in `.local-state/search-performance/results/**/measurements.json`.
+Functional test results are written to `test-results/browser.json`, with failure traces under `test-results/chromium/`. Reader runtime results are in `test-results/reader-runtime.json`, with screenshots and retained failure traces under `test-results/reader-runtime/`. Search test results are in `test-results/search.json`, with all measured samples in `.local-state/search-performance/results/**/measurements.json`.
 These paths are overwritten by later invocations. Before repair or another run, retain failed logs and copy the relevant JSON/traces to an ignored, task-specific directory. Record the exact commands, runtime/browser versions, source hash and dependency identity. A Git commit alone is insufficient for a dirty checkout; retain a hash manifest covering changed and untracked source/config/test files too.
 
 Use [the reader guide's search contract](browser-rss.md#local-article-search) without weakening its 200 ms gate, reducing its samples or discarding outliers. Initial database loading and preparation are separate. The baseline corpus has no tags; a separate dense-tag variant preserves the same text corpus and adds tag queries/filters. Neither measures a physical phone.
 On failure, distinguish a product defect, a test-control defect and a missing prerequisite. Preserve the failure, fix its cause, and rerun affected checks. Reuse a prior successful check only when its source, controls, dependencies, environment and retained evidence still match. Do not repeat runs just to obtain a pass.
 
-The CI web job runs the same maintained functional and search commands after its existing static/unit/build checks. It records the checked-out SHA and uploads the synthetic test results and measurements for 14 days, including failures after validation starts. The upload paths exclude personal databases and general `.local-state` contents. A missing or failed check is not an acceptance, even if an artifact upload succeeds. Native/Go jobs and the required workflow result are not removed by this change.
+The CI web job runs the same maintained functional, reader runtime and search commands after its existing static/unit/build checks. It records the checked-out SHA and uploads the synthetic test results and measurements for 14 days, including failures after validation starts. The upload paths exclude personal databases and general `.local-state` contents. A missing or failed check is not an acceptance, even if an artifact upload succeeds. Native/Go jobs and the required workflow result are not removed by this change.
+
+The [b65abf8 CI run](https://github.com/tqer39/quilna/actions/runs/40995944241) failed a cloud-queue fixture after 523 functional passes. Its trace recorded the seed page starting a read after the fixture published a queue, then cancelling it on reload; the next page read the same item. The fixture now waits for the initial empty-queue status before publishing the queue. Exact read-count assertions remain unchanged; the original failed result is retained.
 
 ### Search diagnostics
 

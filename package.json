@@ -19,7 +19,8 @@
     "security:check": "node scripts/check-security.mjs && node scripts/check-worker-config.mjs",
     "security:audit": "npm run security:check && npm audit --include=dev --audit-level=low",
     "test:search-performance": "playwright test --config playwright.search.config.ts",
-    "check:browser": "npm run lint && npm test && npm run build && npm run test:browser && npm run test:search-performance"
+    "check:browser": "npm run lint && npm test && npm run build && npm run test:browser && npm run test:reader-runtime && npm run test:search-performance",
+    "test:reader-runtime": "npm run build && playwright test --config playwright.runtime.config.ts"
   },
   "dependencies": {
     "@mozilla/readability": "^0.6.0",

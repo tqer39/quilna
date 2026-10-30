@@ -508,6 +508,11 @@ test("five malformed snapshots do not starve the next batch, and a concurrently 
     return route.fulfill({ json: state });
   });
   await seed(page);
+  // The seed page must finish its empty check before we publish the next queue.
+  // CI observed its cancelled first read being counted again after reload.
+  await expect(page.locator("#rss-cloud-status")).toContainText(
+    "クラウド収集は停止中。未取り込みの取得結果：0件",
+  );
   state.interval = 30;
   state.pending = ids.map((id) => ({
     id,
