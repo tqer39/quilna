@@ -39,6 +39,20 @@ The [b65abf8 CI run](https://github.com/tqer39/quilna/actions/runs/40995944241) 
 
 On 2026-10-30, [b4ab3b0 CI](https://github.com/tqer39/quilna/actions/runs/41008948201) passed 556 functional cases but failed one of four runtime cases when Playwright `response.json()` could not retrieve the acquisition body through Chromium's protocol. Search did not run. A diagnostic that kept the original failing assertion did not reproduce it in 20 macOS cases, then reproduced it in one of five Linux x64 container cases. In that failure, the app displayed and retained the original and its version, with one publisher fetch. The original CI trace and diagnostic failure remain retained. The comparison above checks those application outcomes directly against authenticated server state; it does not claim to fix the underlying Chromium protocol behavior.
 
+### Inspect downloaded CI evidence
+
+After downloading one `browser-validation-<run>-<attempt>` artifact into a separate directory, use the read-only verifier:
+
+```bash
+node scripts/verify-browser-evidence.mjs ARTIFACT_DIR CHECKED_OUT_SHA FUNCTIONAL_COUNT RUNTIME_COUNT
+```
+
+Supply the full checked-out commit SHA and expected case counts from the intended source/test inventory, not from the artifact's success counters. For the 2026-10-30 run `41011410353`, these arguments were `28afde9041b369ab5f95ed85e6910a87268cd9b4 556 4`. A PR run can check out a temporary merge commit; separately verify its tree against the intended HEAD before reusing its evidence. The verifier checks the artifact's recorded SHA, not GitHub's run identity, tree equivalence or provenance. Use a trusted download from the exact run/attempt and verify that workflow's conclusion independently. A fabricated or consistently replaced report cannot be authenticated by this script.
+
+It rejects missing/invalid reports, zero tests, mismatched counts/projects, duplicate cases, skipped/flaky/expected-failure results, retries, and report-level errors. It checks every individual result rather than trusting aggregate counters. Search requires all three designs with both corpora, the maintained corpus sizes and tag density, 30 samples for every query/filter and contention condition (2,700 total), successful writer timestamps, a matching raw maximum and every sample strictly below 200 ms. Missing preparation timings or measurement files also fail. Workload or reporter-format changes require deliberate verifier/test updates; unknown conditions do not silently pass.
+
+Success writes a JSON summary to stdout with separate preparation timings, all six maxima, case counts and SHA-256 hashes of the ten inspected files. Failure exits nonzero without a success summary. It does not run or retry tests, alter artifacts, fetch credentials, make network requests or approve a PR. The regression tests run through the existing `npm test` and CI server suite. Correctness assertions, per-query writer progress and coverage still depend on the maintained benchmark and source review; an evidence summary is not a new performance measurement, security audit, independent review or owner acceptance.
+
 ### Search diagnostics
 
 When a search failure needs timing detail, run `node scripts/diagnose-search.mjs` after preserving the original failure. This creates an instrumented copy of the maintained benchmark under a new `.local-state/search-diagnostics/run-*/` directory; it does not edit the benchmark, application or acceptance results. It uses the same isolated port/profile and runs all 630 dense-tag samples for each design, retaining correctness, writer-progress and 200 ms assertions. It is a diagnostic experiment, not acceptance: tracing adds overhead, and the untagged baseline is not run.
