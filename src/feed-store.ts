@@ -10,6 +10,7 @@ import { articleTextLimit } from "./article-content";
 import { legacyArticleText, validCodeRanges } from "./article-code";
 import type { ArticleContent, ArticleTranslation } from "./article-content";
 import { articleURL } from "./feed-parser";
+import { validDocumentReference, sourceContent } from "./source-document";
 const text = (value: unknown) =>
   typeof value === "string" && value.length <= 40000;
 const timestamp = (value: unknown) =>
@@ -31,6 +32,8 @@ export function validArticle(a: FeedArticle) {
         typeof a.content.text === "string" &&
         a.content.text.length <= articleTextLimit &&
         validCodeRanges(a.content.text, a.content.codeRanges) &&
+        (a.content.document === undefined ||
+          validDocumentReference(a.content.document)) &&
         text(a.content.url) &&
         articleURL(a.content.url, a.url) === a.content.url &&
         text(a.content.title) &&
@@ -289,6 +292,7 @@ export function updateArticleContent(
   insert = false,
   signal?: AbortSignal,
   restoreCode = false,
+  contentMode: "preserve" | "metadata" | "replace" = "preserve",
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     signal?.throwIfAborted();
@@ -312,16 +316,28 @@ export function updateArticleContent(
       }
       // A slower import in another tab must not replace an already saved original.
       if (patch.content && old?.content) {
-        if (!restoreCode) return;
-        // Only enrich the exact old snapshot with formatting; never replace a
-        // changed source or another tab's successful upgrade.
-        if (old.content.codeRanges !== undefined) return;
-        if (
-          JSON.stringify(old.content) !== JSON.stringify(article.content) ||
-          legacyArticleText(patch.content.text) !== old.content.text
-        ) {
-          tx.abort();
-          return;
+        if (contentMode !== "preserve") {
+          if (
+            JSON.stringify(old.content) !== JSON.stringify(article.content) ||
+            (contentMode === "metadata" &&
+              JSON.stringify(sourceContent(old.content)) !==
+                JSON.stringify(sourceContent(patch.content)))
+          ) {
+            tx.abort();
+            return;
+          }
+        } else {
+          if (!restoreCode) return;
+          // Only enrich the exact old snapshot with formatting; never replace a
+          // changed source or another tab's successful upgrade.
+          if (old.content.codeRanges !== undefined) return;
+          if (
+            JSON.stringify(old.content) !== JSON.stringify(article.content) ||
+            legacyArticleText(patch.content.text) !== old.content.text
+          ) {
+            tx.abort();
+            return;
+          }
         }
       }
       // Do not attach a translation to a newer original from another tab.
@@ -339,7 +355,21 @@ export function updateArticleContent(
           ...(old ?? article),
           ...patch,
           ...(patch.content
-            ? { translation: undefined, contentError: undefined }
+            ? {
+                ...(contentMode === "metadata" ||
+                (old?.content &&
+                  JSON.stringify({
+                    ...sourceContent(old.content),
+                    fetchedAt: "",
+                  }) ===
+                    JSON.stringify({
+                      ...sourceContent(patch.content),
+                      fetchedAt: "",
+                    }))
+                  ? {}
+                  : { translation: undefined }),
+                contentError: patch.contentError,
+              }
             : {}),
         };
         store.put({ ...next, tags: classifyArticle(next) });

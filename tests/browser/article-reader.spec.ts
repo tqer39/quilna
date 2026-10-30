@@ -820,6 +820,29 @@ test("late import preserves current article and concurrent saved flags", async (
     },
     { firstId },
   );
+  // Expire the reusable source so this test still exercises an in-flight network result.
+  await page.evaluate(async () => {
+    const path = "/src/source-document-store.ts",
+      api = await import(path);
+    const db = await api.openDocuments();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction("documents", "readwrite"),
+        store = tx.objectStore("documents"),
+        cursor = store.openCursor();
+      cursor.onsuccess = () => {
+        if (cursor.result) {
+          cursor.result.update({
+            ...cursor.result.value,
+            checkedAt: "2020-01-01T00:00:00Z",
+          });
+          cursor.result.continue();
+        }
+      };
+      tx.oncomplete = () => resolve();
+      tx.onabort = () => reject(tx.error);
+    });
+    db.close();
+  });
   let release: (() => void) | undefined;
   await page.route("**/api/feeds/fetch", async (route) => {
     await new Promise<void>((resolve) => {
@@ -899,7 +922,9 @@ test("automatic translation saves the target preference and reuses a matching sa
     "Final paragraph.",
   );
   await page.getByRole("button", { name: "設定", exact: true }).click();
-  await page.getByLabel("ロケール（翻訳・読み上げ）", { exact: true }).selectOption("fr");
+  await page
+    .getByLabel("ロケール（翻訳・読み上げ）", { exact: true })
+    .selectOption("fr");
   await page.getByLabel("記事を開いたら自動翻訳").check();
   await page.getByRole("button", { name: "閉じる", exact: true }).click();
   await expect(page.locator(".rss-article-body")).toContainText(
@@ -921,10 +946,12 @@ test("automatic translation saves the target preference and reuses a matching sa
     "Final paragraph.",
   );
   await page.getByRole("button", { name: "設定", exact: true }).click();
-  await expect(page.getByLabel("ロケール（翻訳・読み上げ）", { exact: true })).toHaveValue(
-    "fr",
-  );
-  await page.getByLabel("ロケール（翻訳・読み上げ）", { exact: true }).selectOption("en");
+  await expect(
+    page.getByLabel("ロケール（翻訳・読み上げ）", { exact: true }),
+  ).toHaveValue("fr");
+  await page
+    .getByLabel("ロケール（翻訳・読み上げ）", { exact: true })
+    .selectOption("en");
   await page.getByRole("button", { name: "閉じる", exact: true }).click();
   await expect(page.locator(".rss-article-body")).toContainText(
     "Final paragraph.",
@@ -1342,12 +1369,21 @@ test("a losing cross-tab import cannot replace the language of the saved origina
   const other = await context.newPage();
   await source(other);
   await other.goto("/?view=feeds");
-  await other.getByRole("button", { name: url, exact: true }).click();
-  await other
-    .getByRole("button", { name: "本文の取得を再試行", exact: true })
-    .click();
-  await expect(other.locator(".rss-content-note")).toContainText(
-    "元サイトから取り込んだ本文です",
+  // The catalog coalesces network requests. A separate committed write (for
+  // example a restore or another client) must still win over the late response.
+  await other.evaluate(
+    async ({ url, html }) => {
+      const storePath = "/src/feed-store.ts",
+        contentPath = "/src/article-content.ts";
+      const api = await import(storePath),
+        content = (await import(contentPath)).extractArticle(html, url),
+        db = await api.openFeedLibrary();
+      const id = JSON.stringify(["article", url]),
+        current = await api.readArticle(db, id);
+      await api.updateArticleContent(db, current, { content });
+      db.close();
+    },
+    { url, html },
   );
   release!();
   await expect(page.locator(".rss-content-note")).toContainText(

@@ -253,6 +253,8 @@ for (const design of ["studio", "editorial", "focus"])
     const original = await archive(page);
     expect(original.text).not.toContain("synthetic-secret-not-for-backup");
     expect(original.counts).toEqual({
+      documents: 0,
+      documentVersions: 0,
       feeds: 1,
       articles: 3,
       highlights: 3,

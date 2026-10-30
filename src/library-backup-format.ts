@@ -5,8 +5,11 @@ import { validHighlight } from "./article-highlights";
 import { validConnection } from "./article-connections";
 import { validQuoteConnection } from "./quote-connections";
 import { validLearningRecord } from "./article-learning";
+import { validSourceDocument, validDocumentVersion } from "./source-document";
 
 export const backupKinds = [
+  "documents",
+  "documentVersions",
   "feeds",
   "articles",
   "highlights",
@@ -23,7 +26,7 @@ export type BackupEntry = {
 };
 export type BackupHeader = {
   format: "quilna-reader-library";
-  version: 1;
+  version: 1 | 2;
   createdAt: string;
 };
 export type BackupPreview = {
@@ -37,6 +40,8 @@ export const backupLineLimit = 8 * 1024 ** 2;
 export const backupRecordLimit = 1_000_000;
 export const backupBatchSize = 100;
 export const emptyBackupCounts = (): BackupCounts => ({
+  documents: 0,
+  documentVersions: 0,
   feeds: 0,
   articles: 0,
   highlights: 0,
@@ -50,16 +55,20 @@ export function validBackupHeader(v: unknown): v is BackupHeader {
   return (
     object(v) &&
     v.format === "quilna-reader-library" &&
-    v.version === 1 &&
+    (v.version === 1 || v.version === 2) &&
     typeof v.createdAt === "string" &&
     Number.isFinite(Date.parse(v.createdAt))
   );
 }
-export function validBackupCounts(v: unknown): v is BackupCounts {
+export function validBackupCounts(v: unknown, version = 2): v is BackupCounts {
+  const kinds =
+    version === 1
+      ? backupKinds.filter((k) => k !== "documents" && k !== "documentVersions")
+      : backupKinds;
   return (
     object(v) &&
-    Object.keys(v).length === backupKinds.length &&
-    backupKinds.every(
+    Object.keys(v).length === kinds.length &&
+    kinds.every(
       (k) =>
         Number.isSafeInteger(v[k]) &&
         (v[k] as number) >= 0 &&
@@ -73,7 +82,8 @@ export function validBackupPreview(v: unknown): v is BackupPreview {
     typeof v.id === "string" &&
     /^[\da-f-]{36}$/.test(v.id) &&
     validBackupHeader(v.header) &&
-    validBackupCounts(v.counts) &&
+    (validBackupCounts(v.counts) ||
+      (v.header.version === 1 && validBackupCounts(v.counts, 1))) &&
     typeof v.fileName === "string" &&
     v.fileName.length <= 1000
   );
@@ -84,6 +94,10 @@ export function validBackupValue(
 ): v is Record<string, unknown> {
   if (!object(v)) return false;
   switch (kind) {
+    case "documents":
+      return validSourceDocument(v);
+    case "documentVersions":
+      return validDocumentVersion(v);
     case "feeds":
       return (
         validFeed(v as Feed) &&
@@ -156,6 +170,9 @@ export function capacityKeys(
 ): Array<[string, string, number]> {
   const v = entry.value;
   switch (entry.kind) {
+    case "documents":
+    case "documentVersions":
+      return [];
     case "feeds":
       return [["", "", 50]];
     case "articles":

@@ -1,5 +1,6 @@
 import { Readability } from "@mozilla/readability";
 import { sourceURL } from "./feed-discovery";
+import type { DocumentReference } from "./source-document";
 import {
   articleSegments,
   serializeArticle,
@@ -13,6 +14,7 @@ export type ArticleContent = {
   language: string;
   fetchedAt: string;
   codeRanges?: ArticleCodeRange[];
+  document?: DocumentReference;
 };
 export type ArticleTranslation = {
   text: string;

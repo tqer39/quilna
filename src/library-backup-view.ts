@@ -12,6 +12,8 @@ import {
 } from "./library-backup-format";
 import { button, el } from "./ui";
 const names = {
+  documents: "文書",
+  documentVersions: "本文の版",
   feeds: "購読",
   articles: "記事",
   highlights: "ハイライト",
@@ -91,7 +93,7 @@ export class LibraryBackupView {
       el("summary", "記事ライブラリのバックアップ・復元"),
       el(
         "p",
-        "購読・記事の原文と訳文・既読/保存・タグ・ハイライト/メモ・関連・自分の学びをファイルに保存します。ファイルは暗号化されず、記事と個人のメモを含みます。",
+        "購読・記事の原文と訳文・本文の保存履歴・既読/保存・タグ・ハイライト/メモ・関連・自分の学びをファイルに保存します。ファイルは暗号化されず、記事と個人のメモを含みます。",
       ),
       el(
         "p",

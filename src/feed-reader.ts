@@ -30,12 +30,18 @@ import { ArticleListView } from "./article-list-view";
 import { ArticleHighlightView } from "./article-highlight-view";
 import { ArticleLearningView } from "./article-learning-view";
 import { LibraryBackupView } from "./library-backup-view";
+import { SourceDocumentView } from "./source-document-view";
+import {
+  acquireDocument,
+  retainDocument,
+  readDocumentVersion,
+} from "./source-document-store";
+import { versionContent, type DocumentVersion } from "./source-document";
 import { ArticleConnectionView } from "./article-connection-view";
 import { ArticleGraphView } from "./article-graph-view";
 import { QuoteConnectionView } from "./quote-connection-view";
 import { LearningCueView } from "./learning-cue-view";
 import {
-  fetchArticle,
   browserTranslator,
   translateArticle,
   isLinkOnly,
@@ -131,6 +137,14 @@ export async function feedReader(root: HTMLElement) {
   let speechRate = 1;
   let readerIdentity: string | null = null;
   const speech = new ArticleSpeech(() => render());
+  const documentHistory = new SourceDocumentView(
+    async () => {
+      const article = articles.find((a) => a.id === selected);
+      if (article) await importContent(article, false, false, true);
+    },
+    chooseDocumentVersion,
+    prepareDocument,
+  );
   function cancelReading() {
     translationController?.abort();
     translationController = null;
@@ -1142,6 +1156,7 @@ export async function feedReader(root: HTMLElement) {
     article: FeedArticle,
     insert = false,
     restoreCode = false,
+    refreshOriginal = false,
   ) {
     if (!db || importing.has(article.id)) return;
     if (selected === article.id) cancelReading();
@@ -1150,7 +1165,17 @@ export async function feedReader(root: HTMLElement) {
     try {
       let patch;
       try {
-        patch = { content: await fetchArticle(article.url) };
+        const seed =
+          article.content ??
+          articles.find((a) => a.url === article.url && a.content)?.content;
+        if (seed) await retainDocument(article.url, seed, { seed: true });
+        const acquired = await acquireDocument(article.url, {
+          force: restoreCode || refreshOriginal,
+        });
+        patch =
+          (refreshOriginal || restoreCode) && acquired.warning
+            ? { contentError: acquired.warning }
+            : { content: acquired.content, contentError: acquired.warning };
       } catch (error) {
         patch = { contentError: (error as Error).message };
       }
@@ -1161,6 +1186,7 @@ export async function feedReader(root: HTMLElement) {
         insert,
         undefined,
         restoreCode,
+        refreshOriginal ? "replace" : "preserve",
       );
       await load(article.id);
       announceChange(article.id);
@@ -1175,12 +1201,84 @@ export async function feedReader(root: HTMLElement) {
     } catch (error) {
       showError(
         (error as Error).message,
-        () => void importContent(article, insert, restoreCode),
+        () => void importContent(article, insert, restoreCode, refreshOriginal),
       );
     } finally {
       importing.delete(article.id);
       render();
       if (selected === article.id) autoTranslateSelected();
+    }
+  }
+  async function prepareDocument() {
+    const article = articles.find((a) => a.id === selected);
+    if (
+      !db ||
+      !article?.content ||
+      article.content.document ||
+      importing.has(article.id)
+    )
+      return;
+    importing.add(article.id);
+    render();
+    try {
+      const retained = await retainDocument(article.url, article.content, {
+        seed: true,
+      });
+      await updateArticleContent(
+        db,
+        article,
+        {
+          content: {
+            ...article.content,
+            document: versionContent(retained.version).document,
+          },
+        },
+        false,
+        undefined,
+        false,
+        "metadata",
+      );
+      await load(article.id);
+      announceChange(article.id);
+    } finally {
+      importing.delete(article.id);
+      render();
+    }
+  }
+  async function chooseDocumentVersion(version: DocumentVersion) {
+    const article = articles.find((a) => a.id === selected);
+    if (
+      !db ||
+      !article?.content?.document ||
+      importing.has(article.id) ||
+      article.content.document.documentId !== version.documentId
+    )
+      return;
+    importing.add(article.id);
+    cancelReading();
+    render();
+    try {
+      const stored = await readDocumentVersion(
+        version.documentId,
+        version.id,
+        article.content.document.scope,
+      );
+      await updateArticleContent(
+        db,
+        article,
+        { content: versionContent(stored) },
+        false,
+        undefined,
+        false,
+        "replace",
+      );
+      await load(article.id);
+      announceChange(article.id);
+      if (selected === article.id)
+        originalLanguage = articleLanguage(stored.content.language);
+    } finally {
+      importing.delete(article.id);
+      render();
     }
   }
   async function addArticle(value: string) {
@@ -1822,10 +1920,11 @@ export async function feedReader(root: HTMLElement) {
       tagsPanel.append(editor);
 
       const importingNow = importing.has(article.id);
+      documentHistory.show(article.content, importingNow, article.id);
       const notice = el(
         "p",
         importingNow
-          ? "元サイトから本文を取り込み中… RSSの情報はそのまま読めます。"
+          ? "保存済みの本文を確認し、必要な場合は元サイトから取り込み中… RSSの情報はそのまま読めます。"
           : article.content
             ? "元サイトから取り込んだ本文です。画像や埋め込みは省略しています。"
             : article.contentError
@@ -1835,6 +1934,8 @@ export async function feedReader(root: HTMLElement) {
       );
       notice.setAttribute("role", "status");
       articleNode.append(notice);
+      if (article.content?.codeRanges !== undefined && article.contentError)
+        articleNode.append(el("p", article.contentError, "rss-content-note"));
       if (article.content && article.content.codeRanges === undefined) {
         articleNode.append(
           el(
@@ -2124,8 +2225,10 @@ export async function feedReader(root: HTMLElement) {
         articleNode.append(body, tagsPanel);
       }
       if (readingTools) articleNode.append(readingTools);
+      articleNode.append(documentHistory.root);
       main.append(articleNode);
     } else {
+      documentHistory.show(undefined);
       highlights.detach();
       quoteConnections.detach();
       learningRecords.detach();

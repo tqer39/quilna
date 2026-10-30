@@ -892,3 +892,26 @@
 .rss-backup a:not([hidden]) {
   display: block;
 }
+
+.rss-document-history {
+  margin-block: 24px;
+  padding-block: 16px;
+  border-block: 1px solid var(--viewer-line);
+  overflow-wrap: anywhere;
+}
+.rss-document-history summary {
+  cursor: pointer;
+  font-weight: 700;
+}
+.rss-document-version {
+  margin-block: 16px;
+  padding: 16px;
+  background: var(--viewer-surface);
+  border: 1px solid var(--viewer-line);
+  border-radius: 12px;
+}
+.rss-document-history button {
+  max-width: 100%;
+  white-space: normal;
+  margin: 4px;
+}

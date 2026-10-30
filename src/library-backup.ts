@@ -6,6 +6,13 @@ import {
   quoteConnectionDatabase,
 } from "./quote-connections";
 import { openLearning, learningDatabase } from "./article-learning";
+import { openDocuments, documentDatabase } from "./source-document-store";
+import {
+  verifyDocumentIdentity,
+  sourceContent,
+  type SourceDocument,
+  type DocumentVersion,
+} from "./source-document";
 import {
   backupKinds,
   backupBatchSize,
@@ -19,6 +26,7 @@ import {
   validBackupCounts,
   validBackupPreview,
   sameBackupValue,
+  emptyBackupCounts,
   type BackupKind,
   type BackupEntry,
   type BackupHeader,
@@ -56,8 +64,12 @@ async function exclusive<T>(run: () => Promise<T>): Promise<T> {
 }
 async function targets(): Promise<Targets> {
   const feed = await openFeedLibrary();
+  let documents: IDBDatabase | undefined;
   try {
+    documents = await openDocuments();
     return {
+      documents: { db: documents, store: "documents" },
+      documentVersions: { db: documents, store: "versions" },
       feeds: { db: feed, store: "feeds" },
       articles: { db: feed, store: "articles" },
       highlights: { db: await openHighlights(), store: "highlights" },
@@ -69,6 +81,7 @@ async function targets(): Promise<Targets> {
       learning: { db: await openLearning(), store: "records" },
     };
   } catch (error) {
+    documents?.close();
     feed.close();
     throw error;
   }
@@ -86,7 +99,7 @@ export async function exportLibrary(
       throw Error("このブラウザは圧縮ファイルの書き出しに対応していません。");
     const header: BackupHeader = {
       format: "quilna-reader-library",
-      version: 1,
+      version: 2,
       createdAt: new Date().toISOString(),
     };
     const counter = new BackupCounter(),
@@ -110,6 +123,7 @@ export async function exportLibrary(
         ["connections"],
         ["quoteConnections"],
         ["learning"],
+        ["documents", "documentVersions"],
       ] as BackupKind[][]) {
         abortIfNeeded(signal);
         await new Promise<void>((resolve, reject) => {
@@ -163,6 +177,7 @@ export async function exportLibrary(
       }
     } finally {
       opened.feeds.db.close();
+      opened.documents.db.close();
     }
     append({ type: "footer", counts: counter.counts });
     abortIfNeeded(signal);
@@ -236,7 +251,14 @@ async function stagePreview(
       get = tx.objectStore("meta").get("ready");
     tx.oncomplete = () => {
       if (get.result === undefined || validBackupPreview(get.result))
-        resolve(get.result);
+        resolve(
+          get.result === undefined
+            ? undefined
+            : {
+                ...get.result,
+                counts: { ...emptyBackupCounts(), ...get.result.counts },
+              },
+        );
       else
         reject(
           Error(
@@ -311,8 +333,10 @@ export async function validateBackup(
         if (footer) throw Error("ファイルの終端より後に記録があります。");
         if (value?.type === "footer") {
           if (
-            !validBackupCounts(value.counts) ||
-            !backupKinds.every((k) => value.counts[k] === counter.counts[k])
+            !validBackupCounts(value.counts, header.version) ||
+            !backupKinds.every(
+              (k) => (value.counts[k] ?? 0) === counter.counts[k],
+            )
           )
             throw Error(
               "バックアップの件数が一致しません。完全なファイルを選んでください。",
@@ -323,6 +347,15 @@ export async function validateBackup(
         if (value?.type !== "entry")
           throw Error("バックアップに不明な記録があります。");
         const entry = parseBackupEntry(value);
+        if (entry.kind === "documents" || entry.kind === "documentVersions") {
+          if (
+            header.version === 1 ||
+            !(await verifyDocumentIdentity(
+              entry.value as SourceDocument | DocumentVersion,
+            ))
+          )
+            throw Error("文書IDまたは本文の版の整合性を確認できません。");
+        }
         counter.add(entry);
         batch.push(entry);
         if (batch.length === backupBatchSize) {
@@ -366,7 +399,9 @@ export async function validateBackup(
         counts: counter.counts,
         fileName: file.name.slice(0, 1000),
       };
-      await stageWrite(db, batch, preview);
+      await stageWrite(db, batch);
+      await validateDocumentReferences(db);
+      await stageWrite(db, [], preview);
       return preview;
     } catch (error) {
       await stageWrite(db, [], undefined, true).catch(() => {});
@@ -377,6 +412,83 @@ export async function validateBackup(
       await reader?.cancel().catch(() => {});
       db.close();
     }
+  });
+}
+function validateDocumentReferences(db: IDBDatabase) {
+  return new Promise<void>((resolve, reject) => {
+    const tx = db.transaction("entries"),
+      store = tx.objectStore("entries");
+    const cursor = store.openCursor();
+    const refuse = () => tx.abort();
+    cursor.onsuccess = () => {
+      const row = cursor.result;
+      if (!row) return;
+      const entry = row.value as BackupEntry;
+      let documentId: string | undefined,
+        versionId: string | undefined,
+        scope: string | undefined;
+      const value = entry.value;
+      if (entry.kind === "documents") {
+        documentId = value.id as string;
+        versionId = value.currentVersionId as string;
+        scope = value.scope as string;
+      } else if (entry.kind === "documentVersions") {
+        documentId = value.documentId as string;
+        versionId = value.id as string;
+        scope = value.scope as string;
+      } else if (entry.kind === "articles") {
+        const content = value.content as
+          import("./article-content").ArticleContent | undefined;
+        documentId = content?.document?.documentId;
+        versionId = content?.document?.versionId;
+        scope = content?.document?.scope;
+      }
+      if (!documentId || !versionId) {
+        row.continue();
+        return;
+      }
+      const doc = store.get(["documents", documentId]),
+        version = store.get(["documentVersions", versionId]);
+      version.onsuccess = () => {
+        try {
+          const d = doc.result?.value as SourceDocument | undefined,
+            v = version.result?.value as DocumentVersion | undefined;
+          if (
+            !d ||
+            !v ||
+            d.id !== v.documentId ||
+            d.scope !== scope ||
+            v.scope !== scope ||
+            d.sourceURL !== v.sourceURL
+          ) {
+            refuse();
+            return;
+          }
+          if (entry.kind === "articles") {
+            const content =
+              value.content as import("./article-content").ArticleContent;
+            if (
+              content.document?.sourceURL !== v.sourceURL ||
+              JSON.stringify({ ...sourceContent(content), fetchedAt: "" }) !==
+                JSON.stringify({ ...sourceContent(v.content), fetchedAt: "" })
+            ) {
+              refuse();
+              return;
+            }
+          }
+          row.continue();
+        } catch {
+          refuse();
+        }
+      };
+    };
+    tx.oncomplete = () => resolve();
+    tx.onerror = tx.onabort = () =>
+      reject(
+        Error(
+          "文書と本文の版の参照が一致しません。完全なバックアップを選んでください。",
+        ),
+      );
   });
 }
 function stagedBatch(
@@ -526,12 +638,14 @@ export async function restoreBackup(
     } finally {
       stage.close();
       opened?.feeds.db.close();
+      opened?.documents.db.close();
       for (const name of [
         feedDatabase,
         highlightDatabase,
         connectionDatabase,
         quoteConnectionDatabase,
         learningDatabase,
+        documentDatabase,
       ]) {
         if (typeof BroadcastChannel !== "undefined") {
           const channel = new BroadcastChannel(name);

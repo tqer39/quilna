@@ -46,7 +46,7 @@ Read-aloud improvements must not displace these priorities, except when fixing a
 
 ## Reusable source documents
 
-The owner's proposal on 2026-10-30 is tracked in [Issue #74](https://github.com/tqer39/quilna/issues/74): reuse an already collected document as learning material for multiple users. This is a planned architecture, not enabled cross-user sharing. Current browser article IDs combine the feed URL and its item GUID; the cloud collector is an owner-isolated delivery queue, not a shared full-text catalog.
+The owner's proposal on 2026-10-30 is tracked in [Issue #74](https://github.com/tqer39/quilna/issues/74): reuse an already collected document as learning material for multiple users. The shared service remains planned; browser-local identity, immutable versions, same-source reuse and lazy migration are implemented as the first stage, with no cross-user sharing enabled. Current browser article IDs combine the feed URL and its item GUID; the cloud collector is an owner-isolated delivery queue, not a shared full-text catalog.
 
 | Record | Responsibility |
 | --- | --- |
@@ -60,7 +60,7 @@ Reuse a valid cached version without downloading or extracting it again. Revalid
 
 Shared reuse requires an explicit sharing/access policy for the source. Publicly fetchable text is not automatically added to an unrestricted shared catalog. Keep private, authenticated and uploaded documents in their intended scope; knowing an ID or hash must not bypass authorization or reveal a private document's existence. Personal highlights, notes, learning history and subscriptions remain separate. This proposal does not add users to the current owner-only deployment or publish existing personal data.
 
-Implement and validate the common identity/version model with local fixtures before enabling a shared service. Preserve old browser IDs through a mapping so saved articles, highlights and connections survive migration. Cover two-user isolation and reuse, duplicate/concurrent acquisition, URL aliases and false merges, source updates, access revocation/retention, failure recovery and the existing 100,000-article/200 ms local search gate. Keep local copies for reading; shared storage does not make every read depend on the network. Source sharing/retention conditions and the deployment boundary must be resolved before shared delivery is enabled.
+The browser stage is documented in [Source reuse and saved body versions](browser-rss.md#source-reuse-and-saved-body-versions). It keeps old article IDs and inline bodies, adds document/version references, and uses browser Web Locks. This does not complete the shared-service architecture above. Continue validating the common identity/version model with local fixtures before enabling a shared service. Preserve old browser IDs through a mapping so saved articles, highlights and connections survive migration. Cover two-user isolation and reuse, duplicate/concurrent acquisition, URL aliases and false merges, source updates, access revocation/retention, failure recovery and the existing 100,000-article/200 ms local search gate. Keep local copies for reading; shared storage does not make every read depend on the network. Source sharing/retention conditions and the deployment boundary must be resolved before shared delivery is enabled.
 
 ## Acceptance loop
 
