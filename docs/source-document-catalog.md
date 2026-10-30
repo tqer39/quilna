@@ -1,0 +1,25 @@
+# Durable source document catalog
+
+[English](source-document-catalog.md) | [日本語](source-document-catalog.ja.md)
+
+## Implementation boundary
+
+The internal `DocumentCatalog` in `workers/document-catalog.mjs` is the persistent storage core for [Issue #74](https://github.com/tqer39/quilna/issues/74). It is exercised with two synthetic users and SQLite-backed Durable Objects in local Miniflare. It is **not connected to production routes, authentication, article acquisition or the browser**. Production has no catalog binding or new sharing option; the owner-only deployment continues to use its existing reader and RSS delivery queue. This is not completion of cross-user sharing or synchronization.
+
+The host must select one storage object per authorized scope and normalized source URL and provide trusted `authorize` and `load` adapters. An authorization decision must be exactly `true`. Scope names, document IDs and version hashes are identifiers, not credentials. Every acquisition, read and history request authorizes before looking at storage; returned data is checked again after asynchronous work. Unauthorized requests return the same unavailable error whether a document exists or not. Authorization must be backed by a real source-sharing policy before connecting a transport; the fixture's synthetic identities and allowlist are not production authentication.
+
+The loader receives only the source URL and the previous original/HTTP validators. It must acquire and extract the source on the server within a bounded time, enforce the existing public-address/redirect/response limits, and return validated original content or a matching not-modified result. Browser-supplied text must never be treated as a trusted shared source. Original content uses the same document/version IDs, representation digest, code ranges and format version as the browser. The shared format checks have no DOM dependency. Personal subscriptions, saved/read flags, translations, quotes and learning records are not catalog fields.
+
+## Persistence and recovery
+
+- A fresh original is reusable for 24 hours. Explicit refresh bypasses freshness. Concurrent requests receive a pending result with a retry time while one durable 30-second lease owns acquisition. The caller must retry; this core has no background worker or polling UI.
+- Network and digest work runs outside storage transactions. A random lease token and its expiry are checked atomically with publishing a version and changing the current pointer. An expired or replaced worker cannot publish a late result or clear a newer lease. A new request can recover after expiry. Failed release writes leave recovery to expiry.
+- Immutable versions keep their original acquisition and catalog timestamps. Unchanged revalidation updates only the current document's check/revision and validator metadata. Reverting to an earlier representation reuses its old version. Source failures, capacity failures and transactional write failures preserve earlier versions; read access remains separate from refreshing.
+- Each version is serialized in 16,000 UTF-16-unit parts. Parts and the current pointer commit in one transaction. Reads verify lengths, source/scope/ID references and the representation digest. Unknown schemas and corrupt records fail without replacing them with an empty catalog. A corrupt old version cannot become current during a reversion.
+- Current bounds are 100 immutable versions and 10,000,000 serialized UTF-8 bytes per document, with a 4,000,000-byte per-version bound. Hitting a bound reports capacity failure rather than silently evicting evidence. History returns at most 20 entries and a cursor based on the last version ID. It is ordered by first retention, not by last selection.
+
+Transactions follow the [Durable Objects storage contract](https://developers.cloudflare.com/durable-objects/api/sqlite-storage-api/). Runtime fixtures verify chunked persistence across disposal/restart, one acquisition for simultaneous synthetic users, conditional revalidation and private/shared scope separation. Fault-injection tests cover expired/late leases, changed and reverted representations, permission revocation during acquisition, partial write rollback/retry, count/byte capacity, pagination and corrupt/future records. These are local synthetic results, not live multi-user or browser acceptance.
+
+## Remaining integration
+
+Connect a trusted server extractor, source sharing/access policy and authenticated transport, then browser document references and independent personal state. Define source aliases, retention/correction/deletion, request quotas and operator recovery before enabling delivery. An ACL revocation prevents subsequent reads but cannot retract copies already downloaded to a browser. Permission checks and publication are not a transaction with an external ACL store; integration must define policy revisions and a revocation boundary. Keep the current owner-only environment unchanged until its intended sharing scope is explicitly established. Preserve offline copies and the existing browser search gate; this core does not replace browser storage.

@@ -1,6 +1,5 @@
 import type { ArticleContent } from "./article-content";
-import { articleTextLimit } from "./article-content";
-import { validCodeRanges } from "./article-code";
+import { articleTextLimit, validCodeRanges } from "./document-format";
 import { sourceURL } from "./feed-discovery";
 import {
   validSourceValidators,

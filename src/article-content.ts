@@ -1,6 +1,7 @@
 import { Readability } from "@mozilla/readability";
 import { sourceURL } from "./feed-discovery";
 import type { DocumentReference } from "./source-document";
+import { articleTextLimit } from "./document-format";
 import {
   validSourceValidators,
   type SourceValidators,
@@ -27,7 +28,7 @@ export type ArticleTranslation = {
   targetLanguage: string;
   codeRanges?: ArticleCodeRange[];
 };
-export const articleTextLimit = 200_000;
+export { articleTextLimit } from "./document-format";
 
 export function extractArticle(html: string, url: string): ArticleContent {
   sourceURL(url);
