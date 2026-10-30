@@ -93,6 +93,65 @@ async function storedArticles(page) {
   });
 }
 
+// Compare the app's committed copy with an authenticated read of the exact
+// server version. Chromium's tracing protocol can lose a fetch response body
+// even after the app has consumed and retained it; do not make that observer
+// the source of truth for browser-to-server persistence.
+async function retainedServerVersion(reader, origin, requestedURL) {
+  const [article] = await storedArticles(reader.page),
+    ref = article.content.document;
+  const retained = await reader.page.evaluate(async (versionId) => {
+    const db = await new Promise((resolve, reject) => {
+      const r = globalThis.indexedDB.open("quilna.documents.v1");
+      r.onsuccess = () => resolve(r.result);
+      r.onerror = () => reject(r.error);
+    });
+    try {
+      return await new Promise((resolve, reject) => {
+        const tx = db.transaction("versions"),
+          r = tx.objectStore("versions").get(versionId);
+        tx.oncomplete = () => resolve(r.result);
+        tx.onabort = tx.onerror = () => reject(tx.error);
+      });
+    } finally {
+      db.close();
+    }
+  }, ref.versionId);
+  const status = await reader.page.request.get(origin + "/api/session", {
+    headers: { Origin: origin },
+  });
+  expect(status.status()).toBe(200);
+  const session = await status.json();
+  const response = await reader.page.request.post(
+    origin + "/api/documents/read",
+    {
+      headers: {
+        Origin: origin,
+        "X-CSRF-Token": session.csrfToken,
+        "X-Document-Account": reader.account,
+      },
+      data: { url: requestedURL, audience: "shared", versionId: ref.versionId },
+    },
+  );
+  expect(response.status()).toBe(200);
+  const value = await response.json(),
+    version = { ...value };
+  expect(value.account).toBe(reader.account);
+  delete version.account;
+  delete version.resolution;
+  expect(retained).toEqual(version);
+  expect(article.content).toEqual({
+    ...version.content,
+    document: {
+      documentId: version.documentId,
+      versionId: version.id,
+      scope: version.scope,
+      sourceURL: version.sourceURL,
+    },
+  });
+  return { version, resolution: value.resolution };
+}
+
 for (const aliasMode of [false, true])
   test(`real browser login and ${aliasMode ? "approved alias" : "exact source"} RSS preserve shared originals and private reading state`, async ({
     browser,
@@ -241,9 +300,14 @@ async function runReaderScenario(browser, info, aliasMode) {
     await a.page
       .getByRole("button", { name: "Runtime article", exact: true })
       .click();
-    const first = await (await firstResponse).json();
+    expect((await firstResponse).status()).toBe(200);
     await expect(a.page.locator(".rss-source-text")).toContainText(
       "Runtime version 1",
+    );
+    const first = await retainedServerVersion(
+      a,
+      origin,
+      aliasMode ? aliasURL : articleURL,
     );
     await a.page
       .getByRole("button", { name: "この記事を保存", exact: true })
@@ -261,11 +325,11 @@ async function runReaderScenario(browser, info, aliasMode) {
     await b.page
       .getByRole("button", { name: "Runtime article", exact: true })
       .click();
-    const second = await (await secondResponse).json();
+    expect((await secondResponse).status()).toBe(200);
     await expect(b.page.locator(".rss-source-text")).toContainText(
       "Runtime version 1",
     );
-    expect(second.reused).toBe(true);
+    const second = await retainedServerVersion(b, origin, articleURL);
     expect(second.version).toEqual(first.version);
     expect(articleFetches).toBe(1);
     const [aStored] = await storedArticles(a.page),
@@ -278,7 +342,7 @@ async function runReaderScenario(browser, info, aliasMode) {
       expect(first.resolution).toEqual({
         requestedURL: aliasURL,
         sourceURL: articleURL,
-        scope: first.document.scope,
+        scope: first.version.scope,
       });
     }
     expect(aStored.saved).toBe(true);

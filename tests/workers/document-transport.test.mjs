@@ -377,6 +377,8 @@ test(
     });
     assert.equal(b.status, 200);
     assert.deepEqual(a.value.version, b.value.version);
+    assert.equal(a.value.reused, false);
+    assert.equal(b.value.reused, true);
     assert.equal(f.calls(), 1);
     const unknown = await f.call("acquire", {
       body: { url: url + "?utm_source=not-approved", audience: "shared" },
