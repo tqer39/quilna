@@ -2,6 +2,8 @@
 
 [English](browser-rss.md) | [日本語](browser-rss.ja.md)
 
+The owner-only login page introduces article collection, reading and saving. It distinguishes login setup or connection failures from the browser library, and explains that retained reading state is not synchronized between devices.
+
 ## Run and try
 
 Run `mise exec -- npm run dev` and open <http://127.0.0.1:5173/>.
