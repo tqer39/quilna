@@ -32,7 +32,9 @@ for (const design of ["studio", "editorial", "focus"])
     const before = await row.boundingBox();
     await row.click();
     await expect(page.locator("#rss-current-title")).toBeFocused();
-    await page.locator("#rss-reading-tools").scrollIntoViewIfNeeded();
+    await page
+      .getByRole("link", { name: "翻訳・読み上げ", exact: true })
+      .click();
     const back = page.getByRole("button", {
       name: "← 記事一覧へ",
       exact: true,
@@ -98,6 +100,9 @@ for (const onlyMatch of [false, true])
     if (onlyMatch)
       await page.getByLabel("保存領域の記事を検索").fill("記事 20");
     await page.getByRole("button", { name: "記事 20", exact: true }).click();
+    await page
+      .getByRole("button", { name: "収集メニューを表示", exact: true })
+      .click();
     await expect(page.getByRole("button", { name: /未読 · 79/ })).toBeVisible();
     await page
       .getByRole("button", { name: "← 記事一覧へ", exact: true })
@@ -118,6 +123,9 @@ test("a later cross-tab removal preserves keyboard navigation after returning", 
   await seed(page);
   await page.getByRole("button", { name: /未読 ·/ }).click();
   await page.getByRole("button", { name: "記事 20", exact: true }).click();
+  await page
+    .getByRole("button", { name: "収集メニューを表示", exact: true })
+    .click();
   await expect(page.getByRole("button", { name: /未読 · 79/ })).toBeVisible();
   await page.getByRole("button", { name: "← 記事一覧へ", exact: true }).click();
   await expect(

@@ -64,6 +64,8 @@ test("same source acquisition is shared across callers while scope and query rem
   await blank(page);
   let requests = 0;
   await page.route("**/api/feeds/fetch", (r) => {
+    if (r.request().postDataJSON().icon === true)
+      return r.fulfill({ status: 404, json: {} });
     requests++;
     return r.fulfill({ json: { url: articleURL, html: html() } });
   });
@@ -107,6 +109,8 @@ test("unchanged refresh reuses an immutable version and failure retains the prev
   let requests = 0,
     fail = false;
   await page.route("**/api/feeds/fetch", (r) => {
+    if (r.request().postDataJSON().icon === true)
+      return r.fulfill({ status: 404, json: {} });
     requests++;
     return r.fulfill(
       fail
@@ -154,6 +158,8 @@ for (const design of ["studio", "editorial", "focus"])
     let version = 1,
       requests = 0;
     await page.route("**/api/feeds/fetch", (r) => {
+      if (r.request().postDataJSON().icon === true)
+        return r.fulfill({ status: 404, json: {} });
       requests++;
       return r.fulfill({ json: { url: articleURL, html: html(version) } });
     });
@@ -302,6 +308,8 @@ test("future catalog and corrupted version refuse without fetching or rewriting 
   await blank(page);
   let requests = 0;
   await page.route("**/api/feeds/fetch", (r) => {
+    if (r.request().postDataJSON().icon === true)
+      return r.fulfill({ status: 404, json: {} });
     requests++;
     return r.fulfill({ json: { url: articleURL, html: html() } });
   });
@@ -385,6 +393,8 @@ test("legacy history migration retains translated text and private state without
   await page.reload();
   let requests = 0;
   await page.route("**/api/feeds/fetch", (r) => {
+    if (r.request().postDataJSON().icon === true)
+      return r.fulfill({ status: 404, json: {} });
     requests++;
     return r.abort();
   });
@@ -486,7 +496,8 @@ test("document versions round-trip in backup v2 and dangling or altered referenc
       );
   expect(entries(result)).toEqual(entries(archive.text));
   expect(
-    entries(result).find((entry) => entry.kind === "documents").value.validators,
+    entries(result).find((entry) => entry.kind === "documents").value
+      .validators,
   ).toEqual({ url: articleURL, etag: '"backup-v2"' });
   const refusals = await other.evaluate(async (text) => {
     const path = "/src/library-backup.ts",
@@ -540,6 +551,8 @@ test("closing an acquiring tab releases the source lock and a new tab recovers",
   let started = false;
   let release = () => {};
   await page.route("**/api/feeds/fetch", async (r) => {
+    if (r.request().postDataJSON().icon === true)
+      return r.fulfill({ status: 404, json: {} });
     started = true;
     await new Promise<void>((resolve) => {
       release = resolve;
@@ -643,6 +656,8 @@ test("conditional refresh retains exact original and translation, survives reloa
   let phase = 0;
   const requests: Record<string, unknown>[] = [];
   await page.route("**/api/feeds/fetch", (r) => {
+    if (r.request().postDataJSON().icon === true)
+      return r.fulfill({ status: 404, json: {} });
     const body = r.request().postDataJSON();
     requests.push(body);
     if (phase === 0)
@@ -738,6 +753,8 @@ test("large validator requests fall back to a full fetch within the existing bod
   const url = "https://example.org/" + "a".repeat(2000);
   const requests: Record<string, unknown>[] = [];
   await page.route("**/api/feeds/fetch", (r) => {
+    if (r.request().postDataJSON().icon === true)
+      return r.fulfill({ status: 404, json: {} });
     expect(
       new TextEncoder().encode(r.request().postData()!).byteLength,
     ).toBeLessThanOrEqual(4096);

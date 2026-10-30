@@ -1,3 +1,8 @@
+import {
+  safeArticleLink,
+  type ArticleStructure,
+  type ArticleInfo,
+} from "./article-structure";
 import { normalizeSourceTags } from "./source-tags";
 import { Readability } from "@mozilla/readability";
 import type { ArticleContent } from "./article-content";
@@ -68,6 +73,26 @@ export function extractArticleDocument(
       (node) => node.textContent || "",
     ),
   ]);
+  const meta = (name: string) =>
+    Array.from(template.content.querySelectorAll("meta"))
+      .find(
+        (m) =>
+          (
+            m.getAttribute("name") ||
+            m.getAttribute("property") ||
+            ""
+          ).toLowerCase() === name,
+      )
+      ?.getAttribute("content")
+      ?.trim();
+  const info: ArticleInfo = {};
+  const author = meta("author"),
+    siteName = meta("og:site_name"),
+    published = meta("article:published_time");
+  if (author) info.author = author.slice(0, 300);
+  if (siteName) info.siteName = siteName.slice(0, 300);
+  if (published && Number.isFinite(Date.parse(published)))
+    info.published = new Date(published).toISOString();
   prepareFragment?.(template.content);
   // Native template parsing discards these wrappers; DOM-only parsers retain them.
   for (const wrapper of Array.from(
@@ -81,6 +106,12 @@ export function extractArticleDocument(
     .forEach((n) => n.remove());
   for (const element of Array.from(template.content.querySelectorAll("*"))) {
     for (const attr of Array.from(element.attributes)) {
+      if (attr.name === "href" && element.tagName.toLowerCase() === "a") {
+        const href = safeArticleLink(attr.value, url);
+        if (href) element.setAttribute("href", href);
+        else element.removeAttribute("href");
+        continue;
+      }
       if (!["class", "id", "lang", "dir"].includes(attr.name))
         element.removeAttribute(attr.name);
     }
@@ -98,12 +129,14 @@ export function extractArticleDocument(
     "";
   doc.body.querySelectorAll("title").forEach((n) => n.remove());
   let codeRanges: ArticleCodeRange[] = [];
+  let structure: ArticleStructure = { version: 1, links: [], headings: [] };
   const parsed = new Readability(doc, {
     maxElemsToParse: 20000,
     charThreshold: 140,
     serializer: (node) => {
-      const serialized = serializeArticle(node);
+      const serialized = serializeArticle(node, url);
       codeRanges = serialized.codeRanges;
+      structure = serialized.structure;
       return serialized.text;
     },
   }).parse();
@@ -123,6 +156,8 @@ export function extractArticleDocument(
     language: language.slice(0, 35),
     fetchedAt: new Date().toISOString(),
     codeRanges,
+    structure,
+    ...(Object.keys(info).length ? { info } : {}),
     ...(sourceTags.length ? { sourceTags } : {}),
   };
 }

@@ -1,3 +1,9 @@
+import {
+  validReadingPositions,
+  type ReadingPosition,
+  type ReadingPositions,
+} from "./reading-position";
+import { validArticleStructure, validArticleInfo } from "./article-structure";
 import { validSourceTags } from "./source-tags";
 import { feedFailure } from "./feed-auto-refresh";
 import {
@@ -28,12 +34,15 @@ export function validArticle(a: FeedArticle) {
     (a.contentError === undefined || text(a.contentError)) &&
     (a.tags === undefined || validArticleTags(a.tags)) &&
     (a.manualTags === undefined || validManualTags(a.manualTags)) &&
+    validReadingPositions(a.readingPositions) &&
     (a.sourceTags === undefined || validSourceTags(a.sourceTags)) &&
     (a.content === undefined ||
       (a.content &&
         typeof a.content.text === "string" &&
         a.content.text.length <= articleTextLimit &&
         validCodeRanges(a.content.text, a.content.codeRanges) &&
+        validArticleStructure(a.content.text, a.content.structure) &&
+        validArticleInfo(a.content.info) &&
         (a.content.sourceTags === undefined ||
           validSourceTags(a.content.sourceTags)) &&
         (a.content.document === undefined ||
@@ -330,6 +339,7 @@ export function mergeFeed(
                 contentError: old?.contentError,
                 translation: old?.translation,
                 manualTags: old?.manualTags,
+                readingPositions: old?.readingPositions,
               };
         store.put({ ...next, tags: classifyArticle(next) });
       };
@@ -411,10 +421,18 @@ export function updateArticleContent(
           if (!restoreCode) return;
           // Only enrich the exact old snapshot with formatting; never replace a
           // changed source or another tab's successful upgrade.
-          if (old.content.codeRanges !== undefined) return;
+          if (
+            old.content.codeRanges !== undefined &&
+            old.content.structure !== undefined
+          )
+            return;
           if (
             JSON.stringify(old.content) !== JSON.stringify(article.content) ||
-            legacyArticleText(patch.content.text) !== old.content.text
+            (old.content.codeRanges === undefined
+              ? legacyArticleText(patch.content.text) !== old.content.text
+              : patch.content.text !== old.content.text ||
+                JSON.stringify(old.content.codeRanges) !==
+                  JSON.stringify(patch.content.codeRanges))
           ) {
             tx.abort();
             return;
@@ -438,6 +456,10 @@ export function updateArticleContent(
           ...(patch.content
             ? {
                 ...(contentMode === "metadata" ||
+                (restoreCode &&
+                  old?.content?.text === patch.content.text &&
+                  JSON.stringify(old.content.codeRanges) ===
+                    JSON.stringify(patch.content.codeRanges)) ||
                 (old?.content &&
                   JSON.stringify({
                     ...sourceContent(old.content),
@@ -509,5 +531,60 @@ export function setArticleTags(
           "タグを保存できませんでした。以前のタグは保持しています。再試行してください。",
         ),
       );
+  });
+}
+
+export function saveReadingPosition(
+  db: IDBDatabase,
+  id: string,
+  view: "original" | "translation",
+  text: string,
+  position: ReadingPosition,
+): Promise<ReadingPositions> {
+  if (
+    !validReadingPositions({ [view]: position }) ||
+    position.furthest > text.length
+  )
+    return Promise.reject(Error("読書位置の形式を確認できませんでした。"));
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("articles", "readwrite"),
+      store = tx.objectStore("articles"),
+      get = store.get(id);
+    let positions: ReadingPositions = {};
+    get.onsuccess = () => {
+      try {
+        const current = get.result as FeedArticle | undefined;
+        const original = current?.content?.text || current?.body;
+        const currentText =
+          view === "original"
+            ? original
+            : current?.translation?.sourceText === original
+              ? current?.translation?.text
+              : undefined;
+        if (!current || currentText !== text) {
+          tx.abort();
+          return;
+        }
+        positions = { ...current.readingPositions };
+        const previous = positions[view];
+        if (!previous || previous.updatedAt <= position.updatedAt) {
+          positions[view] = {
+            ...position,
+            furthest: Math.max(
+              position.furthest,
+              previous?.fingerprint === position.fingerprint
+                ? previous.furthest
+                : 0,
+            ),
+          };
+          store.put({ ...current, readingPositions: positions });
+        }
+      } catch {
+        tx.abort();
+      }
+    };
+    tx.oncomplete = () => resolve(positions);
+    tx.onabort = tx.onerror = () =>
+      reject(Error("読書位置を保存できませんでした。本文は保持しています。"));
   });
 }

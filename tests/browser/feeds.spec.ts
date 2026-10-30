@@ -14,6 +14,8 @@ test("a site or article URL discovers choices without embedding HTML; only the c
   });
   const chosen = "https://publisher.example.org/feeds/main.xml?lang=ja&full=1";
   await page.route("**/api/feeds/fetch", (route) => {
+    if (route.request().postDataJSON().icon === true)
+      return route.fulfill({ status: 404, json: {} });
     const body = route.request().postDataJSON();
     calls.push(body);
     return route.fulfill({
@@ -99,6 +101,8 @@ test("article pages without feed links fall back to their final site's home page
 }) => {
   const calls: string[] = [];
   await page.route("**/api/feeds/fetch", (route) => {
+    if (route.request().postDataJSON().icon === true)
+      return route.fulfill({ status: 404, json: {} });
     const { url, discover } = route.request().postDataJSON();
     calls.push(url);
     return route.fulfill({
@@ -175,6 +179,9 @@ test("no feed and failed discovery leave cached articles readable and let a new 
   );
   mode = "failed";
   await page
+    .getByRole("button", { name: "収集メニューを表示", exact: true })
+    .click();
+  await page
     .getByRole("button", { name: "フィードを探す", exact: true })
     .click();
   await expect(page.locator(".rss-discovery")).toContainText(
@@ -206,6 +213,8 @@ test("editing the URL cancels pending discovery and stale results cannot replace
   let release: (() => void) | undefined;
   let finishedOld = false;
   await page.route("**/api/feeds/fetch", async (route) => {
+    if (route.request().postDataJSON().icon === true)
+      return route.fulfill({ status: 404, json: {} });
     const { url } = route.request().postDataJSON();
     if (url.includes("slow"))
       await new Promise<void>((resolve) => {
@@ -250,6 +259,8 @@ test("unsafe input never reaches discovery and unadvertised or nested template l
 }) => {
   let calls = 0;
   await page.route("**/api/feeds/fetch", (route) => {
+    if (route.request().postDataJSON().icon === true)
+      return route.fulfill({ status: 404, json: {} });
     calls++;
     return route.fulfill({
       json: {
@@ -397,6 +408,8 @@ test("failed and pending feed refresh keep cached articles readable and retryabl
   let release: (() => void) | undefined;
   let hold = false;
   await page.route("**/api/feeds/fetch", async (route) => {
+    if (route.request().postDataJSON().icon === true)
+      return route.fulfill({ status: 404, json: {} });
     if (route.request().postDataJSON().url !== feedUrl)
       return route.fulfill({
         status: 502,
@@ -422,6 +435,9 @@ test("failed and pending feed refresh keep cached articles readable and retryabl
   fail = true;
   hold = false;
   release!();
+  await page
+    .getByRole("button", { name: "収集メニューを表示", exact: true })
+    .click();
   await expect(
     page.getByRole("button", { name: "検証用フィードを再試行", exact: true }),
   ).toBeVisible();
@@ -462,6 +478,9 @@ test("Atom, malformed XML and malicious feed markup are handled without executin
     0,
   );
   expect(requests).toEqual([]);
+  await page
+    .getByRole("button", { name: "収集メニューを表示", exact: true })
+    .click();
   xml = "<rss><broken>";
   await page.getByRole("button", { name: "すべて更新", exact: true }).click();
   await expect(

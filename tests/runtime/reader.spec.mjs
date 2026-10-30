@@ -182,6 +182,16 @@ async function runReaderScenario(browser, info, aliasMode) {
         server: { host: "127.0.0.1", port, https: true, logRequests: false },
         assets: await assets(),
         sourceResponses: {
+          ["https://publisher.example.org/favicon.ico"]: () =>
+            new Response(
+              Uint8Array.from(
+                Buffer.from(
+                  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6GtIAAAAASUVORK5CYII=",
+                  "base64",
+                ),
+              ),
+              { headers: { "Content-Type": "image/png" } },
+            ),
           [aliasFeed]: () =>
             new Response(
               xml
@@ -346,6 +356,14 @@ async function runReaderScenario(browser, info, aliasMode) {
     await expect(a.page.locator(".rss-source-text")).toContainText(
       "Runtime version 1",
     );
+    await expect
+      .poll(() =>
+        a.page
+          .locator(".rss-site-icon img")
+          .first()
+          .evaluate((img) => img.complete && img.naturalWidth > 0),
+      )
+      .toBe(true);
     const first = await retainedServerVersion(
       a,
       origin,

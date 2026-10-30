@@ -1,3 +1,4 @@
+import type { ReadingPositions } from "./reading-position";
 import { normalizeSourceTags } from "./source-tags";
 import type { FeedRefreshFailure } from "./feed-auto-refresh";
 import type { ArticleTags } from "./article-tags";
@@ -18,6 +19,7 @@ export type FeedArticle = {
   tags?: ArticleTags;
   manualTags?: string[];
   sourceTags?: string[];
+  readingPositions?: ReadingPositions;
 };
 export type Feed = {
   url: string;

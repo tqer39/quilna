@@ -1,3 +1,4 @@
+import type { ArticleStructure } from "./article-structure";
 import { appendArticleText, type ArticleCodeRange } from "./article-code";
 import { articleURL } from "./feed-parser";
 import {
@@ -14,6 +15,7 @@ export type ReadingView = Omit<HighlightSource, "version"> & {
   text: string;
   original: string;
   ranges?: ArticleCodeRange[];
+  structure?: ArticleStructure;
 };
 type Span = { node: Text; start: number };
 export class ArticleHighlightView {
@@ -343,6 +345,7 @@ export class ArticleHighlightView {
         }
         return fragment;
       },
+      this.view.structure,
     );
   }
   private captureSelection() {

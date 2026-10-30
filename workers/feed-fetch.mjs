@@ -1,3 +1,4 @@
+import { faviconData } from "../src/favicon-data.mjs";
 // Production requires global_fetch_strictly_public: the Workers platform keeps
 // global fetch on the public Internet. This is not the Node DNS-pinning adapter.
 // Never replace this fetch with a private-origin/VPC binding.
@@ -37,12 +38,14 @@ export async function fetchCloudFeed(
     send = fetch,
     timeout = 12000,
     allowHTML = false,
+    allowIcon = false,
     validators,
   } = {},
 ) {
   if (
-    validators !== undefined &&
-    (!allowHTML || !validSourceValidators(validators))
+    (allowIcon && (allowHTML || validators !== undefined)) ||
+    (validators !== undefined &&
+      (!allowHTML || !validSourceValidators(validators)))
   )
     throw Error("feed-validators");
   const controller = new AbortController();
@@ -66,9 +69,10 @@ export async function fetchCloudFeed(
             signal: controller.signal,
             headers: {
               ...condition,
-              Accept:
-                "application/atom+xml, application/rss+xml, application/xml, text/xml" +
-                (allowHTML ? ", text/html, application/xhtml+xml" : ""),
+              Accept: allowIcon
+                ? "image/png,image/jpeg,image/webp,image/gif,image/x-icon"
+                : "application/atom+xml, application/rss+xml, application/xml, text/xml" +
+                  (allowHTML ? ", text/html, application/xhtml+xml" : ""),
             },
           });
           if ([301, 302, 303, 307, 308].includes(response.status)) {
@@ -91,6 +95,34 @@ export async function fetchCloudFeed(
               notModified: true,
               ...(received ? { validators: received } : {}),
             };
+          }
+          if (allowIcon) {
+            if (response.status !== 200 || !response.body) {
+              await response.body?.cancel();
+              throw Error("feed-response");
+            }
+            const reader = response.body.getReader();
+            let size = 0;
+            const chunks = [];
+            try {
+              for (;;) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                size += value.byteLength;
+                if (size > 65536) throw Error("icon-size");
+                chunks.push(value);
+              }
+              const bytes = new Uint8Array(size);
+              let offset = 0;
+              for (const chunk of chunks) {
+                bytes.set(chunk, offset);
+                offset += chunk.byteLength;
+              }
+              return { url: url.href, icon: faviconData(bytes) };
+            } finally {
+              await reader.cancel().catch(() => {});
+              reader.releaseLock();
+            }
           }
           const html = /^(text\/html|application\/xhtml\+xml)(;|$)/i.test(
             response.headers.get("Content-Type") ?? "",

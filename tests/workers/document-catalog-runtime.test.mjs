@@ -39,6 +39,7 @@ test(
       title: "Shared fixture",
       language: "en",
       fetchedAt: "2026-10-30T00:00:00.000Z",
+      structure: { version: 1, links: [], headings: [] },
       codeRanges: [{ start: 0, end: 180000, block: true }],
     };
     const html = `<html lang="en"><title>Shared fixture</title><body><article><pre>${content.text}</pre></article></body></html>`;

@@ -341,3 +341,48 @@ test("cloud fetch bounds responses and deadlines and rejects HTML and XML entiti
     { url, xml },
   );
 });
+
+test("favicon transport only returns bounded raster data and retains public redirect guards", async () => {
+  const png = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  const result = await fetchCloudFeed("https://example.org/favicon.ico", {
+    allowIcon: true,
+    send: async (_url, init) => {
+      assert.equal(init.headers.Cookie, undefined);
+      assert.match(init.headers.Accept, /image\/png/);
+      return new Response(png, { headers: { "Content-Type": "image/png" } });
+    },
+  });
+  assert.equal(result.icon, "data:image/png;base64,iVBORw0KGgo=");
+  for (const payload of [
+    "<svg></svg>",
+    "<!doctype html>",
+    new Uint8Array(65537),
+  ]) {
+    await assert.rejects(
+      fetchCloudFeed("https://example.org/favicon.ico", {
+        allowIcon: true,
+        send: async () => new Response(payload),
+      }),
+      /icon-/,
+    );
+  }
+  let requests = 0;
+  await assert.rejects(
+    fetchCloudFeed("https://example.org/favicon.ico", {
+      allowIcon: true,
+      send: async () => {
+        requests++;
+        return new Response(null, {
+          status: 302,
+          headers: { Location: "https://127.0.0.1/secret" },
+        });
+      },
+    }),
+    /feed-host-unsupported/,
+  );
+  assert.equal(requests, 1);
+  await assert.rejects(
+    fetchCloudFeed(url, { allowIcon: true, allowHTML: true }),
+    /feed-validators/,
+  );
+});

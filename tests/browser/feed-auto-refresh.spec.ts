@@ -14,6 +14,8 @@ test("an unsubscribed feed stays excluded from due collection after visibility c
   );
   let requests = 0;
   await page.route("**/api/feeds/fetch", (r) => {
+    if (r.request().postDataJSON().icon === true)
+      return r.fulfill({ status: 404, json: {} });
     requests++;
     return r.fulfill({ json: { url: address, xml: xml() } });
   });
@@ -112,6 +114,8 @@ test("automatic collection respects due time, visibility and connectivity while 
   await environment(page);
   let requests = 0;
   await page.route("**/api/feeds/fetch", (route) => {
+    if (route.request().postDataJSON().icon === true)
+      return route.fulfill({ status: 404, json: {} });
     requests++;
     return route.fulfill({ json: { url: address, xml: xml() } });
   });
@@ -152,6 +156,8 @@ test("failed updates back off across reload and recovery clears failure without 
   let requests = 0,
     fail = true;
   await page.route("**/api/feeds/fetch", (route) => {
+    if (route.request().postDataJSON().icon === true)
+      return route.fulfill({ status: 404, json: {} });
     requests++;
     return route.fulfill(
       fail
@@ -253,6 +259,8 @@ test("automatic collection can be turned off persistently and unsupported locks 
   await environment(page);
   let requests = 0;
   await page.route("**/api/feeds/fetch", (route) => {
+    if (route.request().postDataJSON().icon === true)
+      return route.fulfill({ status: 404, json: {} });
     requests++;
     return route.fulfill({ json: { url: address, xml: xml() } });
   });
@@ -293,6 +301,8 @@ test("discovery without RSS offers to save the original article rather than the 
       6,
     );
   await page.route("**/api/feeds/fetch", (route) => {
+    if (route.request().postDataJSON().icon === true)
+      return route.fulfill({ status: 404, json: {} });
     const url = route.request().postDataJSON().url;
     urls.push(url);
     return route.fulfill({
@@ -326,6 +336,8 @@ test("failure to persist a retry deadline stops automatic requests while retaini
   await environment(page);
   let requests = 0;
   await page.route("**/api/feeds/fetch", (route) => {
+    if (route.request().postDataJSON().icon === true)
+      return route.fulfill({ status: 404, json: {} });
     requests++;
     return route.fulfill({ status: 502, json: { error: "down" } });
   });

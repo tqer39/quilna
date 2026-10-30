@@ -1,3 +1,6 @@
+import { ReadingProgress } from "./reading-progress";
+import { articleReadingTime } from "./reading-time";
+import { decorateArticleLink } from "./link-preview";
 import { CollectionNavigation } from "./collection-navigation";
 import { documentPolicySettings } from "./document-policy-view";
 import {
@@ -438,9 +441,25 @@ export async function feedReader(root: HTMLElement) {
     (quote) => quoteConnections.begin(quote),
   );
   let listPosition: ArticleListPosition | null = null;
+  const readingProgress = new ReadingProgress(
+    () => db,
+    (id, positions) => {
+      const article = articles.find((a) => a.id === id);
+      if (article) article.readingPositions = positions;
+    },
+  );
+  const outline = el("details", undefined, "rss-article-outline");
+  let outlineKey = "";
+  let readerFocused = true;
+  const focusToggle = button("収集メニューを表示", () => {
+    readerFocused = !readerFocused;
+    render();
+  });
+  focusToggle.id = "rss-focus-toggle";
   const readerNavigation = el("nav", undefined, "rss-reader-navigation");
   readerNavigation.setAttribute("aria-label", "記事の移動");
   const returnToList = button("← 記事一覧へ", () => {
+    readingProgress.detach();
     selected = null;
     render();
     if (!listPosition || !listView.restorePosition(listPosition)) {
@@ -450,7 +469,7 @@ export async function feedReader(root: HTMLElement) {
     listPosition = null;
   });
   returnToList.id = "rss-return-to-list";
-  readerNavigation.append(returnToList);
+  readerNavigation.append(returnToList, focusToggle);
   const listView = new ArticleListView({
     open: (id) => {
       const position = articlePositions.get(id);
@@ -1866,6 +1885,11 @@ export async function feedReader(root: HTMLElement) {
     if (discoveryPanel.parentNode !== main) main.append(discoveryPanel);
     if (article) {
       main.classList.add("rss-reading");
+      layout.classList.toggle("rss-focused", readerFocused);
+      focusToggle.textContent = readerFocused
+        ? "収集メニューを表示"
+        : "本文に集中";
+      focusToggle.setAttribute("aria-pressed", String(readerFocused));
       main.append(readerNavigation);
       const articleNode = el("article", undefined, "rss-article");
       const title = el("h1", article.content?.title || article.title);
@@ -1874,12 +1898,24 @@ export async function feedReader(root: HTMLElement) {
       articleNode.append(
         el(
           "p",
-          feeds.find((f) => f.url === article.feedUrl)?.title ??
+          article.content?.info?.siteName ||
+            feeds.find((f) => f.url === article.feedUrl)?.title ||
             "取り込んだ記事",
           "eyebrow",
         ),
         title,
-        el("p", date(article.published), "muted"),
+        el(
+          "p",
+          [
+            article.content?.info?.author &&
+              `著者：${article.content.info.author}`,
+            date(article.content?.info?.published || article.published),
+            articleReadingTime(article),
+          ]
+            .filter(Boolean)
+            .join(" · "),
+          "rss-article-meta",
+        ),
       );
       const save = button(
         article.saved ? "保存済み · 保存を解除" : "この記事を保存",
@@ -1895,6 +1931,7 @@ export async function feedReader(root: HTMLElement) {
         original.target = "_blank";
         original.rel = "noopener noreferrer";
         articleNode.append(original);
+        decorateArticleLink(original, original.href);
       }
       const tagsPanel = el("section", undefined, "rss-tag-editor");
       tagsPanel.setAttribute("aria-label", "記事のタグ");
@@ -2026,6 +2063,24 @@ export async function feedReader(root: HTMLElement) {
             ),
           );
       }
+      if (
+        article.content?.codeRanges !== undefined &&
+        article.content.structure === undefined
+      ) {
+        const restore = button(
+          "リンク・見出しを取り直す",
+          () => void importContent(article, false, true),
+        );
+        restore.disabled = importingNow;
+        articleNode.append(
+          el(
+            "p",
+            "以前の本文にはリンク・見出しの情報がありません。本文が変わっていなければ、情報を補えます。",
+            "rss-content-note",
+          ),
+          restore,
+        );
+      }
       if (article.url && !article.content) {
         const acquire = button(
           article.contentError ? "本文の取得を再試行" : "本文を取り込む",
@@ -2043,6 +2098,53 @@ export async function feedReader(root: HTMLElement) {
           : undefined;
       const displayTranslation = translatedView && validTranslation;
       const text = displayTranslation ? displayTranslation.text : originalText;
+      const structure = displayTranslation
+        ? undefined
+        : article.content?.structure;
+      const nextOutlineKey = JSON.stringify([
+        article.id,
+        !!displayTranslation,
+        structure?.headings.map((h) => [
+          h.start,
+          h.end,
+          h.level,
+          text.slice(h.start, h.end),
+        ]),
+      ]);
+      // Background tag/voice updates must not close or replace an open TOC.
+      if (outlineKey !== nextOutlineKey) {
+        outlineKey = nextOutlineKey;
+        outline.replaceChildren();
+        outline.open = false;
+        outline.append(
+          el(
+            "summary",
+            `この記事の目次${structure?.headings.length ? ` · ${structure.headings.length}` : ""}`,
+          ),
+        );
+        if (structure?.headings.length) {
+          const links = el("nav");
+          links.setAttribute("aria-label", "この記事の目次");
+          for (const heading of structure.headings) {
+            const link = readingJump(
+              text.slice(heading.start, heading.end),
+              `rss-section-${heading.start}`,
+            );
+            link.style.paddingInlineStart = `${Math.min(heading.level - 1, 3) * 12}px`;
+            links.append(link);
+          }
+          outline.append(links);
+        } else
+          outline.append(
+            el(
+              "p",
+              displayTranslation
+                ? "見出しとリンクは原文で確認できます。"
+                : "この記事には見出し情報がありません。",
+            ),
+          );
+      }
+      if (hasText) articleNode.append(outline);
       let readingTools: HTMLElement | null = null;
       if (hasText) {
         const shortcuts = el("nav", undefined, "rss-reading-shortcuts");
@@ -2266,11 +2368,21 @@ export async function feedReader(root: HTMLElement) {
           language: displayTranslation
             ? displayTranslation.targetLanguage
             : originalLanguage,
+          structure,
           ranges: displayTranslation
             ? displayTranslation.codeRanges
             : article.content?.codeRanges,
         };
         const panel = highlights.mount(readingView, sourceText);
+        readerNavigation.append(
+          readingProgress.mount(
+            article,
+            text,
+            readingView.view,
+            displayTranslation ? displayTranslation.targetLanguage : "original",
+            sourceText,
+          ),
+        );
         articleNode.append(
           body,
           panel,
@@ -2282,6 +2394,7 @@ export async function feedReader(root: HTMLElement) {
           tagsPanel,
         );
       } else {
+        readingProgress.detach();
         highlights.detach();
         quoteConnections.detach();
         learningRecords.detach();
@@ -2302,6 +2415,8 @@ export async function feedReader(root: HTMLElement) {
       learning.detach();
       connections.detach();
       graph.detach();
+      readingProgress.detach();
+      layout.classList.remove("rss-focused");
       main.classList.remove("rss-reading");
       listHeading.textContent =
         filter === "saved"
@@ -2375,7 +2490,7 @@ export async function feedReader(root: HTMLElement) {
       listView.update({
         items: result.items,
         metadata: (item) =>
-          `${feeds.find((f) => f.url === item.feedUrl)?.title ?? "取り込んだ記事"} · ${date(item.published)}${item.saved ? " · 保存済み" : ""}${item.read ? " · 既読" : " · 未読"}`,
+          `${feeds.find((f) => f.url === item.feedUrl)?.title ?? "取り込んだ記事"} · ${date(item.published)}${item.saved ? " · 保存済み" : ""}${item.read ? " · 既読" : " · 未読"} · ${articleReadingTime(item)}`,
         status:
           searchProblem ||
           (preparing

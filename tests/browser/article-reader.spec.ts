@@ -92,6 +92,9 @@ test("failed extraction preserves a saved link and retry recovers without duplic
   await expect(page.locator(".rss-article-body")).toContainText(
     "Final paragraph.",
   );
+  await page
+    .getByRole("button", { name: "収集メニューを表示", exact: true })
+    .click();
   await expect(
     page.getByRole("button", { name: /保存した記事 · 1/ }),
   ).toBeVisible();
@@ -678,6 +681,8 @@ test("failed content persistence is visible and retry saves the full text", asyn
 }) => {
   let release: (() => void) | undefined;
   await page.route("**/api/feeds/fetch", async (route) => {
+    if (route.request().postDataJSON().icon === true)
+      return route.fulfill({ status: 404, json: {} });
     await new Promise<void>((resolve) => {
       release = resolve;
     });
@@ -845,6 +850,8 @@ test("late import preserves current article and concurrent saved flags", async (
   });
   let release: (() => void) | undefined;
   await page.route("**/api/feeds/fetch", async (route) => {
+    if (route.request().postDataJSON().icon === true)
+      return route.fulfill({ status: 404, json: {} });
     await new Promise<void>((resolve) => {
       release = resolve;
     });
@@ -876,6 +883,9 @@ test("late import preserves current article and concurrent saved flags", async (
     });
   }, firstId);
   release!();
+  await page
+    .getByRole("button", { name: "収集メニューを表示", exact: true })
+    .click();
   await expect(
     page.getByRole("button", { name: /保存した記事 · 1/ }),
   ).toBeVisible();
@@ -1020,7 +1030,13 @@ test("automatic translation does not guess missing source language or send text 
   );
   const requests: string[] = [];
   page.on("request", (request) => {
-    if (request.method() === "POST")
+    if (
+      request.method() === "POST" &&
+      !(
+        request.url().endsWith("/api/feeds/fetch") &&
+        request.postDataJSON().icon === true
+      )
+    )
       requests.push(new URL(request.url()).pathname);
   });
   await add(page);
@@ -1350,6 +1366,8 @@ test("a losing cross-tab import cannot replace the language of the saved origina
   );
   let release: (() => void) | undefined;
   await page.route("**/api/feeds/fetch", async (route) => {
+    if (route.request().postDataJSON().icon === true)
+      return route.fulfill({ status: 404, json: {} });
     await new Promise<void>((resolve) => {
       release = resolve;
     });

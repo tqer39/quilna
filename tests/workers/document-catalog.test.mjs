@@ -23,6 +23,7 @@ const body = (n = 1) => ({
   url,
   language: "en",
   fetchedAt: "2026-10-30T00:00:00.000Z",
+  structure: { version: 1, links: [], headings: [] },
   codeRanges: [{ start: 10, end: 22, block: true }],
 });
 const gate = () => {
@@ -392,4 +393,29 @@ test("the byte budget and expired leases preserve existing versions without sile
   const denied = fixture({ authorize: async () => ({ allowed: true }) });
   await assert.rejects(denied.catalog.acquire("alice"), /document-unavailable/);
   assert.equal(denied.storage.reads, 0);
+});
+
+test("explicit revalidation of legacy formatting fetches HTML once and retains the prior immutable version", async () => {
+  let calls = 0;
+  const legacy = body();
+  delete legacy.structure;
+  const f = fixture({
+    load: async (_url, previous) => {
+      calls++;
+      if (calls === 1)
+        return { content: legacy, validators: { url, etag: '"same"' } };
+      assert.equal(previous.validators, undefined);
+      return { content: body(), validators: { url, etag: '"same"' } };
+    },
+  });
+  const first = await f.catalog.acquire("alice");
+  await f.catalog.acquire("bob");
+  assert.equal(calls, 1);
+  const enriched = await f.catalog.acquire("alice", { force: true });
+  assert.notEqual(enriched.version.id, first.version.id);
+  assert.equal(enriched.version.content.text, first.version.content.text);
+  assert.deepEqual(
+    (await f.catalog.read("alice", first.version.id)).content,
+    legacy,
+  );
 });

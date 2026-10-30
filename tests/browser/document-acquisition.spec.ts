@@ -491,6 +491,8 @@ for (const design of ["studio", "editorial", "focus"])
         r.fulfill({ status: 404, json: {} }),
       );
       await page.route("**/api/feeds/fetch", (r) => {
+        if (r.request().postDataJSON().icon === true)
+          return r.fulfill({ status: 404, json: {} });
         originalFetches++;
         return r.fulfill({
           json: {
