@@ -473,6 +473,96 @@ export function documentPolicySettings(client = new DocumentPolicyClient()) {
     });
     form.append(fields, review, reread, preview);
     editor.append(form);
+    if (saved) {
+      const history = el("section"),
+        entries = el("div"),
+        detail = el("div");
+      history.setAttribute("aria-label", "共有設定の変更履歴");
+      const show = async (before: number | null, signal: AbortSignal) => {
+        const page = await client.history(saved.id, before, signal);
+        entries.replaceChildren();
+        detail.replaceChildren();
+        if (!page.entries.length)
+          entries.append(
+            el(
+              "p",
+              "記録された変更はありません。履歴機能の導入前の変更は復元できません。",
+            ),
+          );
+        for (const entry of page.entries)
+          entries.append(
+            button(
+              `変更 #${entry.revision} を読む`,
+              () =>
+                void run(async (s) => {
+                  const result = await client.revision(
+                    saved.id,
+                    entry.revision,
+                    s,
+                  );
+                  const p = result.policy,
+                    e = result.entry;
+                  detail.replaceChildren(
+                    el("h4", `変更 #${e.revision} の保存内容`),
+                    el(
+                      "p",
+                      "過去の記録の閲覧です。現在の共有設定と編集中の内容は変更しません。",
+                    ),
+                    el(
+                      "p",
+                      e.kind === "baseline"
+                        ? "履歴機能を導入する前の設定です。変更した人と元の変更日時は不明です。"
+                        : `変更した利用者: ${e.actor}`,
+                    ),
+                    el(
+                      "p",
+                      `${e.kind === "baseline" ? "履歴への記録" : "変更"}日時: ${new Date(e.recorded).toLocaleString()}`,
+                    ),
+                    el("p", `出典: ${p.url}`),
+                    el(
+                      "p",
+                      `共有: ${p.enabled ? "有効" : "無効"} · 期限: ${new Date(p.expires).toLocaleString()}`,
+                    ),
+                    el("p", `共有の根拠: ${p.evidence}`),
+                    el("p", `共有する利用者（${p.members.length}人）`),
+                  );
+                  const people = el("ul");
+                  for (const member of p.members)
+                    people.append(el("li", member));
+                  detail.append(
+                    people,
+                    el("p", `別名（${p.aliases.length}件）`),
+                  );
+                  for (const a of p.aliases)
+                    detail.append(
+                      el(
+                        "p",
+                        `${a.enabled ? "有効" : "無効"}: ${a.url} · 期限: ${new Date(a.expires).toLocaleString()} · 根拠: ${a.evidence} · 承認した共有条件 #${a.policyRevision}`,
+                      ),
+                    );
+                  notice.textContent =
+                    "過去の保存内容を読み込みました。下書きは保持しています。";
+                }),
+            ),
+          );
+        if (page.before)
+          entries.append(
+            button(
+              "さらに前の20件",
+              () => void run((s) => show(page.before, s)),
+            ),
+          );
+        notice.textContent =
+          "変更履歴を読み込みました。下書きは保持しています。";
+      };
+      history.append(
+        el("h4", "変更履歴"),
+        button("変更履歴を確認", () => void run((s) => show(null, s))),
+        entries,
+        detail,
+      );
+      editor.append(history);
+    }
     controls();
   }
   window.addEventListener("beforeunload", (event) => {

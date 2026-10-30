@@ -21,6 +21,7 @@ function saved(): DocumentPolicy {
 async function fixture(page: Page, initial: DocumentPolicy | null = null) {
   const state = {
     policy: initial,
+    history: initial ? [structuredClone(initial)] : ([] as DocumentPolicy[]),
     enabled: true,
     account,
     mode: "ok",
@@ -56,6 +57,37 @@ async function fixture(page: Page, initial: DocumentPolicy | null = null) {
       });
     if (action === "read")
       return r.fulfill({ json: { account, policy: state.policy } });
+    if (action === "history") {
+      const entries = state.history
+        .map((p) => ({
+          revision: p.managementRevision,
+          actor: account,
+          recorded: 1,
+          kind: "update",
+        }))
+        .reverse();
+      return r.fulfill({ json: { account, id, entries, before: null } });
+    }
+    if (action === "revision") {
+      const p = structuredClone(
+        state.history.find((p) => p.managementRevision === body.revision)!,
+      );
+      if (state.mode === "history-invalid")
+        p.id = "88888888-8888-4888-8888-888888888888";
+      if (state.mode === "history-logout") state.account = other;
+      return r.fulfill({
+        json: {
+          account,
+          policy: p,
+          entry: {
+            revision: body.revision,
+            actor: account,
+            recorded: 1,
+            kind: "update",
+          },
+        },
+      });
+    }
     state.saves++;
     if (state.mode === "conflict")
       return r.fulfill({
@@ -74,6 +106,7 @@ async function fixture(page: Page, initial: DocumentPolicy | null = null) {
       managementRevision: (old?.managementRevision ?? 0) + 1,
       updated: Date.now(),
     };
+    state.history.push(structuredClone(state.policy!));
     if (state.mode === "lost") return r.abort("failed");
     const result = structuredClone(state.policy!);
     // JSON field order is not part of the protocol's meaning.
@@ -472,3 +505,57 @@ test("a second pending save replaces the previous success notice until its own c
   expect(state.policy?.managementRevision).toBe(3);
   expect(state.policy?.members).toEqual([account, other]);
 });
+
+for (const design of ["studio", "editorial", "focus"]) {
+  test(`${design} reads historical permission without changing the dirty draft at 320px`, async ({
+    page,
+  }, info) => {
+    await page.setViewportSize({ width: 320, height: 844 });
+    await page.addInitScript(
+      (design) => localStorage.setItem("quilna.reader.design.v1", design),
+      design,
+    );
+    const p = saved(),
+      { state, root } = await fixture(page, p);
+    await edit(root);
+    const reason = root.getByLabel("本文を共有できる根拠", { exact: true });
+    await reason.fill("Unsaved current permission draft");
+    await root
+      .getByRole("button", { name: "変更履歴を確認", exact: true })
+      .click();
+    await root
+      .getByRole("button", { name: "変更 #1 を読む", exact: true })
+      .click();
+    const history = root.getByRole("region", { name: "共有設定の変更履歴" });
+    await expect(history).toContainText(p.evidence);
+    await expect(history).toContainText(account);
+    await expect(reason).toHaveValue("Unsaved current permission draft");
+    expect(state.saves).toBe(0);
+    const box = await history.evaluate((e) => ({
+      right: e.getBoundingClientRect().right,
+      width: innerWidth,
+    }));
+    expect(box.right).toBeLessThanOrEqual(box.width);
+    expect(await history.evaluate((e) => e.scrollWidth <= e.clientWidth)).toBe(
+      true,
+    );
+    await history.scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: `.local-state/policy-history-qa/${design}-${info.project.name}.png`,
+    });
+    state.mode = "history-invalid";
+    await root
+      .getByRole("button", { name: "変更 #1 を読む", exact: true })
+      .click();
+    await expect(root.getByRole("status")).toContainText(
+      "応答を確認できません",
+    );
+    await expect(reason).toHaveValue("Unsaved current permission draft");
+    state.mode = "history-logout";
+    await root
+      .getByRole("button", { name: "変更 #1 を読む", exact: true })
+      .click();
+    await expect(history).toBeHidden();
+    expect(state.saves).toBe(0);
+  });
+}

@@ -87,6 +87,8 @@ export function createHandler({
               "history",
               "admin-list",
               "admin-read",
+              "admin-history",
+              "admin-revision",
               "admin-create",
               "admin-update",
             ].includes(action)

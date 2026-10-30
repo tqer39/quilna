@@ -68,6 +68,7 @@ async function fixture(t, { enabled = true, beforeMigration, outbound } = {}) {
     "0001_access.sql",
     "0002_source_aliases.sql",
     "0003_policy_management.sql",
+    "0004_policy_history.sql",
   ]) {
     if (name === "0003_policy_management.sql" && beforeMigration)
       await beforeMigration(await db());
@@ -497,5 +498,155 @@ test("listing is bounded, cursor pages do not repeat policies, and capacity does
     (await f.call("admin-read", { id: rows[0].id })).value.policy
       .managementRevision,
     1,
+  );
+});
+
+test("audit snapshots survive restart, preserve revoked members, and never disclose history to readers", async (t) => {
+  const f = await fixture(t);
+  const p = await create(f, { ...input(), members: [alice, bob] });
+  const changed = await f.call(
+    "admin-update",
+    update(p, { enabled: false, members: [] }),
+  );
+  assert.equal(changed.status, 200);
+  await f.restart();
+  const history = await f.call("admin-history", { id: p.id });
+  assert.equal(history.status, 200);
+  assert.deepEqual(
+    history.value.entries.map((e) => [e.revision, e.actor, e.kind]),
+    [
+      [2, alice, "update"],
+      [1, alice, "create"],
+    ],
+  );
+  assert.equal(history.value.before, null);
+  assert.deepEqual(
+    (await f.call("admin-revision", { id: p.id, revision: 1 })).value.policy,
+    p,
+  );
+  assert.deepEqual(
+    (await f.call("admin-read", { id: p.id })).value.policy,
+    changed.value.policy,
+  );
+  for (const [action, body] of [
+    ["admin-history", { id: p.id }],
+    ["admin-revision", { id: p.id, revision: 1 }],
+  ]) {
+    for (const opts of [
+      { user: "bob" },
+      { user: "nobody" },
+      { account: null },
+      { csrf: null },
+    ])
+      assert.notEqual((await f.call(action, body, opts)).status, 200);
+  }
+  const db = await f.db();
+  await assert.rejects(
+    db
+      .prepare("UPDATE document_policy_history SET actor=? WHERE policy_id=?")
+      .bind(bob, p.id)
+      .run(),
+  );
+  await assert.rejects(
+    db
+      .prepare("DELETE FROM document_policy_history WHERE policy_id=?")
+      .bind(p.id)
+      .run(),
+  );
+  assert.equal(f.fetches(), 0);
+});
+
+test("history persistence failure rolls back the entire edit; a losing concurrent edit adds no event", async (t) => {
+  const f = await fixture(t),
+    p = await create(f);
+  const db = await f.db();
+  await db.exec(
+    "CREATE TRIGGER fail_history BEFORE INSERT ON document_policy_history BEGIN SELECT RAISE(ABORT, 'synthetic-history-failure'); END;",
+  );
+  assert.equal(
+    (await f.call("admin-update", update(p, { members: [], enabled: false })))
+      .status,
+    502,
+  );
+  assert.deepEqual((await f.call("admin-read", { id: p.id })).value.policy, p);
+  assert.equal(
+    (await f.call("admin-history", { id: p.id })).value.entries.length,
+    1,
+  );
+  await db.exec("DROP TRIGGER fail_history;");
+  const results = await Promise.all([
+    f.call("admin-update", update(p, { members: [], enabled: false })),
+    f.call("admin-update", update(p, { members: [alice, bob] })),
+  ]);
+  assert.deepEqual(results.map((r) => r.status).sort(), [200, 409]);
+  const history = (await f.call("admin-history", { id: p.id })).value.entries;
+  assert.deepEqual(
+    history.map((e) => e.revision),
+    [2, 1],
+  );
+  assert.deepEqual(
+    (await f.call("admin-revision", { id: p.id, revision: 2 })).value.policy,
+    results.find((r) => r.status === 200).value.policy,
+  );
+});
+
+test("first edit of a legacy policy retains an honestly labelled baseline; history is bounded and corrupt detail is refused", async (t) => {
+  const id = "77777777-7777-4777-8777-777777777777";
+  const f = await fixture(t, {
+    beforeMigration: async (db) => {
+      await db
+        .prepare("INSERT INTO document_policies VALUES(?,?,1,0,1,?)")
+        .bind(id, url, "Legacy fixture permission")
+        .run();
+      await db
+        .prepare("INSERT INTO document_members VALUES(?,?)")
+        .bind(id, bob)
+        .run();
+    },
+  });
+  const p = (await f.call("admin-read", { id })).value.policy;
+  assert.deepEqual((await f.call("admin-history", { id })).value.entries, []);
+  assert.equal(
+    (await f.call("admin-update", update(p, { members: [] }))).status,
+    200,
+  );
+  const baseline = (await f.call("admin-revision", { id, revision: 1 })).value;
+  assert.deepEqual(baseline.policy, p);
+  assert.equal(baseline.entry.actor, null);
+  assert.equal(baseline.entry.kind, "baseline");
+  const db = await f.db();
+  await db
+    .prepare(
+      `INSERT INTO document_policy_history(policy_id,management_revision,actor,recorded,kind,snapshot)
+    SELECT policy_id,j.value,actor,recorded,kind,json_set(snapshot,'$.management_revision',j.value)
+    FROM document_policy_history,json_each(?) j WHERE policy_id=? AND management_revision=2`,
+    )
+    .bind(JSON.stringify(Array.from({ length: 22 }, (_, i) => i + 3)), id)
+    .run();
+  const first = (await f.call("admin-history", { id })).value;
+  assert.equal(first.entries.length, 20);
+  assert.equal(first.before, 5);
+  const second = (await f.call("admin-history", { id, before: first.before }))
+    .value;
+  assert.deepEqual(
+    second.entries.map((e) => e.revision),
+    [4, 3, 2, 1],
+  );
+  assert.equal(second.before, null);
+  assert.deepEqual(Object.keys(first.entries[0]).sort(), [
+    "actor",
+    "kind",
+    "recorded",
+    "revision",
+  ]);
+  await db
+    .prepare(
+      "INSERT INTO document_policy_history VALUES(?,25,?,?,'update','{}')",
+    )
+    .bind(id, alice, Date.now())
+    .run();
+  assert.equal(
+    (await f.call("admin-revision", { id, revision: 25 })).status,
+    502,
   );
 });

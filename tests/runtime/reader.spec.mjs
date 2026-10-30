@@ -371,6 +371,23 @@ async function runReaderScenario(browser, info, aliasMode) {
       .first();
     expect(addedPolicy.revision).toBe(1);
     expect(addedPolicy.management_revision).toBe(2);
+    await openAdmin();
+    await admin
+      .getByRole("button", { name: "変更履歴を確認", exact: true })
+      .click();
+    await admin
+      .getByRole("button", { name: "変更 #1 を読む", exact: true })
+      .click();
+    const policyHistory = admin.getByRole("region", {
+      name: "共有設定の変更履歴",
+    });
+    await expect(policyHistory).toContainText("共有する利用者（1人）");
+    await expect(policyHistory).toContainText(a.account);
+    await expect(policyHistory).not.toContainText(b.account);
+    await expect(
+      admin.getByLabel("共有する利用者ID（1行に1人）", { exact: true }),
+    ).toHaveValue([a.account, b.account].sort().join("\n"));
+    await a.page.getByRole("button", { name: "閉じる", exact: true }).click();
     const bBefore = await storedArticles(b.page);
     expect(bBefore[0].read).toBe(false);
     expect(bBefore[0].saved).toBe(false);
