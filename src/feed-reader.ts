@@ -1,3 +1,4 @@
+import { CollectionNavigation } from "./collection-navigation";
 import {
   FeedAutoRefresh,
   feedLockSupported,
@@ -333,6 +334,26 @@ export async function feedReader(root: HTMLElement) {
   const layout = el("div", undefined, "rss-shell");
   const navigation = el("section", undefined, "rss-navigation");
   navigation.setAttribute("aria-label", "収集メニュー");
+  const collectionNavigation = new CollectionNavigation(navigation, {
+    filter: (value) => {
+      filter = value;
+      selected = null;
+      render();
+    },
+    input: (value) => {
+      input = value;
+      clearDiscovery();
+    },
+    discover: (value) => void discover(value),
+    add: (value) => void addArticle(value),
+    source: (value) => {
+      source = value;
+      selected = null;
+      render();
+    },
+    refresh: (url, insert) => void refresh(url, insert),
+    refreshAll: () => void refreshAll(),
+  });
   const main = el("main", undefined, "rss-main");
   main.id = "rss-main";
   main.tabIndex = -1;
@@ -1579,127 +1600,10 @@ export async function feedReader(root: HTMLElement) {
         ? [focused.selectionStart, focused.selectionEnd]
         : null;
     renderError();
-    navigation.replaceChildren();
     if (article || listResults.parentNode !== main) main.replaceChildren();
-    navigation.append(
-      el("p", "COLLECT → READ → LEARN", "eyebrow"),
-      el("h2", "情報収集"),
-    );
-    const menus = el("nav", undefined, "rss-filters");
-    menus.setAttribute("aria-label", "記事の絞り込み");
-    // Query input does not change these counts. Maintain them with the same
-    // committed article snapshots as search and tag metadata instead of
-    // walking the library on every render, including zero-result searches.
     const counts = articleCounts.get(source || null) ?? emptyCounts;
     const pendingCount = articleCounts.get(null)?.pending ?? 0;
-    for (const [value, label] of [
-      ["all", "すべての記事"],
-      ["unread", "未読"],
-      ["saved", "保存した記事"],
-    ]) {
-      const count =
-        value === "all"
-          ? counts.all
-          : value === "unread"
-            ? counts.unread
-            : counts.saved;
-      const menu = button(`${label} · ${count}`, () => {
-        filter = value;
-        selected = null;
-        render();
-      });
-      if (filter === value) menu.setAttribute("aria-current", "page");
-      menus.append(menu);
-    }
-    navigation.append(menus);
-    const form = el("form", undefined, "rss-add");
-    const label = el("label", "サイト・RSSのURL");
-    label.htmlFor = "feed-url";
-    const field = el("input");
-    field.id = "feed-url";
-    field.type = "text";
-    field.inputMode = "url";
-    field.maxLength = 2048;
-    field.autocapitalize = "off";
-    field.spellcheck = false;
-    field.required = true;
-    field.placeholder = "example.com や記事のURL";
-    field.value = input;
-    field.addEventListener("input", () => {
-      input = field.value;
-      clearDiscovery();
-      submit.disabled = !db || connecting;
-      submit.textContent = "フィードを探す";
-    });
-    const submit = el(
-      "button",
-      discovering ? "探しています…" : "フィードを探す",
-    );
-    submit.id = "rss-find-feeds";
-    submit.type = "submit";
-    submit.disabled = !db || connecting || discovering;
-    const hint = el(
-      "p",
-      "サイトから配信元を探すか、記事URLから本文を取り込んで保存できます。",
-      "rss-add-hint",
-    );
-    hint.id = "rss-url-hint";
-    field.setAttribute("aria-describedby", hint.id);
-    const addDirect = button(
-      addingArticle ? "記事を取り込み中…" : "記事として取り込む",
-      () => void addArticle(field.value),
-    );
-    addDirect.disabled = !db || addingArticle;
-    form.append(
-      el("h3", "サイトを追加"),
-      label,
-      field,
-      hint,
-      submit,
-      addDirect,
-    );
-    form.addEventListener("submit", (event) => {
-      event.preventDefault();
-      void discover(field.value);
-    });
-    navigation.append(form);
-    if (!feeds.length) {
-      const presets = el("div", undefined, "rss-presets");
-      presets.append(el("p", "公開フィードから試す", "muted"));
-      for (const [name, url] of [
-        ["Zenn", "https://zenn.dev/feed"],
-        ["Cloudflare Blog", "https://blog.cloudflare.com/rss/"],
-      ]) {
-        const add = button(`${name}を追加`, () => void refresh(url, true));
-        add.disabled = !db || updating.has(url);
-        presets.append(add);
-      }
-      navigation.append(presets);
-    }
-    const sourceLabel = el("label", "配信元");
-    sourceLabel.htmlFor = "feed-source";
-    const select = el("select");
-    select.id = "feed-source";
-    const all = el("option", "すべての配信元");
-    all.value = "";
-    select.append(all);
-    for (const feed of feeds) {
-      const option = el("option", feed.title);
-      option.value = feed.url;
-      select.append(option);
-    }
-    select.value = source;
-    select.addEventListener("change", () => {
-      source = select.value;
-      selected = null;
-      render();
-    });
-    navigation.append(sourceLabel, select);
-    const refreshButton = button("すべて更新", () => void refreshAll());
-    refreshButton.disabled = !feeds.length || !!updating.size;
-    navigation.append(refreshButton);
-    const collectionStatus = el(
-      "p",
+    let collectionStatus =
       (cloudState?.available && cloudState.interval
         ? cloudError
           ? cloudRetryCount
@@ -1709,101 +1613,78 @@ export async function feedReader(root: HTMLElement) {
             ? "クラウド収集：保存上限で一時停止。設定から記事を取り込んでください。"
             : `クラウド収集：${cloudState.interval}分ごとに設定済み（PC停止中も実行）`
         : collectionProblem) ||
-        (!feedLockSupported()
-          ? "このブラウザでは自動更新を利用できません。手動で更新してください。"
-          : !refreshInterval
-            ? "自動更新：オフ"
-            : !navigator.onLine
-              ? "自動更新：待機中（オフライン）"
-              : document.hidden
-                ? "自動更新：待機中（画面非表示）"
-                : `自動更新：${refreshInterval}分ごと（画面の表示中）`),
-      "muted",
-    );
-    collectionStatus.id = "rss-auto-refresh-status";
+      (!feedLockSupported()
+        ? "このブラウザでは自動更新を利用できません。手動で更新してください。"
+        : !refreshInterval
+          ? "自動更新：オフ"
+          : !navigator.onLine
+            ? "自動更新：待機中（オフライン）"
+            : document.hidden
+              ? "自動更新：待機中（画面非表示）"
+              : `自動更新：${refreshInterval}分ごと（画面の表示中）`);
     const failedImports = cloudState
       ? cloudClient.failures(cloudState).length
       : 0;
     if (failedImports)
-      collectionStatus.textContent += ` ${failedImports}件の取得結果を取り込めません。設定で理由と再試行を確認してください。`;
-    collectionStatus.setAttribute("role", "status");
-    navigation.append(collectionStatus);
-    const progress = el(
-      "p",
-      updating.size
-        ? `更新中：${updating.size}件。取得済みの記事は読めます。`
-        : "",
-      "rss-progress",
-    );
-    progress.setAttribute("role", "status");
-    navigation.append(progress);
-    for (const feed of feeds) {
-      const line = el("div", undefined, "rss-feed-state");
-      line.append(
-        el("strong", feed.title),
-        el("span", `ブラウザ内の最終取得 ${date(feed.fetchedAt)}`, "muted"),
-      );
-      const remoteFeed =
-        cloudState?.available && cloudState.interval
-          ? cloudState.feeds.find((item) => item.url === feed.url)
-          : undefined;
-      if (cloudState?.available && cloudState.interval) {
-        if (remoteFeed) {
-          const lastSuccess = el("span", "クラウド最終取得 ", "muted");
-          if (remoteFeed.lastSuccess !== null) {
-            const iso = new Date(remoteFeed.lastSuccess).toISOString();
-            const timestamp = el("time", date(iso));
-            timestamp.dateTime = iso;
-            lastSuccess.append(timestamp);
-          } else {
-            lastSuccess.textContent = "クラウドの取得はまだ成功していません。";
+      collectionStatus += ` ${failedImports}件の取得結果を取り込めません。設定で理由と再試行を確認してください。`;
+    collectionNavigation.update({
+      counts,
+      filter,
+      input,
+      ready: !!db,
+      connecting,
+      discovering,
+      adding: addingArticle,
+      source,
+      updating,
+      status: collectionStatus,
+      feeds: feeds.map((feed) => {
+        const details: {
+          text: string;
+          error?: boolean;
+          time?: { iso: string; text: string };
+        }[] = [{ text: `ブラウザ内の最終取得 ${date(feed.fetchedAt)}` }];
+        const remoteFeed =
+          cloudState?.available && cloudState.interval
+            ? cloudState.feeds.find((item) => item.url === feed.url)
+            : undefined;
+        if (cloudState?.available && cloudState.interval) {
+          if (remoteFeed) {
+            if (remoteFeed.lastSuccess !== null) {
+              const iso = new Date(remoteFeed.lastSuccess).toISOString();
+              details.push({
+                text: "クラウド最終取得 ",
+                time: { iso, text: date(iso) },
+              });
+            } else
+              details.push({ text: "クラウドの取得はまだ成功していません。" });
           }
-          line.append(lastSuccess);
-        }
-        line.append(
-          el(
-            "span",
-            remoteFeed
+          details.push({
+            text: remoteFeed
               ? `クラウドの次回更新の目安 ${date(new Date(remoteFeed.nextAt).toISOString())}`
               : "この配信元はクラウド未登録です。設定を更新してください。",
-            "muted",
-          ),
-        );
-        if (remoteFeed?.error)
-          line.append(
-            el(
-              "p",
-              "クラウドで取得できませんでした。既存の記事を保持して再試行を待っています。",
-              "rss-feed-error",
-            ),
-          );
-      } else if (refreshInterval && feedLockSupported())
-        line.append(
-          el(
-            "span",
-            `次回更新の目安 ${date(new Date(nextFeedRefresh(feed, refreshInterval)).toISOString())}`,
-            "muted",
-          ),
-        );
-      if (feedProblems.has(feed.url) || feed.refreshFailure) {
-        const error = el(
-          "p",
-          feedProblems.get(feed.url) || feed.refreshFailure?.error,
-          "rss-feed-error",
-        );
-        error.setAttribute("role", "alert");
-        line.append(error);
-      }
-      const update = button(
-        feedProblems.has(feed.url)
-          ? `${feed.title}を再試行`
-          : `${feed.title}を更新`,
-        () => void refresh(feed.url),
-      );
-      update.disabled = updating.has(feed.url);
-      line.append(update);
-      navigation.append(line);
-    }
+          });
+          if (remoteFeed?.error)
+            details.push({
+              text: "クラウドで取得できませんでした。既存の記事を保持して再試行を待っています。",
+              error: true,
+            });
+        } else if (refreshInterval && feedLockSupported()) {
+          details.push({
+            text: `次回更新の目安 ${date(new Date(nextFeedRefresh(feed, refreshInterval)).toISOString())}`,
+          });
+        }
+        const error = feedProblems.get(feed.url) || feed.refreshFailure?.error;
+        if (error) details.push({ text: error, error: true });
+        return {
+          url: feed.url,
+          title: feed.title,
+          details,
+          retry: feedProblems.has(feed.url),
+          updating: updating.has(feed.url),
+        };
+      }),
+    });
     renderDiscovery();
     if (discoveryPanel.parentNode !== main) main.append(discoveryPanel);
     if (article) {

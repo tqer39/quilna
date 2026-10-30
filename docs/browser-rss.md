@@ -34,6 +34,7 @@ The choice is stored for this browser origin in `quilna.reader.design.v1`; unkno
 Design choices use a labeled radio group with keyboard navigation and miniature previews. Controls retain a minimum 44 CSS-pixel height, narrow screens use a single column, and reduced-motion preferences suppress transitions.
 The article body comes before tag editing and translation/read-aloud controls. In-article links move focus to the body or tools without leaving the current article; narrow screens also offer an **記事へ** shortcut past collection controls.
 Background updates, including changes to available speech voices, restore focus to retained reader controls such as disclosure headings and quote actions. Keyboard users can continue opening a panel and starting a learning record without losing focus when those controls are reattached.
+The collection menu also keeps its URL field, source selector and refresh buttons connected. Background article changes preserve an unfinished URL, its selection direction and range, and keyboard focus; counts, source names, errors and refresh status still update. Unchanged feed details are not rebuilt during a search.
 Color, type, spacing and surface tokens are grouped in `src/reader-design.css`. These templates currently apply to the browser RSS viewer; the sample lesson and native apps are not restyled. Native implementation and device verification remain pending under the browser-first product sequence.
 
 ## Automatic feed collection
