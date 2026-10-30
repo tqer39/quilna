@@ -16,7 +16,7 @@ export function json(status, value) {
     },
   });
 }
-export async function readBody(request) {
+export async function readBody(request, limit = 32768) {
   if (
     request.headers.get("Content-Type") !== "application/json" ||
     !request.body
@@ -31,7 +31,7 @@ export async function readBody(request) {
       const { value, done } = await reader.read();
       if (done) break;
       size += value.byteLength;
-      if (size > 32768) throw Error("body-limit");
+      if (size > limit) throw Error("body-limit");
       text += decoder.decode(value, { stream: true });
     }
     text += decoder.decode();
@@ -75,17 +75,41 @@ export function createHandler({
       const stub = env.ACCOUNTS.get(env.ACCOUNTS.idFromName(owner));
       if (url.pathname.startsWith("/api/documents/")) {
         const action = url.pathname.slice("/api/documents/".length);
+        const admin = action.startsWith("admin-");
+        const status = ["status", "admin-status"].includes(action);
         if (
-          !(action === "status" && request.method === "GET") &&
+          !(status && request.method === "GET") &&
           !(
             request.method === "POST" &&
-            ["acquire", "read", "history"].includes(action)
+            [
+              "acquire",
+              "read",
+              "history",
+              "admin-list",
+              "admin-read",
+              "admin-create",
+              "admin-update",
+            ].includes(action)
           )
         )
           return json(404, { status: "not-found" });
         const expected = request.headers.get("X-Document-Account");
-        if (expected && expected !== owner)
+        if (
+          admin && !status ? expected !== owner : expected && expected !== owner
+        )
           return json(403, { status: "document-account-changed" });
+        const data = status
+          ? null
+          : await readBody(request, admin ? 262144 : 32768);
+        if (admin && !status) {
+          const before = principal.safeParse(await authenticate(request));
+          if (
+            !before.success ||
+            before.data.subject !== verified.data.subject ||
+            before.data.sessionId !== verified.data.sessionId
+          )
+            return json(401, { status: "unauthenticated" });
+        }
         const result = await stub.fetch(
           new Request("https://account.internal/command", {
             method: "POST",
@@ -94,7 +118,7 @@ export function createHandler({
               action: `document-${action}`,
               principal: verified.data,
               csrf: request.headers.get("X-CSRF-Token"),
-              data: action === "status" ? null : await readBody(request),
+              data,
             }),
           }),
         );
@@ -236,6 +260,7 @@ export async function handleAccount(core, request, collector, documents) {
         "collection-snapshot",
         "feed-fetch",
         "document-status",
+        "document-admin-status",
       ].includes(command.action),
     );
     if (command.action?.startsWith("document-")) {

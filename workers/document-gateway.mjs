@@ -7,6 +7,7 @@ import {
   documentError,
 } from "./document-access.mjs";
 import { json } from "./http.mjs";
+import { DocumentPolicyAdmin } from "./document-policy-admin.mjs";
 
 export class DocumentGateway {
   constructor(storage, env) {
@@ -35,6 +36,8 @@ export class DocumentGateway {
     });
   }
   async handle(owner, action, data) {
+    if (action.startsWith("admin-"))
+      return new DocumentPolicyAdmin(this.env).handle(owner, action, data);
     if (action === "status")
       return json(200, { account: owner, enabled: this.enabled });
     try {
