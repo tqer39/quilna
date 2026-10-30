@@ -507,11 +507,22 @@ export function updateArticleContent(
                   ? {}
                   : { translation: undefined }),
                 contentError: patch.contentError,
-                ...(sourceCheckedAt && patch.content.document
+                ...(sourceCheckedAt &&
+                patch.content.document &&
+                (!old?.bodyUpdate ||
+                  old.bodyUpdate.checkedAt < sourceCheckedAt ||
+                  (old.bodyUpdate.checkedAt === sourceCheckedAt &&
+                    JSON.stringify(old.bodyUpdate) ===
+                      JSON.stringify(article.bodyUpdate)))
                   ? {
                       bodyUpdate: {
                         checkedAt: sourceCheckedAt,
-                        fingerprint: article.feedRevision?.fingerprint,
+                        fingerprint:
+                          article.feedRevision &&
+                          sourceCheckedAt >=
+                            Date.parse(article.feedRevision.changedAt)
+                            ? article.feedRevision.fingerprint
+                            : undefined,
                         failures: 0,
                         retryAt: 0,
                         latest: patch.content.document,

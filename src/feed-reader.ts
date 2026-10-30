@@ -1574,15 +1574,13 @@ export async function feedReader(root: HTMLElement) {
     render();
     try {
       const sources = await documentSources(article.url);
-      if (
-        !sources.some(
-          (source) =>
-            source.id === version.documentId &&
-            source.scope === version.scope &&
-            source.sourceURL === version.sourceURL,
-        )
-      )
-        throw Error("この記事の本文の保存履歴を確認できません。");
+      const source = sources.find(
+        (source) =>
+          source.id === version.documentId &&
+          source.scope === version.scope &&
+          source.sourceURL === version.sourceURL,
+      );
+      if (!source) throw Error("この記事の本文の保存履歴を確認できません。");
       const stored = await readDocumentVersion(
         version.documentId,
         version.id,
@@ -1596,6 +1594,9 @@ export async function feedReader(root: HTMLElement) {
         undefined,
         false,
         "replace",
+        source.currentVersionId === stored.id
+          ? Date.parse(source.checkedAt)
+          : undefined,
       );
       await load(article.id);
       announceChange(article.id);

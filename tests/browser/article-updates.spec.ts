@@ -664,3 +664,129 @@ test("opening a cached original does not acknowledge an unseen RSS revision", as
     (await stored(page))[0].content.document.versionId,
   );
 });
+
+test("choosing a newer current catalog version replaces a stale update notice without hiding older history", async ({
+  page,
+}) => {
+  await seed(page);
+  await page.route("**/api/feeds/fetch", (r) =>
+    r.request().postDataJSON().icon
+      ? r.fulfill({ status: 404, json: {} })
+      : r.fulfill({ json: { url, html } }),
+  );
+  await run(page);
+  await page.clock.setFixedTime(new Date(Date.now() + 2000));
+  await page.evaluate(async (url) => {
+    const path = "/src/source-document-store.ts",
+      docs = await import(path),
+      current = await docs.currentDocument(url);
+    await docs.retainDocument(url, {
+      ...current.version.content,
+      title: "Third version",
+      text: "Third version from a later source check. ".repeat(30),
+      structure: undefined,
+    });
+  }, url);
+  await page.goto("/?view=feeds");
+  await page.getByRole("button", { name: "Old source", exact: true }).click();
+  await expect(
+    page.getByRole("button", { name: "更新された本文を読む" }),
+  ).toBeVisible();
+  const history = page.locator(".rss-document-history");
+  await history.locator("summary").click();
+  await history
+    .locator(".rss-document-version")
+    .filter({ hasText: "Third version from" })
+    .getByRole("button", { name: "この本文を表示" })
+    .click();
+  await expect(page.locator(".rss-source-text")).toContainText(
+    "Third version from",
+  );
+  await expect(
+    page.getByRole("button", { name: "更新された本文を読む" }),
+  ).toBeHidden();
+  await history
+    .locator(".rss-document-version")
+    .filter({ hasText: "Old body kept" })
+    .getByRole("button", { name: "この本文を表示" })
+    .click();
+  await expect(page.locator(".rss-source-text")).toContainText("Old body kept");
+  await page.getByRole("button", { name: "更新された本文を読む" }).click();
+  await expect(page.locator(".rss-source-text")).toContainText(
+    "Third version from",
+  );
+});
+
+for (const newerCheck of [false, true])
+  test(`manual selection and concurrent update notices retain the newest successful check (${newerCheck})`, async ({
+    page,
+  }) => {
+    await seed(page);
+    await page.route("**/api/feeds/fetch", (r) =>
+      r.fulfill({ json: { url, html } }),
+    );
+    await run(page);
+    const result = await page.evaluate(
+      async ({ newerCheck, url }) => {
+        const paths = [
+          "/src/feed-store.ts",
+          "/src/source-document-store.ts",
+          "/src/source-document.ts",
+        ];
+        const [api, docs, formats] = await Promise.all(
+            paths.map((p) => import(p)),
+          ),
+          db = await api.openFeedLibrary(),
+          snapshot = await api.readArticle(db, "a"),
+          now = Date.now();
+        const current = await docs.currentDocument(url);
+        const third = await docs.retainDocument(url, {
+            ...current.version.content,
+            text: "Third body",
+            structure: undefined,
+          }),
+          fourth = await docs.retainDocument(url, {
+            ...current.version.content,
+            text: "Fourth body",
+            structure: undefined,
+          });
+        const selected = formats.versionContent(third.version),
+          concurrent = formats.versionContent(fourth.version);
+        await new Promise<void>((resolve, reject) => {
+          const tx = db.transaction("articles", "readwrite");
+          tx.objectStore("articles").put({
+            ...snapshot,
+            bodyUpdate: {
+              ...snapshot.bodyUpdate,
+              latest: concurrent.document,
+              checkedAt: now + (newerCheck ? 10000 : 1000),
+            },
+          });
+          tx.oncomplete = () => resolve();
+          tx.onabort = () => reject(tx.error);
+        });
+        await api.updateArticleContent(
+          db,
+          snapshot,
+          { content: selected },
+          false,
+          undefined,
+          false,
+          "replace",
+          now + 5000,
+        );
+        const after = await api.readArticle(db, "a");
+        db.close();
+        return {
+          after,
+          selected: selected.document,
+          concurrent: concurrent.document,
+        };
+      },
+      { newerCheck, url },
+    );
+    expect(result.after.content.text).toBe("Third body");
+    expect(result.after.bodyUpdate.latest).toEqual(
+      newerCheck ? result.concurrent : result.selected,
+    );
+  });
