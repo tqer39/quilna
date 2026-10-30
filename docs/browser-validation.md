@@ -53,6 +53,8 @@ A same-machine Studio diagnostic after row reuse still recorded a 22.486 ms C++ 
 
 In the subsequent local Studio comparison, manifest hashes differed only for `src/feed-store.ts`; both runs retained all 630 samples and complete traces without reported data loss. The maximum C++ sweep task changed from 22.486 to 3.240 ms and their total from 30.372 to 8.190 ms. Initial load/preparation increased from 2,452 to 2,836 ms. Diagnostic input-to-paint maxima were 49.9 and 60.3 ms, respectively: this is evidence about cleanup cost, not an across-the-board latency improvement or Linux acceptance. The unchanged gate across all designs and hosted CI remain required.
 
+On 2026-10-30, [6a02904 Linux CI](https://github.com/tqer39/quilna/actions/runs/40998555529) passed 524 functional and two reader-runtime cases, but one of 2,700 search samples failed: Studio, dense tags, held write, `does-not-exist`, 203.5 ms. The other five search conditions passed; all samples remain retained. Preparation took 6,993–8,193 ms separately. Its subsequent diagnostic retained 630 samples per design and three complete traces without reported data loss; source/control hashes remained unchanged and visibility/focus stayed active. Diagnostic maxima were Studio 62.7, Editorial 60.0 and Focus 59.1 ms. It did not reproduce the failing span, so neither a root cause nor a repair is established. The original failed gate remains failed; no threshold, workload or outlier rule was relaxed, and deployment was held.
+
 ## Existing harness integration
 
 Use the existing [Go harness contract](../harness/README.md), not a new loop runner or an automatic-approve reviewer. Keep its frozen task, checks, distinct review execution, bounded repair, no-replay recovery and hash checks.
