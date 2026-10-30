@@ -175,25 +175,41 @@ export function documentPolicySettings(client = new DocumentPolicyClient()) {
     }
     controls();
   }
-  function renderEditor(saved: DocumentPolicy | null) {
+  function renderEditor(
+    saved: DocumentPolicy | null,
+    historical?: DocumentPolicy,
+  ) {
     previous = saved;
-    dirty = false;
+    dirty = !!historical;
     uncertain = false;
     recovery.replaceChildren();
     editor.replaceChildren();
-    const data: PolicyInput = saved ?? {
-      url: "",
-      enabled: false,
-      expires: Math.floor((Date.now() + 30 * 86400000) / 60000) * 60000,
-      evidence: "",
-      members: bound ? [bound] : [],
-      aliases: [],
-    };
+    const data: PolicyInput = historical
+      ? {
+          ...historical,
+          enabled: false,
+          aliases: historical.aliases.map((a) => ({ ...a, enabled: false })),
+        }
+      : (saved ?? {
+          url: "",
+          enabled: false,
+          expires: Math.floor((Date.now() + 30 * 86400000) / 60000) * 60000,
+          evidence: "",
+          members: bound ? [bound] : [],
+          aliases: [],
+        });
     const form = el("form"),
       fields = el("fieldset"),
       aliases = el("div"),
       preview = el("div");
     fields.append(el("legend", saved ? "共有設定を編集" : "新しい共有出典"));
+    if (historical)
+      fields.append(
+        el(
+          "p",
+          `変更 #${historical.managementRevision} から作った下書きです。共有と別名は無効にしてあり、期限は延長していません。利用者・根拠・期限を確認し、必要な共有と別名だけ有効にしてください。保存するまで現在の設定は変わりません。`,
+        ),
+      );
     const field = (
       parent: HTMLElement,
       label: string,
@@ -319,7 +335,7 @@ export function documentPolicySettings(client = new DocumentPolicyClient()) {
       const approve = check(
         node,
         "現在の共有条件で、同じ記事を指すことを確認しました",
-        !!a && a.policyRevision === revision(),
+        !historical && !!a && a.policyRevision === revision(),
       );
       const row = {
         node,
@@ -540,6 +556,26 @@ export function documentPolicySettings(client = new DocumentPolicyClient()) {
                         `${a.enabled ? "有効" : "無効"}: ${a.url} · 期限: ${new Date(a.expires).toLocaleString()} · 根拠: ${a.evidence} · 承認した共有条件 #${a.policyRevision}`,
                       ),
                     );
+                  detail.append(
+                    button(
+                      "この記録から下書きを作る",
+                      () =>
+                        void run(async (signal) => {
+                          const latest = await client.read(saved.id, signal);
+                          if (
+                            latest.url !== p.url ||
+                            latest.managementRevision < p.managementRevision
+                          )
+                            throw new PolicyError(
+                              "現在の共有設定と履歴の対応を確認できません。下書きは変更していません。",
+                            );
+                          if (!discard()) return;
+                          renderEditor(latest, p);
+                          notice.textContent =
+                            "履歴から下書きを作りました。現在の共有設定は変更していません。内容を確認してから保存してください。";
+                        }),
+                    ),
+                  );
                   notice.textContent =
                     "過去の保存内容を読み込みました。下書きは保持しています。";
                 }),
