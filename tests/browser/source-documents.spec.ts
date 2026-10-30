@@ -420,7 +420,13 @@ test("document versions round-trip in backup v2 and dangling or altered referenc
 }) => {
   await fixture(page);
   await page.route("**/api/feeds/fetch", (r) =>
-    r.fulfill({ json: { url: articleURL, html: html() } }),
+    r.fulfill({
+      json: {
+        url: articleURL,
+        html: html(),
+        validators: { url: articleURL, etag: '"backup"' },
+      },
+    }),
   );
   await page.getByRole("button", { name: "Article a", exact: true }).click();
   await expect(page.locator(".rss-source-text")).toContainText(
@@ -432,10 +438,14 @@ test("document versions round-trip in backup v2 and dangling or altered referenc
       api = await import(documentPath),
       backup = await import(backupPath);
     const first = await api.currentDocument(url);
-    await api.retainDocument(url, {
-      ...first.version.content,
-      text: first.version.content.text + " Updated.",
-    });
+    await api.retainDocument(
+      url,
+      {
+        ...first.version.content,
+        text: first.version.content.text + " Updated.",
+      },
+      { validators: { url, etag: '"backup-v2"' } },
+    );
     const file = await backup.exportLibrary();
     return {
       bytes: Array.from(new Uint8Array(await file.blob.arrayBuffer())),
@@ -475,6 +485,9 @@ test("document versions round-trip in backup v2 and dangling or altered referenc
         ),
       );
   expect(entries(result)).toEqual(entries(archive.text));
+  expect(
+    entries(result).find((entry) => entry.kind === "documents").value.validators,
+  ).toEqual({ url: articleURL, etag: '"backup-v2"' });
   const refusals = await other.evaluate(async (text) => {
     const path = "/src/library-backup.ts",
       api = await import(path),
@@ -491,8 +504,12 @@ test("document versions round-trip in backup v2 and dangling or altered referenc
       (e: { kind?: string }) => e.kind !== "documents",
     );
     missing.at(-1).counts.documents = 0;
+    const mismatchedValidator = structuredClone(lines);
+    mismatchedValidator.find(
+      (e: { kind?: string }) => e.kind === "documents",
+    ).value.validators.url = "https://other.example.org/unrelated";
     const messages = [];
-    for (const variant of [badHash, missing]) {
+    for (const variant of [badHash, missing, mismatchedValidator]) {
       const blob = await new Response(
         new Blob([
           variant.map((e: unknown) => JSON.stringify(e)).join("\n") + "\n",
@@ -617,4 +634,130 @@ test("a failed version switch keeps the selected source and retry succeeds", asy
   await expect(page.locator(".rss-source-text")).toContainText(
     "Version 1 explains",
   );
+});
+
+test("conditional refresh retains exact original and translation, survives reload, and rejects unrelated 304", async ({
+  page,
+}) => {
+  await fixture(page);
+  let phase = 0;
+  const requests: Record<string, unknown>[] = [];
+  await page.route("**/api/feeds/fetch", (r) => {
+    const body = r.request().postDataJSON();
+    requests.push(body);
+    if (phase === 0)
+      return r.fulfill({
+        json: {
+          url: articleURL,
+          html: html(),
+          validators: { url: articleURL, etag: '"v1"' },
+        },
+      });
+    if (phase === 1)
+      return r.fulfill({ json: { url: articleURL, notModified: true } });
+    if (phase === 2)
+      return r.fulfill({
+        json: { url: "https://other.example.org/changed", notModified: true },
+      });
+    return r.fulfill({ json: { url: articleURL, html: html(2) } });
+  });
+  await page.getByRole("button", { name: "Article a", exact: true }).click();
+  await expect(page.locator(".rss-source-text")).toContainText(
+    "Version 1 explains",
+  );
+  const initial = await snapshots(page);
+  await page.evaluate(async () => {
+    const path = "/src/feed-store.ts",
+      api = await import(path),
+      db = await api.openFeedLibrary(),
+      article = await api.readArticle(db, "a");
+    await api.updateArticleContent(db, article, {
+      translation: {
+        text: "保持する訳文",
+        sourceText: article.content.text,
+        sourceLanguage: "en",
+        targetLanguage: "ja",
+      },
+    });
+    db.close();
+  });
+  await page.reload();
+  await page.getByRole("button", { name: "Document 1", exact: true }).click();
+  const history = page.locator(".rss-document-history");
+  await history.locator("summary").click();
+  phase = 1;
+  const refresh = history.getByRole("button", { name: "元サイトの更新を確認" });
+  await refresh.click();
+  await expect(refresh).toBeEnabled();
+  expect(requests[1].validators).toEqual({ url: articleURL, etag: '"v1"' });
+  const unchanged = await snapshots(page);
+  expect(unchanged[0].content).toEqual(initial[0].content);
+  expect(unchanged[0].translation.text).toBe("保持する訳文");
+  await expect(history.locator(".rss-document-version")).toHaveCount(1);
+  phase = 2;
+  await refresh.click();
+  await expect(refresh).toBeEnabled();
+  await expect(
+    page.locator(".rss-content-note").filter({ hasText: "更新確認の結果" }),
+  ).toBeVisible();
+  expect((await snapshots(page))[0].content).toEqual(initial[0].content);
+  phase = 3;
+  await refresh.click();
+  await expect(refresh).toBeEnabled();
+  await expect(page.locator(".rss-source-text")).toContainText(
+    "Version 2 explains",
+  );
+  await expect(history.locator(".rss-document-version")).toHaveCount(2);
+  const final = await page.evaluate(async (url) => {
+    const path = "/src/source-document-store.ts",
+      api = await import(path);
+    return api.currentDocument(url);
+  }, articleURL);
+  expect(final.document.validators).toBeUndefined();
+  expect((await snapshots(page))[0].translation).toBeUndefined();
+});
+
+test("an unsolicited unchanged response cannot invent an original", async ({
+  page,
+}) => {
+  await fixture(page);
+  await page.route("**/api/feeds/fetch", (r) =>
+    r.fulfill({ json: { url: articleURL, notModified: true } }),
+  );
+  await page.getByRole("button", { name: "Article a", exact: true }).click();
+  await expect(page.locator(".rss-content-note")).toContainText(
+    "更新確認の結果",
+  );
+  expect((await snapshots(page))[0].content).toBeUndefined();
+});
+
+test("large validator requests fall back to a full fetch within the existing body limit", async ({
+  page,
+}) => {
+  await blank(page);
+  const url = "https://example.org/" + "a".repeat(2000);
+  const requests: Record<string, unknown>[] = [];
+  await page.route("**/api/feeds/fetch", (r) => {
+    expect(
+      new TextEncoder().encode(r.request().postData()!).byteLength,
+    ).toBeLessThanOrEqual(4096);
+    requests.push(r.request().postDataJSON());
+    return r.fulfill({ json: { url, html: html() } });
+  });
+  const result = await page.evaluate(
+    async ({ url, html }) => {
+      const path = "/src/article-content.ts",
+        api = await import(path),
+        content = api.extractArticle(html, url);
+      return api.fetchArticle(url, {
+        content,
+        validators: { url, etag: '"' + "v".repeat(500) + '"' },
+      });
+    },
+    { url, html: html() },
+  );
+  expect(requests).toHaveLength(1);
+  expect(requests[0].validators).toBeUndefined();
+  expect(result.notModified).toBe(false);
+  expect(result.content.text).toContain("Version 1 explains");
 });

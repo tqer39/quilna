@@ -1,6 +1,11 @@
 // Production requires global_fetch_strictly_public: the Workers platform keeps
 // global fetch on the public Internet. This is not the Node DNS-pinning adapter.
 // Never replace this fetch with a private-origin/VPC binding.
+import {
+  conditionalHeaders,
+  responseValidators,
+  validSourceValidators,
+} from "../src/http-validators.mjs";
 export function cloudFeedURL(value, blockedHosts = []) {
   if (typeof value !== "string" || value.length > 2048) throw Error("feed-url");
   const url = new URL(value);
@@ -27,8 +32,19 @@ export function cloudFeedURL(value, blockedHosts = []) {
 
 export async function fetchCloudFeed(
   value,
-  { blockedHosts = [], send = fetch, timeout = 12000, allowHTML = false } = {},
+  {
+    blockedHosts = [],
+    send = fetch,
+    timeout = 12000,
+    allowHTML = false,
+    validators,
+  } = {},
 ) {
+  if (
+    validators !== undefined &&
+    (!allowHTML || !validSourceValidators(validators))
+  )
+    throw Error("feed-validators");
   const controller = new AbortController();
   let rejectDeadline;
   const deadline = new Promise((_, reject) => {
@@ -44,10 +60,12 @@ export async function fetchCloudFeed(
       (async () => {
         let url = cloudFeedURL(value, blockedHosts);
         for (let redirects = 0; redirects <= 3; redirects++) {
+          const condition = conditionalHeaders(url.href, validators);
           const response = await send(url.href, {
             redirect: "manual",
             signal: controller.signal,
             headers: {
+              ...condition,
               Accept:
                 "application/atom+xml, application/rss+xml, application/xml, text/xml" +
                 (allowHTML ? ", text/html, application/xhtml+xml" : ""),
@@ -59,6 +77,20 @@ export async function fetchCloudFeed(
             if (!location) throw Error("feed-redirect");
             url = cloudFeedURL(new URL(location, url).href, blockedHosts);
             continue;
+          }
+          const received = responseValidators(
+            url.href,
+            response.headers.get("ETag"),
+            response.headers.get("Last-Modified"),
+          );
+          if (response.status === 304) {
+            await response.body?.cancel();
+            if (!Object.keys(condition).length) throw Error("feed-response");
+            return {
+              url: url.href,
+              notModified: true,
+              ...(received ? { validators: received } : {}),
+            };
           }
           const html = /^(text\/html|application\/xhtml\+xml)(;|$)/i.test(
             response.headers.get("Content-Type") ?? "",
@@ -93,7 +125,11 @@ export async function fetchCloudFeed(
             xml += decoder.decode();
             if (!xml.trim() || (!html && /<!\s*(DOCTYPE|ENTITY)/i.test(xml)))
               throw Error("feed-xml");
-            return { url: url.href, [html ? "html" : "xml"]: xml };
+            return {
+              url: url.href,
+              [html ? "html" : "xml"]: xml,
+              ...(html && received ? { validators: received } : {}),
+            };
           } finally {
             await reader.cancel().catch(() => {});
             reader.releaseLock();

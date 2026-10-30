@@ -2,6 +2,10 @@ import { Readability } from "@mozilla/readability";
 import { sourceURL } from "./feed-discovery";
 import type { DocumentReference } from "./source-document";
 import {
+  validSourceValidators,
+  type SourceValidators,
+} from "./http-validators.mjs";
+import {
   articleSegments,
   serializeArticle,
   type ArticleCodeRange,
@@ -87,14 +91,30 @@ export function extractArticle(html: string, url: string): ArticleContent {
   };
 }
 
-export async function fetchArticle(url: string): Promise<ArticleContent> {
+export async function fetchArticle(
+  url: string,
+  previous?: { content: ArticleContent; validators?: SourceValidators },
+): Promise<{
+  content: ArticleContent;
+  validators?: SourceValidators;
+  notModified: boolean;
+}> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 16000);
   try {
+    const request = {
+      url: sourceURL(url),
+      discover: true,
+      validators: previous?.validators,
+    };
+    // Preserve the local API's 4 KiB request boundary. Very long URLs/tags
+    // fall back to a full fetch rather than weakening that limit.
+    if (new TextEncoder().encode(JSON.stringify(request)).byteLength > 4096)
+      request.validators = undefined;
     const response = await fetch("/api/feeds/fetch", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: sourceURL(url), discover: true }),
+      body: JSON.stringify(request),
       signal: controller.signal,
     });
     if (!response.ok)
@@ -102,9 +122,37 @@ export async function fetchArticle(url: string): Promise<ArticleContent> {
         "本文を取得できませんでした。通信状態やサイト側の制限を確認し、再試行するか元の記事を開いてください。",
       );
     const result = await response.json();
+    const validators =
+      validSourceValidators(result.validators) &&
+      result.validators.url === result.url
+        ? result.validators
+        : undefined;
+    if (result.notModified === true) {
+      if (
+        !request.validators ||
+        !previous?.validators ||
+        !validSourceValidators(previous.validators) ||
+        result.url !== previous.validators.url ||
+        result.url !== previous.content.url ||
+        result.html !== undefined ||
+        (result.validators !== undefined && !validators)
+      )
+        throw Error(
+          "更新確認の結果が保存済みの本文と一致しません。元の本文を保持しています。",
+        );
+      return {
+        content: previous.content,
+        validators: validators ?? previous.validators,
+        notModified: true,
+      };
+    }
     if (typeof result.html !== "string" || typeof result.url !== "string")
       throw Error("このURLから記事のHTML本文を取得できませんでした。");
-    return extractArticle(result.html, result.url);
+    return {
+      content: extractArticle(result.html, result.url),
+      validators,
+      notModified: false,
+    };
   } catch (error) {
     if (controller.signal.aborted)
       throw Error(

@@ -1,6 +1,10 @@
 import { fetchArticle, type ArticleContent } from "./article-content";
 import { sourceURL } from "./feed-discovery";
 import {
+  validSourceValidators,
+  type SourceValidators,
+} from "./http-validators.mjs";
+import {
   browserDocumentScope,
   documentFreshnessMs,
   validSourceDocument,
@@ -74,6 +78,9 @@ function validatePair(
     version.scope !== scope ||
     doc.id !== version.documentId ||
     doc.sourceURL !== version.sourceURL ||
+    (doc.currentVersionId === version.id &&
+      doc.validators !== undefined &&
+      doc.validators.url !== version.content.url) ||
     (url !== undefined && doc.sourceURL !== url)
   )
     throw Error("文書と本文の版を確認できません。既存の記録は保持しています。");
@@ -225,11 +232,21 @@ export async function documentHistory(
 export async function retainDocument(
   url: string,
   content: ArticleContent,
-  options: { scope?: string; seed?: boolean } = {},
+  options: {
+    scope?: string;
+    seed?: boolean;
+    validators?: SourceValidators;
+  } = {},
 ) {
   const normalized = sourceURL(url),
     scope = options.scope ?? browserDocumentScope;
   if (!scope || scope.length > 200) throw failed();
+  if (
+    options.validators !== undefined &&
+    (!validSourceValidators(options.validators) ||
+      options.validators.url !== content.url)
+  )
+    throw failed();
   const clean = sourceContent(content),
     hash = await representationHash(clean),
     now = new Date().toISOString();
@@ -298,6 +315,9 @@ export async function retainDocument(
                           currentVersionId: version.id,
                           checkedAt: options.seed ? clean.fetchedAt : now,
                           revision: (old?.revision ?? 0) + 1,
+                          ...(options.validators
+                            ? { validators: options.validators }
+                            : {}),
                         };
                   if (!validSourceDocument(document)) throw failed();
                   if (!(old && options.seed)) docs.put(document);
@@ -349,12 +369,23 @@ export async function acquireDocument(
       )
         return { content: versionContent(current.version), reused: true };
       try {
-        const saved = await retainDocument(
+        const fetched = await fetchArticle(
           normalized,
-          await fetchArticle(normalized),
-          { scope },
+          current
+            ? {
+                content: current.version.content,
+                validators: current.document.validators,
+              }
+            : undefined,
         );
-        return { content: versionContent(saved.version), reused: false };
+        const saved = await retainDocument(normalized, fetched.content, {
+          scope,
+          validators: fetched.validators,
+        });
+        return {
+          content: versionContent(saved.version),
+          reused: fetched.notModified,
+        };
       } catch (error) {
         if (current)
           return {

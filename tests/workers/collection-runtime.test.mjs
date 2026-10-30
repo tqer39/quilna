@@ -39,10 +39,12 @@ test("real DO alarm collects without browser traffic, persists, isolates owners 
       assert.equal(request.url, url);
       assert.equal(request.headers.get("Cookie"), null);
       outbound++;
+      if (request.headers.get("If-None-Match") === '"article-v1"')
+        return new Response(null, { status: 304 });
       if (request.headers.get("Accept").includes("text/html"))
         return new Response(
           "<!DOCTYPE html><title>Public article</title><article>Readable content</article>",
-          { headers: { "Content-Type": "text/html" } },
+          { headers: { "Content-Type": "text/html", ETag: '"article-v1"' } },
         );
       return new Response(xml, {
         headers: { "Content-Type": "application/rss+xml" },
@@ -244,4 +246,22 @@ test("real DO alarm collects without browser traffic, persists, isolates owners 
   assert.equal(article.status, 200);
   assert.match(article.value.html, /Public article/);
   assert.equal(outbound, 3);
+  assert.deepEqual(article.value.validators, { url, etag: '"article-v1"' });
+  const unchanged = await api("/api/feeds/fetch", {
+    method: "POST",
+    body: { url, discover: true, validators: article.value.validators },
+  });
+  assert.equal(unchanged.status, 200);
+  assert.deepEqual(unchanged.value, { url, notModified: true });
+  assert.equal(outbound, 4);
+  const refused = await api("/api/feeds/fetch", {
+    method: "POST",
+    body: {
+      url,
+      discover: true,
+      validators: { url, etag: '"bad"\r\nCookie: secret' },
+    },
+  });
+  assert.equal(refused.status, 409);
+  assert.equal(outbound, 4);
 });

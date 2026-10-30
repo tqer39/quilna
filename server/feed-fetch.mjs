@@ -1,6 +1,11 @@
 import { lookup } from "node:dns/promises";
 import { request } from "node:https";
 import { BlockList, isIP } from "node:net";
+import {
+  conditionalHeaders,
+  responseValidators,
+  validSourceValidators,
+} from "../src/http-validators.mjs";
 
 const blocked = new BlockList();
 for (const [address, prefix] of [
@@ -58,7 +63,7 @@ export function feedURL(value) {
 
 // The validated address is pinned to this TLS connection; the original hostname
 // is still used for certificate validation. Each redirect gets a fresh check.
-function exchange(url, address, signal, allowHTML = false) {
+function exchange(url, address, signal, allowHTML = false, validators) {
   return new Promise((resolve, reject) => {
     const req = request(
       url,
@@ -69,6 +74,7 @@ function exchange(url, address, signal, allowHTML = false) {
         lookup: (_host, _options, done) =>
           done(null, address.address, address.family),
         headers: {
+          ...conditionalHeaders(url.href, validators),
           Accept:
             "application/atom+xml, application/rss+xml, application/xml, text/xml" +
             (allowHTML ? ", text/html, application/xhtml+xml" : ""),
@@ -77,6 +83,19 @@ function exchange(url, address, signal, allowHTML = false) {
         },
       },
       (res) => {
+        const received = responseValidators(
+          url.href,
+          res.headers.etag,
+          res.headers["last-modified"],
+        );
+        if (res.statusCode === 304) {
+          res.destroy();
+          resolve({
+            notModified: true,
+            ...(received ? { validators: received } : {}),
+          });
+          return;
+        }
         if ([301, 302, 303, 307, 308].includes(res.statusCode)) {
           res.destroy();
           resolve({ redirect: res.headers.location });
@@ -124,6 +143,7 @@ function exchange(url, address, signal, allowHTML = false) {
               )?.[1] ??
               "utf-8";
             resolve({
+              ...(html && received ? { validators: received } : {}),
               [html ? "html" : "xml"]: new TextDecoder(charset, {
                 fatal: true,
               }).decode(data),
@@ -146,8 +166,14 @@ export async function fetchPublicFeed(
     send = exchange,
     timeout = 12000,
     allowHTML = false,
+    validators,
   } = {},
 ) {
+  if (
+    validators !== undefined &&
+    (!allowHTML || !validSourceValidators(validators))
+  )
+    throw Error("feed-validators");
   const controller = new AbortController();
   const { signal } = controller;
   let rejectDeadline;
@@ -174,11 +200,36 @@ export async function fetchPublicFeed(
             addresses.some((a) => !publicAddress(a.address))
           )
             throw Error("feed-address");
-          const result = await send(url, addresses[0], signal, allowHTML);
+          const condition = conditionalHeaders(url.href, validators);
+          const result = await send(
+            url,
+            addresses[0],
+            signal,
+            allowHTML,
+            Object.keys(condition).length ? validators : undefined,
+          );
           signal.throwIfAborted();
+          const received = result.validators;
+          if (
+            received !== undefined &&
+            (!validSourceValidators(received) || received.url !== url.href)
+          )
+            throw Error("feed-validators");
+          if (result.notModified === true) {
+            if (!Object.keys(condition).length) throw Error("feed-response");
+            return {
+              url: url.href,
+              notModified: true,
+              ...(received ? { validators: received } : {}),
+            };
+          }
           if (allowHTML && typeof result.html === "string") {
             if (result.html.length > 2_000_000) throw Error("feed-size");
-            return { url: url.href, html: result.html };
+            return {
+              url: url.href,
+              html: result.html,
+              ...(received ? { validators: received } : {}),
+            };
           }
           if (typeof result.xml === "string") {
             if (
@@ -201,7 +252,8 @@ export async function fetchPublicFeed(
 
 export function feedMiddleware({
   fetchFeed = fetchPublicFeed,
-  fetchSource = (url) => fetchPublicFeed(url, { allowHTML: true }),
+  fetchSource = (url, validators) =>
+    fetchPublicFeed(url, { allowHTML: true, validators }),
 } = {}) {
   let active = 0;
   return async (req, res, next) => {
@@ -240,11 +292,17 @@ export function feedMiddleware({
       try {
         body = JSON.parse(Buffer.concat(chunks).toString());
         feedURL(body?.url);
+        if (
+          body.validators !== undefined &&
+          (body.discover !== true || !validSourceValidators(body.validators))
+        )
+          throw Error("feed-validators");
       } catch {
         return send(400, { error: "url" });
       }
       const result = await (body.discover === true ? fetchSource : fetchFeed)(
         body.url,
+        body.validators,
       );
       return send(200, result);
     } catch {

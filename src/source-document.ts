@@ -2,6 +2,10 @@ import type { ArticleContent } from "./article-content";
 import { articleTextLimit } from "./article-content";
 import { validCodeRanges } from "./article-code";
 import { sourceURL } from "./feed-discovery";
+import {
+  validSourceValidators,
+  type SourceValidators,
+} from "./http-validators.mjs";
 
 // This is a local namespace, not a cross-user authorization mechanism.
 export const browserDocumentScope = "browser-private";
@@ -19,6 +23,7 @@ export type SourceDocument = {
   currentVersionId: string;
   checkedAt: string;
   revision: number;
+  validators?: SourceValidators;
 };
 export type DocumentVersion = {
   id: string;
@@ -63,6 +68,7 @@ export function validSourceDocument(v: unknown): v is SourceDocument {
     scope(v.scope) &&
     documentURL(v.sourceURL) &&
     documentUUID(v.currentVersionId) &&
+    (v.validators === undefined || validSourceValidators(v.validators)) &&
     timestamp(v.checkedAt) &&
     Number.isSafeInteger(v.revision) &&
     (v.revision as number) > 0

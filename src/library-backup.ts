@@ -459,7 +459,10 @@ function validateDocumentReferences(db: IDBDatabase) {
             d.id !== v.documentId ||
             d.scope !== scope ||
             v.scope !== scope ||
-            d.sourceURL !== v.sourceURL
+            d.sourceURL !== v.sourceURL ||
+            (d.currentVersionId === v.id &&
+              d.validators !== undefined &&
+              d.validators.url !== v.content.url)
           ) {
             refuse();
             return;

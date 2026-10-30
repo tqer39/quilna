@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { hash } from "./crypto.mjs";
 import { cloudFeedURL, fetchCloudFeed } from "./feed-fetch.mjs";
+import { validSourceValidators } from "../src/http-validators.mjs";
 
 const integer = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const feedSchema = z
@@ -128,7 +129,11 @@ export class FeedCollector {
   async source(input) {
     if (!this.enabled) throw Error("collection-unconfigured");
     const request = z
-      .object({ url: z.string().max(2048), discover: z.boolean().optional() })
+      .object({
+        url: z.string().max(2048),
+        discover: z.boolean().optional(),
+        validators: z.custom(validSourceValidators).optional(),
+      })
       .strict()
       .parse(input);
     cloudFeedURL(request.url, this.blockedHosts);
@@ -142,6 +147,7 @@ export class FeedCollector {
     return fetchCloudFeed(request.url, {
       blockedHosts: this.blockedHosts,
       allowHTML: request.discover === true,
+      validators: request.validators,
     });
   }
   async configure(input) {
