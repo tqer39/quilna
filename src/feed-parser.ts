@@ -22,6 +22,9 @@ export type Feed = {
   title: string;
   fetchedAt: string;
   refreshFailure?: FeedRefreshFailure;
+  unsubscribed?: boolean;
+  cloudUnsubscribePending?: boolean;
+  subscriptionRevision?: number;
 };
 
 function plain(value: string, limit: number) {

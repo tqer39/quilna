@@ -110,6 +110,37 @@ test("pause during a fetch discards its late result; configuration uses optimist
   );
 });
 
+test("removing one subscription retains undelivered snapshots and the other schedule across restart", async () => {
+  const other = "https://blog.cloudflare.com/rss/";
+  const f = fixture();
+  await f.collector.configure({
+    expectedRevision: 0,
+    interval: 15,
+    urls: [url, other],
+  });
+  await f.collector.alarm();
+  const before = await f.collector.status();
+  assert.equal(before.pending.length, 2);
+  const after = await f.collector.configure({
+    expectedRevision: 1,
+    interval: 15,
+    urls: [other],
+  });
+  assert.deepEqual(after.pending, before.pending);
+  assert.deepEqual(
+    after.feeds,
+    before.feeds.filter((feed) => feed.url === other),
+  );
+  assert.equal(after.interval, 15);
+  const resumed = f.restart();
+  assert.deepEqual((await resumed.status()).pending, before.pending);
+  for (const snapshot of before.pending)
+    assert.equal((await resumed.snapshot(snapshot.id)).xml, xml);
+  f.advance(16 * 60000);
+  await resumed.alarm();
+  assert.equal(f.calls(), 3); // Two initial sources, then only the retained source.
+});
+
 test("failures back off across restart, keep earlier snapshots and recover", async () => {
   let fail = false;
   const f = fixture({

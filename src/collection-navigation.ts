@@ -10,6 +10,9 @@ type FeedLine = {
   }[];
   retry: boolean;
   updating: boolean;
+  unsubscribed: boolean;
+  cloudUnsubscribePending: boolean;
+  subscriptionBusy: boolean;
 };
 type State = {
   counts: { all: number; unread: number; saved: number };
@@ -49,6 +52,8 @@ export class CollectionNavigation {
       title: HTMLElement;
       details: HTMLDivElement;
       update: HTMLButtonElement;
+      subscription: HTMLButtonElement;
+      retrySubscription: HTMLButtonElement;
       signature: string;
     }
   >();
@@ -64,6 +69,7 @@ export class CollectionNavigation {
       source: (value: string) => void;
       refresh: (url: string, insert?: boolean) => void;
       refreshAll: () => void;
+      subscription: (url: string, subscribed: boolean) => void;
     },
   ) {
     const menus = el("nav", undefined, "rss-filters");
@@ -134,6 +140,15 @@ export class CollectionNavigation {
     this.status.setAttribute("role", "status");
     this.progress.setAttribute("role", "status");
     this.createRefresh = (url) => button("", () => actions.refresh(url));
+    this.createSubscription = (url) => ({
+      subscription: button("", () =>
+        actions.subscription(
+          url,
+          !!this.state?.feeds.find((f) => f.url === url)?.unsubscribed,
+        ),
+      ),
+      retrySubscription: button("", () => actions.subscription(url, false)),
+    });
     root.append(
       el("p", "COLLECT → READ → LEARN", "eyebrow"),
       el("h2", "情報収集"),
@@ -149,6 +164,10 @@ export class CollectionNavigation {
     );
   }
   private readonly createRefresh: (url: string) => HTMLButtonElement;
+  private readonly createSubscription: (url: string) => {
+    subscription: HTMLButtonElement;
+    retrySubscription: HTMLButtonElement;
+  };
 
   update(state: State) {
     this.state = state;
@@ -171,7 +190,8 @@ export class CollectionNavigation {
     this.presets.hidden = !!state.feeds.length;
     for (const [url, add] of this.presetButtons)
       add.disabled = !state.ready || state.updating.has(url);
-    this.refresh.disabled = !state.feeds.length || !!state.updating.size;
+    this.refresh.disabled =
+      !state.feeds.some((f) => !f.unsubscribed) || !!state.updating.size;
     text(this.status, state.status);
     text(
       this.progress,
@@ -211,9 +231,16 @@ export class CollectionNavigation {
           title: el("strong"),
           details: el("div"),
           update: this.createRefresh(feed.url),
+          ...this.createSubscription(feed.url),
           signature: "",
         };
-        row.root.append(row.title, row.details, row.update);
+        row.root.append(
+          row.title,
+          row.details,
+          row.update,
+          row.subscription,
+          row.retrySubscription,
+        );
         this.rows.set(feed.url, row);
       }
       text(row.title, feed.title);
@@ -237,7 +264,16 @@ export class CollectionNavigation {
         row.signature = signature;
       }
       text(row.update, `${feed.title}を${feed.retry ? "再試行" : "更新"}`);
-      row.update.disabled = feed.updating;
+      row.update.disabled = feed.updating || feed.unsubscribed;
+      text(
+        row.subscription,
+        `${feed.title}の購読を${feed.unsubscribed ? "再開" : "解除"}`,
+      );
+      row.subscription.disabled = feed.subscriptionBusy || feed.updating;
+      text(row.retrySubscription, `${feed.title}のクラウド解除を再確認`);
+      row.retrySubscription.hidden =
+        !feed.unsubscribed || !feed.cloudUnsubscribePending;
+      row.retrySubscription.disabled = feed.subscriptionBusy || feed.updating;
       if (this.feedList.children[index] !== row.root)
         this.feedList.insertBefore(
           row.root,

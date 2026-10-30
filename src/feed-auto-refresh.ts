@@ -17,7 +17,7 @@ export function readRefreshInterval(): number {
   }
 }
 export function nextFeedRefresh(feed: Feed, intervalMinutes: number): number {
-  if (!intervalMinutes) return Infinity;
+  if (!intervalMinutes || feed.unsubscribed) return Infinity;
   return (
     feed.refreshFailure?.retryAt ??
     Date.parse(feed.fetchedAt) + intervalMinutes * 60_000

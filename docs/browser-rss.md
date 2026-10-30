@@ -50,6 +50,14 @@ See [Web Locks](https://developer.mozilla.org/en-US/docs/Web/API/Web_Locks_API) 
 
 On 2026-10-24, the combined desktop/mobile reader suite passed 94 tests, including 12 automatic-collection cases. Controlled clocks and network responses covered due times, visibility/offline waits, persisted retry delays, cross-tab concurrency, settings, storage failure and standalone-article fallback. The actual in-app browser also fetched a public Zenn feed, displayed its next update time and retained a changed interval after reload. This was not a real-time 15-minute collection soak test. Unit/server tests, build and lint passed; PR/CI integration and owner usability acceptance remain pending.
 
+### Unsubscribe and resume
+
+Each source offers **購読を解除** with confirmation that all articles, bodies, translations and personal records remain. The source stays available as an archive filter; it is excluded from automatic collection and **すべて更新**, and its individual refresh is disabled. **購読を再開** explicitly resumes browser collection. To re-add it to cloud collection, use **設定 → クラウド収集を開始・設定を更新**. The prototype's existing 50-source limit includes retained source history.
+
+Unsubscription is saved locally before contacting the cloud. The cloud operation removes only that URL from the latest subscription list, preserving other sources, the interval and undelivered results. If the initial local save fails, the subscription remains unchanged and no cloud change is sent. After local removal is saved, connectivity, authentication, concurrency or acknowledgement-save failures retain a pending marker saying browser collection is stopped but cloud removal is unconfirmed; **クラウド解除を再確認** retries against current state. No cloud deletion or cancellation is claimed while confirmation is missing, including in local environments without the collection API. A lost acknowledgement can be confirmed without repeating an already applied change.
+
+Previously collected cloud results can still arrive, but they retain the stored unsubscribe state. Feed refresh merges preserve subscription choices; a revision prevents delayed acknowledgement from undoing a later resume. Global cloud configuration rereads local choices before constructing its request, so a stale tab does not silently re-add an unsubscribed source. Backup files include subscription state and pending markers; existing conflicting records still take precedence on restore. They do not restore remote cloud settings.
+
 ## What is saved
 
 Subscriptions, collected article text, read flags and saved flags use IndexedDB database `tsumiki.rss.v1`.

@@ -68,6 +68,8 @@ import {
   setArticleTags,
   readFeed,
   recordFeedFailure,
+  readSubscriptions,
+  setFeedSubscription,
 } from "./feed-store";
 
 export async function feedReader(root: HTMLElement) {
@@ -353,6 +355,7 @@ export async function feedReader(root: HTMLElement) {
     },
     refresh: (url, insert) => void refresh(url, insert),
     refreshAll: () => void refreshAll(),
+    subscription: (url, subscribed) => void changeSubscription(url, subscribed),
   });
   const main = el("main", undefined, "rss-main");
   main.id = "rss-main";
@@ -703,21 +706,43 @@ export async function feedReader(root: HTMLElement) {
     cloudBusy = true;
     renderCloud();
     try {
+      const currentState = cloudState;
+      const localFeeds = stop ? [] : await readSubscriptions(db!);
+      const removed = new Set(
+        localFeeds.filter((feed) => feed.unsubscribed).map((feed) => feed.url),
+      );
       const urls = stop
-        ? cloudState.feeds.map((feed) => feed.url)
+        ? currentState.feeds.map((feed) => feed.url)
         : [
             ...new Set([
-              ...cloudState.feeds.map((feed) => feed.url),
-              ...feeds.map((feed) => feed.url),
+              ...currentState.feeds.map((feed) => feed.url),
+              ...localFeeds.map((feed) => feed.url),
             ]),
-          ];
+          ].filter((url) => !removed.has(url));
       const next = await cloudClient.configure(
-        cloudState,
+        currentState,
         urls,
         stop ? 0 : (Number(cloudInterval.value) as 15 | 30 | 60),
       );
       cloudIntervalDirty = false;
       acceptCloudState(next);
+      if (!stop) {
+        for (const feed of localFeeds) {
+          if (
+            feed.unsubscribed &&
+            feed.cloudUnsubscribePending &&
+            feed.subscriptionRevision !== undefined
+          )
+            await setFeedSubscription(
+              db!,
+              feed.url,
+              false,
+              feed.subscriptionRevision,
+            );
+        }
+        await load();
+        announceChange();
+      }
       cloudError = "";
       cloudRetryCount = 0;
     } catch (error) {
@@ -727,6 +752,77 @@ export async function feedReader(root: HTMLElement) {
           ? Math.min(5, cloudRetryCount + 1)
           : 0;
     } finally {
+      cloudBusy = false;
+      renderCloud();
+      render();
+      scheduleCloud();
+      collector.wake();
+    }
+  }
+  async function changeSubscription(address: string, subscribed: boolean) {
+    if (!db || cloudBusy || updating.has(address)) return;
+    const feed = feeds.find((item) => item.url === address);
+    if (
+      !feed ||
+      !window.confirm(
+        subscribed
+          ? `${feed.title} の購読を再開します。クラウド収集も再開する場合は、設定の「クラウド収集を開始・設定を更新」を押してください。再開しますか？`
+          : `${feed.title} の購読を解除します。保存済みの記事・本文・メモはすべて残ります。クラウド収集の解除も確認します。解除しますか？`,
+      )
+    )
+      return;
+    const expectedAccount = cloudState?.account;
+    updating.add(address);
+    cloudBusy = true;
+    renderCloud();
+    render();
+    try {
+      const ran = await withFeedRefreshLock(address, async () => {
+        const revision = await setFeedSubscription(db!, address, subscribed);
+        await load();
+        announceChange();
+        if (subscribed) return;
+        // Local collection stops before any network work. A failed or lost
+        // response leaves a persisted pending marker, never a false success.
+        const latest = await cloudClient.status();
+        if (expectedAccount && latest.account !== expectedAccount)
+          throw Error(
+            "ログイン中のアカウントが変わりました。クラウドの解除を確認できません。画面を再読み込みしてください。",
+          );
+        if (!latest.available)
+          throw Error("クラウド収集を利用できないため、解除を確認できません。");
+        const next = latest.feeds.some((f) => f.url === address)
+          ? await cloudClient.configure(
+              latest,
+              latest.feeds.filter((f) => f.url !== address).map((f) => f.url),
+              latest.interval,
+            )
+          : latest;
+        acceptCloudState(next);
+        if (revision !== null)
+          await setFeedSubscription(db!, address, false, revision);
+        await load();
+        announceChange();
+      });
+      if (!ran)
+        throw Error(
+          "この配信元をほかの画面で更新中です。少し待ってから購読操作を再試行してください。",
+        );
+      problem = "";
+    } catch (error) {
+      const current = await readFeed(db!, address).catch(() => undefined);
+      showError(
+        `${
+          current?.unsubscribed
+            ? current.cloudUnsubscribePending
+              ? "このブラウザの購読は解除済みです。クラウドの解除は未確認です。"
+              : "このブラウザの購読は解除したままです。"
+            : "購読の変更を完了できませんでした。"
+        } ${cloudFailure(error)}`,
+        () => void changeSubscription(address, subscribed),
+      );
+    } finally {
+      updating.delete(address);
       cloudBusy = false;
       renderCloud();
       render();
@@ -999,9 +1095,14 @@ export async function feedReader(root: HTMLElement) {
     const list = el("ul", undefined, "rss-candidates");
     for (const candidate of candidates) {
       const item = el("li");
-      const registered = feeds.some((feed) => feed.url === candidate.url);
+      const existing = feeds.find((feed) => feed.url === candidate.url);
+      const registered = existing && !existing.unsubscribed;
       const add = button(
-        registered ? "登録済みの配信元を読む" : "登録して読む",
+        registered
+          ? "登録済みの配信元を読む"
+          : existing?.unsubscribed
+            ? "購読を再開"
+            : "登録して読む",
         () => {
           if (registered) {
             source = candidate.url;
@@ -1009,7 +1110,9 @@ export async function feedReader(root: HTMLElement) {
             selected = null;
             clearDiscovery();
             render();
-          } else void refresh(candidate.url, true);
+          } else if (existing?.unsubscribed)
+            void changeSubscription(candidate.url, true);
+          else void refresh(candidate.url, true);
         },
       );
       add.disabled = !db || updating.has(candidate.url);
@@ -1073,9 +1176,10 @@ export async function feedReader(root: HTMLElement) {
     render();
     try {
       const ran = await withFeedRefreshLock(address, async () => {
+        const current = await readFeed(db!, address);
+        if (current?.unsubscribed) return;
         if (automatic) {
           if (!canCollect()) return;
-          const current = await readFeed(db!, address);
           if (
             !current ||
             nextFeedRefresh(current, refreshInterval) > Date.now()
@@ -1143,7 +1247,10 @@ export async function feedReader(root: HTMLElement) {
   }
 
   async function refreshAll() {
-    const queue = feeds.map((f) => f.url).filter((url) => !updating.has(url));
+    const queue = feeds
+      .filter((f) => !f.unsubscribed)
+      .map((f) => f.url)
+      .filter((url) => !updating.has(url));
     await Promise.all(
       [0, 1].map(async () => {
         while (queue.length) await refresh(queue.shift()!);
@@ -1648,7 +1755,20 @@ export async function feedReader(root: HTMLElement) {
           cloudState?.available && cloudState.interval
             ? cloudState.feeds.find((item) => item.url === feed.url)
             : undefined;
-        if (cloudState?.available && cloudState.interval) {
+        const cloudUnsubscribePending =
+          !!feed.cloudUnsubscribePending ||
+          (!!feed.unsubscribed && !!remoteFeed);
+        if (feed.unsubscribed)
+          details.push({
+            text: cloudUnsubscribePending
+              ? "このブラウザでは購読解除済み。クラウドの解除は未確認です。"
+              : "購読解除済み。保存した記事は引き続き読めます。",
+          });
+        if (
+          cloudState?.available &&
+          cloudState.interval &&
+          !feed.unsubscribed
+        ) {
           if (remoteFeed) {
             if (remoteFeed.lastSuccess !== null) {
               const iso = new Date(remoteFeed.lastSuccess).toISOString();
@@ -1669,7 +1789,11 @@ export async function feedReader(root: HTMLElement) {
               text: "クラウドで取得できませんでした。既存の記事を保持して再試行を待っています。",
               error: true,
             });
-        } else if (refreshInterval && feedLockSupported()) {
+        } else if (
+          !feed.unsubscribed &&
+          refreshInterval &&
+          feedLockSupported()
+        ) {
           details.push({
             text: `次回更新の目安 ${date(new Date(nextFeedRefresh(feed, refreshInterval)).toISOString())}`,
           });
@@ -1682,6 +1806,9 @@ export async function feedReader(root: HTMLElement) {
           details,
           retry: feedProblems.has(feed.url),
           updating: updating.has(feed.url),
+          unsubscribed: !!feed.unsubscribed,
+          cloudUnsubscribePending,
+          subscriptionBusy: cloudBusy,
         };
       }),
     });

@@ -4,6 +4,37 @@ const base = Date.parse("2026-10-24T00:00:00Z");
 const address = "https://publisher.example.org/rss";
 const xml = (label = "Updated") =>
   `<rss><channel><title>Publisher</title><item><guid>one</guid><title>${label}</title><description>Updated article body.</description></item><item><guid>new</guid><title>New story</title><description>Another article.</description></item></channel></rss>`;
+
+test("an unsubscribed feed stays excluded from due collection after visibility changes", async ({
+  page,
+}) => {
+  await environment(page);
+  await page.route("**/api/collection", (r) =>
+    r.fulfill({ status: 404, json: {} }),
+  );
+  let requests = 0;
+  await page.route("**/api/feeds/fetch", (r) => {
+    requests++;
+    return r.fulfill({ json: { url: address, xml: xml() } });
+  });
+  await seed(page);
+  page.once("dialog", (dialog) => dialog.accept());
+  await page
+    .getByRole("button", { name: "Publisher 0の購読を解除", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "Publisher 0の購読を再開", exact: true }),
+  ).toBeEnabled();
+  await wake(page, 16);
+  await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 50)));
+  expect(requests).toBe(0);
+  await expect(
+    page.getByRole("button", { name: "すべて更新", exact: true }),
+  ).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: "Saved original", exact: true }),
+  ).toBeVisible();
+});
 async function environment(page: Page) {
   await page.clock.setFixedTime(new Date(base));
   await page.addInitScript(() => {

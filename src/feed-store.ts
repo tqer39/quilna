@@ -100,6 +100,14 @@ export function validFeed(feed: Feed) {
     text(feed.url) &&
     text(feed.title) &&
     timestamp(feed.fetchedAt) &&
+    (feed.unsubscribed === undefined ||
+      typeof feed.unsubscribed === "boolean") &&
+    (feed.cloudUnsubscribePending === undefined ||
+      (typeof feed.cloudUnsubscribePending === "boolean" &&
+        (!feed.cloudUnsubscribePending || feed.unsubscribed === true))) &&
+    (feed.subscriptionRevision === undefined ||
+      (Number.isSafeInteger(feed.subscriptionRevision) &&
+        feed.subscriptionRevision >= 0)) &&
     (feed.refreshFailure === undefined ||
       (feed.refreshFailure &&
         Number.isInteger(feed.refreshFailure.failures) &&
@@ -124,6 +132,65 @@ export function readFeed(
         : reject(Error("配信元の保存形式を確認できません。"));
     tx.onerror = tx.onabort = () =>
       reject(Error("配信元を読み込めませんでした。"));
+  });
+}
+export function readSubscriptions(db: IDBDatabase): Promise<Feed[]> {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("feeds", "readonly");
+    const request = tx.objectStore("feeds").getAll();
+    tx.oncomplete = () =>
+      request.result.every(validFeed)
+        ? resolve(request.result)
+        : reject(Error("配信元の保存形式を確認できません。"));
+    tx.onerror = tx.onabort = () =>
+      reject(Error("購読設定を読み込めませんでした。"));
+  });
+}
+
+// Do not touch articles. A revision protects a later resume from a delayed
+// cloud acknowledgement, including in browsers without cross-tab Web Locks.
+export function setFeedSubscription(
+  db: IDBDatabase,
+  address: string,
+  subscribed: boolean,
+  confirmedRevision?: number,
+): Promise<number | null> {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("feeds", "readwrite");
+    const store = tx.objectStore("feeds");
+    const request = store.get(address);
+    let revision: number | null = null;
+    request.onsuccess = () => {
+      const feed: Feed = request.result;
+      if (!validFeed(feed)) {
+        tx.abort();
+        return;
+      }
+      if (
+        confirmedRevision !== undefined &&
+        (feed.subscriptionRevision !== confirmedRevision || !feed.unsubscribed)
+      )
+        return;
+      revision = (feed.subscriptionRevision ?? 0) + 1;
+      if (!Number.isSafeInteger(revision)) {
+        tx.abort();
+        return;
+      }
+      try {
+        store.put({
+          ...feed,
+          unsubscribed: !subscribed,
+          cloudUnsubscribePending:
+            !subscribed && confirmedRevision === undefined,
+          subscriptionRevision: revision,
+        });
+      } catch {
+        tx.abort();
+      }
+    };
+    tx.oncomplete = () => resolve(revision);
+    tx.onerror = tx.onabort = () =>
+      reject(Error("購読設定を保存できませんでした。記事は保持しています。"));
   });
 }
 export function recordFeedFailure(
@@ -228,7 +295,17 @@ export function mergeFeed(
           !existing.result ||
           Date.parse(existing.result.fetchedAt) <= Date.parse(feed.fetchedAt)
         )
-          feedStore.put(feed);
+          feedStore.put({
+            ...feed,
+            ...(existing.result?.unsubscribed !== undefined
+              ? {
+                  unsubscribed: existing.result.unsubscribed,
+                  cloudUnsubscribePending:
+                    existing.result.cloudUnsubscribePending,
+                  subscriptionRevision: existing.result.subscriptionRevision,
+                }
+              : {}),
+          });
       };
     };
     const store = tx.objectStore("articles");
