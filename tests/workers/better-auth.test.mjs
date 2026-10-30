@@ -20,6 +20,8 @@ async function fixture(
     entry = "tests/workers/better-auth-entry.mjs",
     missing = {},
     migrate = true,
+    documents = false,
+    articleResponse,
   } = {},
 ) {
   const dir = await mkdtemp(join(tmpdir(), "textbook-better-auth-"));
@@ -54,10 +56,17 @@ async function fixture(
     resourcePersistencePath: dir,
     durableObjects: {
       ACCOUNTS: { className: "AccountVault", useSQLite: true },
+      ...(documents
+        ? { DOCUMENTS: { className: "SourceDocument", useSQLite: true } }
+        : {}),
     },
-    d1Databases: { AUTH_DB: "offline-auth" },
+    d1Databases: {
+      AUTH_DB: "offline-auth",
+      ...(documents ? { DOCUMENT_ACCESS_DB: "document-access" } : {}),
+    },
     bindings: {
       APP_ORIGIN: origin,
+      ...(documents ? { DOCUMENTS_ENABLED: "true" } : {}),
       GOOGLE_CLIENT_ID: "dummy.apps.googleusercontent.com",
       GOOGLE_ALLOWED_EMAIL: "a@example.test",
       GOOGLE_CLIENT_SECRET: "DUMMY-GOOGLE-UNUSABLE-" + randomUUID(),
@@ -77,6 +86,8 @@ async function fixture(
     outboundService: async (request) => {
       const u = new URL(request.url);
       calls.push({ url: u.href });
+      if (documents && u.href === "https://publisher.example.org/article")
+        return articleResponse(request);
       if (u.href === "https://www.googleapis.com/oauth2/v3/certs")
         return Response.json({ keys: [jwk] });
       if (u.href !== "https://oauth2.googleapis.com/token")
@@ -150,6 +161,14 @@ async function fixture(
         ),
       );
   }
+  if (documents)
+    await (
+      await mf.getD1Database("DOCUMENT_ACCESS_DB")
+    ).exec(
+      (await readFile("migrations/documents/0001_access.sql", "utf8"))
+        .replace(/^--.*$/gm, "")
+        .replaceAll("\n", " "),
+    );
   t.after(async () => {
     await mf.dispose();
     await rm(dir, { recursive: true, force: true });
@@ -209,6 +228,7 @@ async function fixture(
     });
   return {
     db,
+    documentDB: () => mf.getD1Database("DOCUMENT_ACCESS_DB"),
     browser,
     start,
     callback,
@@ -680,4 +700,96 @@ test("private Dev serves no-store reader assets only to the verified owner and b
   await a.api("/api/auth/logout", "POST", {}, csrf);
   assert.ok(!(await a.api("/")).value.includes("PRIVATE-READER-ASSET"));
   assert.equal((await a.api("/assets/app.js")).status, 401);
+});
+
+test("real verified sessions gate shared document reuse and logout during acquisition suppresses delivery", { timeout: 20000 }, async (t) => {
+  let enter,
+    release,
+    slow = false;
+  const entered = new Promise((r) => {
+      enter = r;
+    }),
+    gate = new Promise((r) => {
+      release = r;
+    });
+  t.after(() => release());
+  const f = await fixture(t, {
+      documents: true,
+      articleResponse: async (request) => {
+        assert.equal(request.headers.get("Cookie"), null);
+        if (slow) {
+          enter();
+          await gate;
+        }
+        return new Response(
+          "<article><h1>Verified source</h1><p>" +
+            "Original source evidence. ".repeat(20) +
+            "</p></article>",
+          { headers: { "Content-Type": "text/html" } },
+        );
+      },
+    }),
+    a = f.browser(),
+    b = f.browser(),
+    anon = f.browser();
+  await a.api(f.callback(await f.start(a), "a"));
+  await b.api(f.callback(await f.start(b), "b"));
+  const acsrf = (await a.api("/api/session")).value.csrfToken;
+  const bcsrf = (await b.api("/api/session")).value.csrfToken;
+  const astatus = await a.api("/api/documents/status"),
+    bstatus = await b.api("/api/documents/status");
+  assert.equal(astatus.value.enabled, true);
+  assert.notEqual(astatus.value.account, bstatus.value.account);
+  const url = "https://publisher.example.org/article",
+    body = { url, audience: "shared" };
+  assert.equal(
+    (await anon.api("/api/documents/acquire", "POST", body, acsrf)).status,
+    401,
+  );
+  assert.equal(
+    (await b.api("/api/documents/acquire", "POST", body, acsrf)).status,
+    403,
+  );
+  const db = await f.documentDB(),
+    id = randomUUID();
+  await db
+    .prepare("INSERT INTO document_policies VALUES(?,?,1,1,?,?)")
+    .bind(
+      id,
+      url,
+      Date.now() + 3600000,
+      "Synthetic publisher explicitly permits test reuse",
+    )
+    .run();
+  for (const account of [astatus.value.account, bstatus.value.account])
+    await db
+      .prepare("INSERT INTO document_members VALUES(?,?)")
+      .bind(id, account)
+      .run();
+  const first = await a.api("/api/documents/acquire", "POST", body, acsrf);
+  assert.equal(first.status, 200, JSON.stringify(first.value));
+  const second = await b.api("/api/documents/acquire", "POST", body, bcsrf);
+  assert.deepEqual(second.value.version, first.value.version);
+  assert.equal(f.calls.filter((c) => c.url === url).length, 1);
+  slow = true;
+  const pending = a.api(
+    "/api/documents/acquire",
+    "POST",
+    { ...body, force: true },
+    acsrf,
+  );
+  await entered;
+  const logoutCsrf = (await a.api("/api/auth/status")).value.csrfToken;
+  assert.equal(
+    (await a.api("/api/auth/logout", "POST", {}, logoutCsrf)).status,
+    200,
+  );
+  release();
+  const ended = await pending;
+  assert.equal(ended.status, 401);
+  assert.equal(ended.value.version, undefined);
+  assert.equal(
+    (await b.api("/api/documents/read", "POST", body, bcsrf)).status,
+    200,
+  );
 });

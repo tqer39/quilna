@@ -73,6 +73,42 @@ export function createHandler({
       if (!verified.success) return json(401, { status: "unauthenticated" });
       const owner = await hash(verified.data.subject);
       const stub = env.ACCOUNTS.get(env.ACCOUNTS.idFromName(owner));
+      if (url.pathname.startsWith("/api/documents/")) {
+        const action = url.pathname.slice("/api/documents/".length);
+        if (
+          !(action === "status" && request.method === "GET") &&
+          !(
+            request.method === "POST" &&
+            ["acquire", "read", "history"].includes(action)
+          )
+        )
+          return json(404, { status: "not-found" });
+        const expected = request.headers.get("X-Document-Account");
+        if (expected && expected !== owner)
+          return json(403, { status: "document-account-changed" });
+        const result = await stub.fetch(
+          new Request("https://account.internal/command", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: `document-${action}`,
+              principal: verified.data,
+              csrf: request.headers.get("X-CSRF-Token"),
+              data: action === "status" ? null : await readBody(request),
+            }),
+          }),
+        );
+        const current = principal.safeParse(await authenticate(request));
+        if (
+          !current.success ||
+          current.data.subject !== verified.data.subject ||
+          current.data.sessionId !== verified.data.sessionId
+        ) {
+          await result.body?.cancel();
+          return json(401, { status: "unauthenticated" });
+        }
+        return result;
+      }
       if (url.pathname === "/api/feeds/fetch" && request.method === "POST") {
         const data = await readBody(request);
         return stub.fetch(
@@ -185,7 +221,7 @@ export function createHandler({
     }
   };
 }
-export async function handleAccount(core, request, collector) {
+export async function handleAccount(core, request, collector, documents) {
   try {
     const command = await readBody(request);
     // Internal binding only. No browser-selected owner or credential handles.
@@ -199,8 +235,17 @@ export async function handleAccount(core, request, collector) {
         "collection-status",
         "collection-snapshot",
         "feed-fetch",
+        "document-status",
       ].includes(command.action),
     );
+    if (command.action?.startsWith("document-")) {
+      if (!documents) return json(503, { status: "document-unconfigured" });
+      return documents.handle(
+        owner,
+        command.action.slice("document-".length),
+        command.data,
+      );
+    }
     if (command.action === "feed-fetch") {
       if (!collector) throw Error("collection-unconfigured");
       return json(200, await collector.source(command.data));
