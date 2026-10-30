@@ -29,6 +29,8 @@ function children(parent: HTMLElement, desired: HTMLElement[]) {
     focused.focus({ preventScroll: true });
 }
 
+export type ArticleListPosition = { id: string; index: number; top: number };
+
 export class ArticleListView {
   readonly root = el("div");
   private readonly list = el("ul", undefined, "rss-article-list");
@@ -81,6 +83,28 @@ export class ArticleListView {
     return row;
   }
 
+  position(id: string): ArticleListPosition | null {
+    const row = this.rows.get(id);
+    return row
+      ? {
+          id,
+          index: Array.from(this.rows.keys()).indexOf(id),
+          top: row.title.getBoundingClientRect().top,
+        }
+      : null;
+  }
+
+  restorePosition(position: ArticleListPosition): boolean {
+    const rows = Array.from(this.rows.values());
+    const row =
+      this.rows.get(position.id) ??
+      rows[Math.min(position.index, rows.length - 1)];
+    if (!row) return false;
+    row.title.focus({ preventScroll: true });
+    window.scrollBy(0, row.title.getBoundingClientRect().top - position.top);
+    return true;
+  }
+
   update(state: {
     items: FeedArticle[];
     metadata: (article: FeedArticle) => string;
@@ -96,6 +120,10 @@ export class ArticleListView {
     nextDisabled: boolean;
     empty: string;
   }) {
+    const focused = document.activeElement;
+    const previousIndex = Array.from(this.rows.values()).findIndex(
+      (row) => row.title === focused,
+    );
     const rows = new Map<string, ReturnType<ArticleListView["createRow"]>>();
     for (const article of state.items) {
       const row = this.rows.get(article.id) ?? this.createRow(article.id);
@@ -138,5 +166,17 @@ export class ArticleListView {
     text(this.empty, state.empty);
     if (state.empty) desired.push(this.empty);
     children(this.root, desired);
+    // An asynchronous read/save update can remove the returned-to row.
+    if (
+      previousIndex >= 0 &&
+      focused instanceof HTMLElement &&
+      !focused.isConnected
+    ) {
+      const next = Array.from(rows.values())[
+        Math.min(previousIndex, rows.size - 1)
+      ];
+      this.status.tabIndex = -1;
+      (next?.title ?? this.status).focus({ preventScroll: true });
+    }
   }
 }

@@ -10,6 +10,7 @@ Run `mise exec -- npm run dev` and open <http://127.0.0.1:5173/>.
 The home screen collects information. In **サイトを追加**, enter a site, article or RSS/Atom URL and select **フィードを探す**.
 Domains without a scheme use HTTPS. Choose a named feed with **登録して読む**; discovered feeds are not subscribed automatically.
 Zenn and Cloudflare Blog remain one-click examples.
+Select an article title to open its reading view. **← 記事一覧へ** stays visible while reading and returns focus to the original row and scroll position, retaining search, filters and the current page. If that row no longer matches (for example, it became read in the unread list), focus moves to a nearby remaining article or the list heading when empty. Importing an article URL also closes the feed-discovery result and moves focus to the reading view.
 Open an article, select **この記事を保存**, return to the list and select **保存した記事**.
 Reload to check the saved copy. **サンプル教材** opens the existing fixed CAA lesson separately; collection does not generate it.
 

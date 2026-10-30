@@ -28,7 +28,7 @@ import {
 } from "./reader-preferences";
 import { ArticleSearch } from "./article-search";
 import { articlePage } from "./article-page";
-import { ArticleListView } from "./article-list-view";
+import { ArticleListView, type ArticleListPosition } from "./article-list-view";
 import { ArticleHighlightView } from "./article-highlight-view";
 import { ArticleLearningView } from "./article-learning-view";
 import { LibraryBackupView } from "./library-backup-view";
@@ -373,7 +373,7 @@ export async function feedReader(root: HTMLElement) {
   listHeading.tabIndex = -1;
   const listLede = el(
     "p",
-    "気になる情報を集めて、読む。学びたい記事を保存しておきましょう。",
+    "記事のタイトルを押すと本文を読めます。あとで読みたい記事は保存しておきましょう。",
     "rss-lede",
   );
   const highlights = new ArticleHighlightView(
@@ -422,10 +422,27 @@ export async function feedReader(root: HTMLElement) {
     (quote, signal) => highlights.revealSaved(quote, signal),
     (quote) => quoteConnections.begin(quote),
   );
+  let listPosition: ArticleListPosition | null = null;
+  const readerNavigation = el("nav", undefined, "rss-reader-navigation");
+  readerNavigation.setAttribute("aria-label", "記事の移動");
+  const returnToList = button("← 記事一覧へ", () => {
+    selected = null;
+    render();
+    if (!listPosition || !listView.restorePosition(listPosition)) {
+      listHeading.focus({ preventScroll: true });
+      main.scrollIntoView({ block: "start" });
+    }
+    listPosition = null;
+  });
+  returnToList.id = "rss-return-to-list";
+  readerNavigation.append(returnToList);
   const listView = new ArticleListView({
     open: (id) => {
       const position = articlePositions.get(id);
-      if (position !== undefined) openArticle(articles[position]);
+      if (position !== undefined) {
+        listPosition = listView.position(id);
+        openArticle(articles[position]);
+      }
     },
     classify: () => void classifyPending(),
     cancel: () => tagBatchController?.abort(),
@@ -1438,11 +1455,13 @@ export async function feedReader(root: HTMLElement) {
       );
       return;
     }
+    listPosition = null;
     const old = articles.find((a) => a.url === url);
     if (old) {
       if (!old.saved) await change(old, "saved", true);
       source = "";
       filter = "saved";
+      clearDiscovery();
       openArticle(old);
       return;
     }
@@ -1463,10 +1482,10 @@ export async function feedReader(root: HTMLElement) {
       await updateArticleContent(db, article, {}, true);
       await load(article.id);
       announceChange(article.id);
-      selected = article.id;
       source = "";
       filter = "saved";
-      render();
+      clearDiscovery();
+      showArticle(article);
       await importContent(article);
     } catch (error) {
       showError((error as Error).message, () => void addArticle(value));
@@ -1674,16 +1693,19 @@ export async function feedReader(root: HTMLElement) {
       render();
     }
   }
-  function openArticle(article: FeedArticle) {
+  function showArticle(article: FeedArticle) {
     selected = article.id;
     render();
+    main.querySelector<HTMLElement>("h1")?.focus({ preventScroll: true });
+    main.scrollIntoView({ block: "start" });
+  }
+  function openArticle(article: FeedArticle) {
+    showArticle(article);
     if (article.url && !article.content && !article.contentError)
       void importContent(article);
     else autoTranslateSelected();
     if (!article.read) void change(article, "read", true);
     if (!article.tags) void updateTags(article, undefined, true);
-    main.querySelector<HTMLElement>("h1")?.focus();
-    main.scrollIntoView({ block: "start" });
   }
   const date = (value: string | null) =>
     value
@@ -1828,13 +1850,7 @@ export async function feedReader(root: HTMLElement) {
     if (discoveryPanel.parentNode !== main) main.append(discoveryPanel);
     if (article) {
       main.classList.add("rss-reading");
-      main.append(
-        button("← 記事一覧へ", () => {
-          selected = null;
-          render();
-          main.querySelector<HTMLElement>("h1")?.focus();
-        }),
-      );
+      main.append(readerNavigation);
       const articleNode = el("article", undefined, "rss-article");
       const title = el("h1", article.content?.title || article.title);
       title.id = "rss-current-title";

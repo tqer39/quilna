@@ -561,9 +561,24 @@
   background: var(--viewer-soft);
   text-decoration: none;
 }
-:root[data-reader-design]
-  :is(#rss-main, #rss-article-body, #rss-reading-tools) {
+/* Keep the exit reachable even after reading a long article. */
+:root[data-reader-design] .rss-reader-navigation {
+  position: sticky;
+  top: 0;
+  z-index: 5;
+  display: flex;
+  padding-block: 8px;
+  background: var(--viewer-surface);
+  border-bottom: 1px solid var(--viewer-line);
+}
+:root[data-reader-design] .rss-reader-navigation button {
+  margin: 0;
+}
+:root[data-reader-design] #rss-main {
   scroll-margin-top: 24px;
+}
+:root[data-reader-design] .rss-article [id] {
+  scroll-margin-top: 88px;
 }
 .rss-skip-navigation {
   display: none;
