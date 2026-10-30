@@ -1,3 +1,9 @@
+import { validArticleUpdate } from "./article-update";
+import {
+  feedFingerprint,
+  feedRepresentation,
+  validFeedRevision,
+} from "./feed-revision";
 import {
   validReadingPositions,
   type ReadingPosition,
@@ -35,6 +41,9 @@ export function validArticle(a: FeedArticle) {
     (a.tags === undefined || validArticleTags(a.tags)) &&
     (a.manualTags === undefined || validManualTags(a.manualTags)) &&
     validReadingPositions(a.readingPositions) &&
+    validFeedRevision(a.feedRevision) &&
+    validArticleUpdate(a.bodyUpdate) &&
+    (a.sourceUpdated === undefined || timestamp(a.sourceUpdated)) &&
     (a.sourceTags === undefined || validSourceTags(a.sourceTags)) &&
     (a.content === undefined ||
       (a.content &&
@@ -287,11 +296,14 @@ export function readFeedLibrary(
       );
   });
 }
-export function mergeFeed(
+export async function mergeFeed(
   db: IDBDatabase,
   feed: Feed,
   articles: FeedArticle[],
 ): Promise<void> {
+  // Hash before opening IndexedDB's transaction; awaiting crypto inside a
+  // success callback would allow the transaction to commit prematurely.
+  const fingerprints = await Promise.all(articles.map(feedFingerprint));
   return new Promise((resolve, reject) => {
     const tx = db.transaction(["feeds", "articles"], "readwrite");
     const feedStore = tx.objectStore("feeds");
@@ -322,26 +334,48 @@ export function mergeFeed(
       };
     };
     const store = tx.objectStore("articles");
-    for (const article of articles) {
+    for (const [index, article] of articles.entries()) {
       const request = store.get(article.id);
       request.onsuccess = () => {
-        const old = request.result as FeedArticle | undefined;
-        // A saved article is a stable local copy, even when its feed changes.
-        const next =
-          old &&
-          (old.saved ||
-            Date.parse(old.fetchedAt) > Date.parse(article.fetchedAt))
-            ? old
-            : {
-                ...article,
-                read: old?.read ?? false,
-                content: old?.content,
-                contentError: old?.contentError,
-                translation: old?.translation,
-                manualTags: old?.manualTags,
-                readingPositions: old?.readingPositions,
-              };
-        store.put({ ...next, tags: classifyArticle(next) });
+        try {
+          const old = request.result as FeedArticle | undefined;
+          const stale =
+            old &&
+            Date.parse(old.feedRevision?.observedAt ?? old.fetchedAt) >
+              Date.parse(article.fetchedAt);
+          // Keep saved text intact, but still observe later feed revisions.
+          const next =
+            old && (old.saved || stale)
+              ? { ...old }
+              : {
+                  ...article,
+                  read: old?.read ?? false,
+                  content: old?.content,
+                  contentError: old?.contentError,
+                  translation: old?.translation,
+                  manualTags: old?.manualTags,
+                  readingPositions: old?.readingPositions,
+                  bodyUpdate: old?.bodyUpdate,
+                };
+          if (!stale) {
+            const same =
+              old &&
+              (old.feedRevision
+                ? old.feedRevision.fingerprint === fingerprints[index]
+                : feedRepresentation(old) === feedRepresentation(article));
+            next.feedRevision = {
+              fingerprint: fingerprints[index],
+              changedAt: same
+                ? (old.feedRevision?.changedAt ?? old.fetchedAt)
+                : article.fetchedAt,
+              observedAt: article.fetchedAt,
+              url: article.url,
+            };
+          }
+          store.put({ ...next, tags: classifyArticle(next) });
+        } catch {
+          tx.abort();
+        }
       };
     }
     tx.oncomplete = () => resolve();
@@ -384,6 +418,7 @@ export function updateArticleContent(
   signal?: AbortSignal,
   restoreCode = false,
   contentMode: "preserve" | "metadata" | "replace" = "preserve",
+  sourceCheckedAt?: number,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     signal?.throwIfAborted();
@@ -472,6 +507,17 @@ export function updateArticleContent(
                   ? {}
                   : { translation: undefined }),
                 contentError: patch.contentError,
+                ...(sourceCheckedAt && patch.content.document
+                  ? {
+                      bodyUpdate: {
+                        checkedAt: sourceCheckedAt,
+                        fingerprint: article.feedRevision?.fingerprint,
+                        failures: 0,
+                        retryAt: 0,
+                        latest: patch.content.document,
+                      },
+                    }
+                  : {}),
               }
             : {}),
         };

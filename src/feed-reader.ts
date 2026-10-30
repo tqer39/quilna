@@ -1,3 +1,9 @@
+import { ArticleAutoUpdate } from "./article-auto-update";
+import {
+  automaticArticleUpdates,
+  articleUpdatePreferenceKey,
+  hasArticleUpdate,
+} from "./article-update";
 import { ReadingProgress } from "./reading-progress";
 import { articleReadingTime } from "./reading-time";
 import { decorateArticleLink } from "./link-preview";
@@ -342,6 +348,37 @@ export async function feedReader(root: HTMLElement) {
     refreshSelect,
     refreshNotice,
   );
+  const bodyUpdateLabel = el("label", "取り込み済み本文の更新を自動確認");
+  const bodyUpdateToggle = el("input");
+  bodyUpdateToggle.type = "checkbox";
+  bodyUpdateToggle.id = "rss-body-auto-update";
+  bodyUpdateLabel.htmlFor = bodyUpdateToggle.id;
+  bodyUpdateToggle.checked = automaticArticleUpdates();
+  bodyUpdateToggle.disabled = !feedLockSupported();
+  const bodyUpdateNotice = el(
+    "p",
+    "RSSの変更時と前回の本文確認から24時間後に、表示中のブラウザで順に確認します。新しい版は「本文の更新あり」から開けます。PC停止中はRSSを収集し、本文は次回この画面を開いたときに確認します。",
+    "muted",
+  );
+  bodyUpdateNotice.setAttribute("role", "status");
+  bodyUpdateToggle.addEventListener("change", () => {
+    bodyUpdater.stop();
+    try {
+      localStorage.setItem(
+        articleUpdatePreferenceKey,
+        String(bodyUpdateToggle.checked),
+      );
+      bodyUpdateNotice.textContent = bodyUpdateToggle.checked
+        ? "本文の自動確認を有効にしました。表示中の本文はそのまま残し、更新があれば通知します。"
+        : "本文の自動確認を停止しました。保存履歴から手動で確認できます。";
+      bodyUpdater.start();
+    } catch {
+      bodyUpdateToggle.checked = automaticArticleUpdates();
+      bodyUpdateNotice.textContent =
+        "設定を保存できませんでした。本文の自動確認を停止しています。";
+    }
+  });
+  refreshSettings.append(bodyUpdateToggle, bodyUpdateLabel, bodyUpdateNotice);
   settingsBody.insertBefore(refreshSettings, translationSettings);
   settings.addEventListener("close", () => settingsOpen.focus());
   const skipToArticles = readingJump("記事へ", "rss-main");
@@ -889,7 +926,95 @@ export async function feedReader(root: HTMLElement) {
       collector.wake();
     }
   }
+  const bodyUpdatePanel = el("section", undefined, "rss-body-update");
+  bodyUpdatePanel.setAttribute("aria-label", "本文の更新");
+  const bodyUpdateStatus = el("p");
+  bodyUpdateStatus.setAttribute("role", "status");
+  const showLatest = button("更新された本文を読む", async () => {
+    const article = articles.find((a) => a.id === selected),
+      ref = article?.bodyUpdate?.latest;
+    if (!article || !ref) return;
+    try {
+      await chooseDocumentVersion(
+        await readDocumentVersion(ref.documentId, ref.versionId, ref.scope),
+      );
+    } catch (error) {
+      bodyUpdateStatus.textContent = (error as Error).message;
+    }
+  });
+  const retryBody = button("本文の更新確認を再試行", () => {
+    const article = articles.find((a) => a.id === selected);
+    if (article) void importContent(article, false, false, true);
+  });
+  bodyUpdatePanel.append(bodyUpdateStatus, showLatest, retryBody);
+  function renderBodyUpdate(article?: FeedArticle) {
+    const update = article?.bodyUpdate,
+      available = !!article && hasArticleUpdate(article);
+    bodyUpdatePanel.hidden = !available && !update?.error;
+    bodyUpdateStatus.textContent = [
+      available
+        ? "本文の更新あり。表示中の本文はそのままです。新しい版を開いても以前の版・引用・メモは残ります。"
+        : "",
+      update?.error
+        ? `自動確認できませんでした：${update.error} 自動再試行は ${new Date(update.retryAt).toLocaleString("ja-JP")} 以降です。`
+        : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
+    showLatest.hidden = !available;
+    retryBody.hidden = !update?.error;
+    showLatest.disabled = retryBody.disabled =
+      !!article && importing.has(article.id);
+  }
+  const bodyUpdater = new ArticleAutoUpdate({
+    db: () => db,
+    articles: () => {
+      const subscribed = new Set(
+        feeds.filter((f) => !f.unsubscribed).map((f) => f.url),
+      );
+      return articles.filter(
+        (a) =>
+          a.content &&
+          !importing.has(a.id) &&
+          (!a.feedUrl || subscribed.has(a.feedUrl)),
+      );
+    },
+    canRun: () =>
+      !!db && !document.hidden && navigator.onLine && automaticArticleUpdates(),
+    acquisition: documentAcquisition,
+    changed: async (ids) => {
+      for (const id of ids) {
+        await load(id);
+        announceChange(id);
+      }
+      // Keep the live reading DOM, selection and scroll position in place.
+      if (selected) {
+        const article = articles.find((a) => a.id === selected);
+        renderBodyUpdate(article);
+        documentHistory.show(
+          article?.content,
+          importing.has(selected),
+          selected,
+          article?.url,
+        );
+      } else render();
+    },
+    failed: (error) => {
+      bodyUpdateNotice.textContent = (error as Error).message;
+    },
+  });
+  window.addEventListener("pagehide", () => bodyUpdater.stop());
+  window.addEventListener("pageshow", () => bodyUpdater.start());
+  window.addEventListener("storage", (event) => {
+    if (event.key === articleUpdatePreferenceKey || event.key === null) {
+      bodyUpdateToggle.checked = automaticArticleUpdates();
+      bodyUpdater.stop();
+      bodyUpdater.start();
+    }
+  });
   const collectionWake = () => {
+    bodyUpdater.stop();
+    bodyUpdater.start();
     render();
     collector.wake();
     if (document.hidden || !navigator.onLine) {
@@ -1352,6 +1477,7 @@ export async function feedReader(root: HTMLElement) {
     try {
       const acquisition = documentAcquisition.snapshot();
       let patch;
+      let sourceCheckedAt: number | undefined;
       try {
         const seed =
           article.content ??
@@ -1363,6 +1489,8 @@ export async function feedReader(root: HTMLElement) {
           restoreCode || refreshOriginal,
           acquisition,
         );
+        if (!acquired.warning && (refreshOriginal || restoreCode))
+          sourceCheckedAt = Date.now();
         patch =
           (refreshOriginal || restoreCode) && acquired.warning
             ? { contentError: acquired.warning }
@@ -1379,6 +1507,7 @@ export async function feedReader(root: HTMLElement) {
         acquisition.signal,
         restoreCode,
         refreshOriginal ? "replace" : "preserve",
+        sourceCheckedAt,
       );
       await load(article.id);
       announceChange(article.id);
@@ -2037,7 +2166,8 @@ export async function feedReader(root: HTMLElement) {
         "rss-content-note",
       );
       notice.setAttribute("role", "status");
-      articleNode.append(notice);
+      renderBodyUpdate(article);
+      articleNode.append(bodyUpdatePanel, notice);
       if (article.content?.codeRanges !== undefined && article.contentError)
         articleNode.append(el("p", article.contentError, "rss-content-note"));
       if (article.content && article.content.codeRanges === undefined) {
@@ -2490,7 +2620,7 @@ export async function feedReader(root: HTMLElement) {
       listView.update({
         items: result.items,
         metadata: (item) =>
-          `${feeds.find((f) => f.url === item.feedUrl)?.title ?? "取り込んだ記事"} · ${date(item.published)}${item.saved ? " · 保存済み" : ""}${item.read ? " · 既読" : " · 未読"} · ${articleReadingTime(item)}`,
+          `${feeds.find((f) => f.url === item.feedUrl)?.title ?? "取り込んだ記事"} · ${date(item.published)}${item.saved ? " · 保存済み" : ""}${item.read ? " · 既読" : " · 未読"} · ${articleReadingTime(item)}${hasArticleUpdate(item) ? " · 本文の更新あり" : item.bodyUpdate?.error ? " · 更新確認に失敗" : ""}`,
         status:
           searchProblem ||
           (preparing
@@ -2566,4 +2696,5 @@ export async function feedReader(root: HTMLElement) {
   renderCloud();
   await checkCloud();
   collector.start();
+  bodyUpdater.start();
 }

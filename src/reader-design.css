@@ -1199,3 +1199,20 @@
   background: transparent;
   font-size: 12px;
 }
+
+/* Update notices preserve the selected body and use the active reading theme. */
+:root[data-reader-design] .rss-body-update:not([hidden]) {
+  margin-block: 18px;
+  padding: 16px;
+  border: 1px solid var(--viewer-line);
+  border-inline-start: 3px solid var(--viewer-accent);
+  border-radius: 10px;
+  background: var(--viewer-soft);
+  color: var(--viewer-text);
+}
+.rss-body-update p {
+  margin-block: 0 12px;
+}
+.rss-body-update button {
+  margin-inline-end: 8px;
+}

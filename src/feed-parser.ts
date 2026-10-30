@@ -1,3 +1,5 @@
+import type { ArticleUpdate } from "./article-update";
+import type { FeedRevision } from "./feed-revision";
 import type { ReadingPositions } from "./reading-position";
 import { normalizeSourceTags } from "./source-tags";
 import type { FeedRefreshFailure } from "./feed-auto-refresh";
@@ -20,6 +22,9 @@ export type FeedArticle = {
   manualTags?: string[];
   sourceTags?: string[];
   readingPositions?: ReadingPositions;
+  sourceUpdated?: string;
+  feedRevision?: FeedRevision;
+  bodyUpdate?: ArticleUpdate;
 };
 export type Feed = {
   url: string;
@@ -119,6 +124,11 @@ export function parseFeed(
       date && Number.isFinite(Date.parse(date))
         ? new Date(date).toISOString()
         : null;
+    const updated = field(entry, "updated") || field(entry, "modified");
+    const sourceUpdated =
+      updated && Number.isFinite(Date.parse(updated))
+        ? new Date(updated).toISOString()
+        : undefined;
     const guid = (
       field(entry, atom ? "id" : "guid").trim() ||
       url ||
@@ -137,6 +147,7 @@ export function parseFeed(
       title: articleTitle,
       url: url ?? "",
       published,
+      ...(sourceUpdated ? { sourceUpdated } : {}),
       body,
       saved: false,
       read: false,

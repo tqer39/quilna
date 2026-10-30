@@ -437,10 +437,14 @@ test("late snapshots and cloud acknowledgements cannot undo subscription choices
     { url, fetchedAt },
   );
   expect(result.paused.unsubscribed).toBe(true);
-  expect(result.article).toEqual({
-    ...result.original,
-    tags: result.article.tags,
+  const { feedRevision, ...retained } = result.article;
+  expect(retained).toEqual({ ...result.original, tags: result.article.tags });
+  expect(feedRevision).toMatchObject({
+    changedAt: fetchedAt,
+    observedAt: fetchedAt,
+    url: result.original.url,
   });
+  expect(feedRevision.fingerprint).toMatch(/^[a-f0-9]{64}$/);
   expect(result.staleResult).toBeNull();
   expect(result.resumed.unsubscribed).toBe(false);
   expect(result.after).toEqual(result.before);

@@ -206,6 +206,16 @@ When revalidating a retained original, the local and Workers acquisition endpoin
 
 Old inline originals remain readable and searchable. Opening their history lazily attaches the document reference while preserving their original acquisition time, translation, article ID and private state. A competing body change prevents this attachment or a version switch from overwriting that newer article; storage failures keep the previous article and allow retry. Only bodies actually retained are available: the catalog cannot reconstruct earlier missing versions. Library search continues to use the article's selected inline body, without reading historical versions on each query. History and document records are included in the backup below; cloud synchronization and cross-user sharing are not enabled.
 
+### Automatic body update checks
+
+[Issue #79](https://github.com/tqer39/quilna/issues/79) tracks this implementation and the remaining always-on body acquisition. **設定 → 情報の収集 → 取り込み済み本文の更新を自動確認** is enabled by default, independently of RSS polling. Imported originals from active subscriptions or individually saved URLs are checked while the reader is visible and online. Web Locks are required for automation.
+
+RSS observations have a separate fingerprint of title, URL, summary/body, publication date, explicit `updated`/`modified`, and normalized publisher tags. Polling timestamps and personal state do not constitute changes. Saved RSS snapshots stay intact while their observations advance; late observations cannot roll them back. Changes schedule a body check. Without an RSS change, a body is due 24 hours after its last successful check. Across tabs, at most one source check starts every 30 seconds. Duplicate URLs share acquisition, and a source already checked after the observation is reused. Large queues take longer; this is not an exact 24-hour delivery guarantee. Existing conditional requests and acquisition authorization apply.
+
+New immutable versions appear as **本文の更新あり** in the list and reader. The selected body, matching translation, position and personal records remain until **更新された本文を読む** uses the existing version-switching rules. Failure retains the selected body and any previously detected version, shows a reason and retry time, and backs off from 5 to at most 640 minutes. **本文の更新確認を再試行** explicitly refreshes and displays the resulting body. Deleted, unsubscribed or concurrently replaced articles are not overwritten. A changed RSS URL is reported rather than silently changing a saved source. Update metadata and both referenced versions are included in backup validation.
+
+PC-off cloud collection still fetches RSS. Its observations trigger body checks after the reader opens again; this browser scheduler does **not** fetch original bodies while the PC is off. Always-on original acquisition remains in #79 and requires a separately validated cloud execution and retention design; shared IDs alone do not provide it.
+
 ## Library backup and recovery
 
 [Issue #76](https://github.com/tqer39/quilna/issues/76) tracks this browser feature and its acceptance.
