@@ -2,6 +2,7 @@ import { byokSettings } from "./byok-settings";
 import { accountSettings } from "./account-settings";
 import { feedbackMessage } from "./feedback";
 import { installNavigationShortcuts } from "./navigation-shortcuts";
+import { openReaderDialog } from "./reader-dialog";
 import "./style.css";
 import { book as baseBook } from "./book";
 import {
@@ -37,10 +38,12 @@ let proposalApplying = false;
 let deferredPopstate: string | null = null;
 const shortcutKey = "fieldnotes.navigation-shortcuts.v1";
 let shortcutsEnabled = true;
+let shortcutNotice = "";
 try {
   shortcutsEnabled = storage.getItem(shortcutKey) !== "off";
 } catch {
-  /* Per-tab fallback. */
+  shortcutNotice =
+    "設定を読み込めませんでした。このタブではキー移動が有効です。";
 }
 setTermQuestionHandler((context, termId, text, excerpt) => {
   if (
@@ -90,6 +93,45 @@ const byok = byokSettings();
 const collectionLink = el("a", "情報収集へ", "rss-text-link");
 collectionLink.href = "/?view=feeds";
 header.append(collectionLink);
+const readingSettings = button("読書設定", () => {
+  const content = el("div", undefined, "reading-settings");
+  content.append(
+    el("h3", "履歴の保存先"),
+    el(
+      "p",
+      "教材の回答・再開位置などの履歴は、このブラウザ内に自動保存します。別の端末やブラウザとは同期しません。ブラウザのデータを消去すると失われます。",
+    ),
+    el(
+      "p",
+      "保存中や保存できなかった場合は、読書画面に状態と再試行を表示します。",
+    ),
+    el("h3", "キーボード操作"),
+  );
+  const shortcutLabel = el("label");
+  const shortcutToggle = el("input");
+  shortcutToggle.type = "checkbox";
+  shortcutToggle.checked = shortcutsEnabled;
+  const shortcutStatus = el("span", undefined, "muted");
+  shortcutStatus.setAttribute("role", "status");
+  shortcutStatus.textContent = shortcutNotice;
+  shortcutToggle.addEventListener("change", () => {
+    shortcutsEnabled = shortcutToggle.checked;
+    try {
+      storage.setItem(shortcutKey, shortcutsEnabled ? "on" : "off");
+      shortcutNotice = "";
+    } catch {
+      shortcutNotice = "設定はこのタブのみ。保存できませんでした。";
+    }
+    shortcutStatus.textContent = shortcutNotice;
+  });
+  shortcutLabel.append(
+    shortcutToggle,
+    " N：次へ / P：前へ（キー移動を有効にする）",
+  );
+  content.append(shortcutLabel, shortcutStatus);
+  openReaderDialog("reading-settings", "読書設定", content, readingSettings);
+});
+header.append(readingSettings);
 header.append(button("自分のAPIキー設定", byok.open));
 root.append(header, byok.dialog);
 root.append(accountSettings());
@@ -177,14 +219,6 @@ function save() {
           "neutral",
           "保存中",
           "記録の保存が終わるまで、このタブでお待ちください。",
-        ),
-      );
-    else
-      status.append(
-        feedbackMessage(
-          "success",
-          "保存済み",
-          "このブラウザに保存済み · アカウント未接続",
         ),
       );
   };
@@ -412,26 +446,6 @@ function render() {
     main.querySelector<HTMLSelectElement>("#minutes")?.focus();
   });
   settings.append(timeLabel, times);
-  const shortcutLabel = el("label");
-  const shortcutToggle = el("input");
-  shortcutToggle.type = "checkbox";
-  shortcutToggle.checked = shortcutsEnabled;
-  const shortcutStatus = el("span", undefined, "muted");
-  shortcutStatus.setAttribute("role", "status");
-  shortcutToggle.addEventListener("change", () => {
-    shortcutsEnabled = shortcutToggle.checked;
-    try {
-      storage.setItem(shortcutKey, shortcutsEnabled ? "on" : "off");
-      shortcutStatus.textContent = "";
-    } catch {
-      shortcutStatus.textContent = "設定はこのタブのみ。保存できませんでした。";
-    }
-  });
-  shortcutLabel.append(
-    shortcutToggle,
-    " N：次へ / P：前へ（キー移動を有効にする）",
-  );
-  settings.append(shortcutLabel, shortcutStatus);
   main.append(settings);
   const plan = learningPlan(
     planStart,
@@ -579,11 +593,3 @@ installNavigationShortcuts(
 );
 render();
 if (loaded.error) save();
-else
-  status.append(
-    feedbackMessage(
-      "neutral",
-      "ローカル履歴",
-      "履歴はこのブラウザのみ · アカウント未接続",
-    ),
-  );

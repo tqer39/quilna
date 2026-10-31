@@ -391,6 +391,9 @@ N/n moves to the next block and P/p to the previous block through the existing n
 Navigation is suppressed at either end, on held-key repeat, during IME, with Ctrl/Meta/Alt, in inputs or editable content, and in term dialogs.
 Keyboard navigation is also stopped while a proposal awaits application or during review. Back/Forward during application is reconciled after completion.
 A checkbox disables single-character shortcuts; if saving fails, the UI shows that the setting applies only to the current tab.
+The header's **読書設定** dialog contains this checkbox and explains browser-local history, lack of cross-device synchronization, and data removal when browser storage is cleared.
+Normal reading has no permanent local-history or save-success panel. Pending writes, failed writes and explicit retries remain visible; successful retry clears the error only after persistence succeeds.
+The shortcut preference retains its existing storage key and per-tab fallback, including its failure notice when reopening settings. Escape, browser Back and the close button return focus to the settings trigger.
 Focus moves to the heading, and existing smartphone buttons remain available. Automatic restoration of unsaved input was not added.
 
 Final verification: lint, frontend/adapter contract typecheck, build, 21 textbook unit tests, and 13 server tests passed.

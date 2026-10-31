@@ -16,12 +16,18 @@
     "workers:build": "node scripts/build-worker.mjs",
     "test:workers": "node --test tests/workers/*.test.mjs",
     "workers:local": "npm run build && node scripts/workers-local.mjs",
-    "security:check": "node scripts/check-security.mjs",
-    "security:audit": "npm run security:check && npm audit --include=dev --audit-level=low"
+    "security:check": "node scripts/check-security.mjs && node scripts/check-worker-config.mjs",
+    "security:audit": "npm run security:check && npm audit --include=dev --audit-level=low",
+    "test:search-performance": "playwright test --config playwright.search.config.ts",
+    "check:browser": "npm run lint && npm test && npm run build && npm run test:browser && npm run test:reader-runtime && npm run test:search-performance",
+    "test:reader-runtime": "npm run build && playwright test --config playwright.runtime.config.ts"
   },
   "dependencies": {
+    "@mozilla/readability": "^0.6.0",
     "better-auth": "1.7.7",
+    "highlight.js": "11.12.0",
     "jose": "^6.2.12",
+    "linkedom": "0.18.14",
     "zod": "^4.6.7"
   },
   "devDependencies": {

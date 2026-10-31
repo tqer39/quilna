@@ -15,10 +15,13 @@ import (
 func main() { os.Exit(run()) }
 func run() int {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: harness run|status|resume|stop -state ABS_PATH [-task ABS_PATH | -run ID]")
+		fmt.Fprintln(os.Stderr, "usage: harness freeze-task -task ABS_PATH -output NEW_ABS_PATH -file ABS_PATH (repeat), or run|status|resume|stop -state ABS_PATH [-task ABS_PATH | -run ID]")
 		return 2
 	}
 	verb := os.Args[1]
+	if verb == "freeze-task" {
+		return freezeTask(os.Args[2:])
+	}
 	flags := flag.NewFlagSet(verb, flag.ContinueOnError)
 	state := flags.String("state", "", "private state directory")
 	task := flags.String("task", "", "trusted task JSON")
@@ -65,6 +68,31 @@ func run() int {
 		return 1
 	}
 	if verb != "status" && verb != "stop" && result.Status != "accepted" {
+		return 1
+	}
+	return 0
+}
+
+type pathsFlag []string
+
+func (p *pathsFlag) String() string         { return fmt.Sprint([]string(*p)) }
+func (p *pathsFlag) Set(value string) error { *p = append(*p, value); return nil }
+
+func freezeTask(args []string) int {
+	flags := flag.NewFlagSet("freeze-task", flag.ContinueOnError)
+	input := flags.String("task", "", "existing trusted task JSON")
+	output := flags.String("output", "", "new canonical absolute task path")
+	var files pathsFlag
+	flags.Var(&files, "file", "canonical absolute control path; repeat for each fixed test/script")
+	if flags.Parse(args) != nil || flags.NArg() != 0 {
+		return 2
+	}
+	task, err := harness.FreezeTask(*input, *output, files)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return 1
+	}
+	if err := json.NewEncoder(os.Stdout).Encode(task.ProtectedFiles); err != nil {
 		return 1
 	}
 	return 0

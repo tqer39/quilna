@@ -8,7 +8,7 @@ Domain registration, DNS connection, and production publication are not part of 
 The current app and sample lessons are in Japanese.
 See the [naming and domain decision](docs/branding.md) for the research scope and adoption judgment; [Issue #53](https://github.com/tqer39/quilna/issues/53) tracks domain registration, DNS connection, and Dev redeployment.
 
-Product development now focuses on the browser until the owner explicitly accepts its usability.
+Complete all agreed product features in the browser and obtain explicit owner usability acceptance before advancing to iOS/macOS, one platform at a time.
 Native feature development is on hold; see the [development sequence and acceptance gate](docs/product-development.md).
 
 The minimal SwiftUI apps for macOS and iOS are in `apple/`; the Go development harness is in `harness/`.
@@ -17,9 +17,9 @@ Articles, Japanese translations, bookmarks, and answer history are stored in SQL
 See the [native app and harness guide](docs/native-harness.md) and [tool/SaaS evaluation](docs/harness-tools.md).
 The development harness has been verified with live Codex implementation, review, and repair using the existing Pro login.
 See the [live validation results and reproduction steps](docs/codex-live-validation.md). This connection is separate from the product's lesson generation.
-The browser now starts with RSS/Atom registration, refresh, article reading and local saving.
+The browser starts with site/article URL discovery, RSS/Atom registration, refresh, article reading and local saving.
 See [startup, storage scope and backend choices by interface](docs/browser-rss.md).
-The lesson features below remain available through **サンプル教材**.
+The lesson features below remain available through **設定 → デモ教材 → デモ教材を開く**.
 
 An owner-only development site was published under the previous name; Google authentication setup is pending.
 See the [existing deployment record](docs/dev-publication.md).
@@ -52,7 +52,7 @@ Open <http://127.0.0.1:5173> in a browser.
 RSS refresh connects from the local acquisition process to the registered public HTTPS publisher.
 RSS articles and subscriptions use this browser's IndexedDB, without device synchronization.
 No AI API, real account connection or new cloud deployment is enabled.
-The following keyboard controls and answer history belong to the sample lesson.
+The following keyboard controls and answer history belong to the demo lesson in Settings.
 Press N for the next block and P for the previous block; uppercase also works. These shortcuts are inactive in inputs and term dialogs.
 The "N: next / P: previous" checkbox disables single-character shortcuts. If saving the setting fails, it applies only to the current tab.
 History is stored in this browser's localStorage.

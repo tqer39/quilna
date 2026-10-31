@@ -94,6 +94,7 @@ test("authenticated metadata panel keeps keys empty/disabled, clears on logout, 
 });
 test("cancel during login startup rejects the late redirect and duplicate clicks do not create another request", async ({
   page,
+  baseURL,
 }) => {
   let release: () => void = () => {};
   const pending = new Promise<void>((r) => {
@@ -138,7 +139,7 @@ test("cancel during login startup rejects the late redirect and duplicate clicks
   release();
   await expect(login).toBeEnabled();
   expect(starts).toBe(1);
-  expect(page.url()).toContain("127.0.0.1:5173");
+  expect(new URL(page.url()).origin).toBe(new URL(baseURL!).origin);
 });
 test("callback outcome query is removed and authentication failure leaves reading available", async ({
   page,
@@ -203,9 +204,10 @@ test("session expiry removes saved metadata on the next state refresh and does n
 
 test("private Dev logout replaces cached reader with the login entry", async ({
   page,
+  baseURL,
 }) => {
   let logged = true;
-  await page.route("http://127.0.0.1:5173/", async (route) => {
+  await page.route(new URL("/", baseURL).href, async (route) => {
     if (!logged)
       return route.fulfill({
         contentType: "text/html",
