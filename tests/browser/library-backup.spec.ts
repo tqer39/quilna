@@ -5,6 +5,9 @@ async function fixture(page: Page, design = "studio") {
   await page.addInitScript((design) => {
     localStorage.setItem("quilna.reader.design.v1", design);
     localStorage.setItem("quilna.feed.refresh.v1", "0");
+    // Backup fixtures must stay unchanged even after their content is 24h old.
+    // Automatic acquisition is covered by article-updates and runtime tests.
+    localStorage.setItem("quilna.article.updates.v1", "false");
   }, design);
   await page.route("**/api/collection", (r) =>
     r.fulfill({ status: 404, json: {} }),
@@ -204,9 +207,10 @@ async function archive(page: Page) {
   });
 }
 async function emptyPage(page: Page) {
-  await page.addInitScript(() =>
-    localStorage.setItem("quilna.feed.refresh.v1", "0"),
-  );
+  await page.addInitScript(() => {
+    localStorage.setItem("quilna.feed.refresh.v1", "0");
+    localStorage.setItem("quilna.article.updates.v1", "false");
+  });
   await page.route("**/api/collection", (r) =>
     r.fulfill({ status: 404, json: {} }),
   );

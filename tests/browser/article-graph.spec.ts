@@ -3,6 +3,9 @@ import { test, expect, type Page } from "@playwright/test";
 async function fixture(page: Page, design = "studio", many = false) {
   await page.addInitScript((design) => {
     localStorage.setItem("quilna.feed.refresh.v1", "0");
+    // Keep graph interaction fixtures stable independently of their age.
+    // Selection retention during background updates is tracked separately.
+    localStorage.setItem("quilna.article.updates.v1", "false");
     localStorage.setItem("quilna.reader.design.v1", design);
   }, design);
   await page.route("**/api/collection", (r) =>
