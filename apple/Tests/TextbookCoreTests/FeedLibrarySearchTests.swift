@@ -240,6 +240,89 @@ final class FeedLibrarySearchTests: XCTestCase {
         } catch { XCTAssertEqual(error as? ArticleSearchError, expected) }
     }
 
+    func testDeferredBackfillAllowsReadsSavesAndResumesWithoutPartialSearch() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        let raw = try SearchTestDatabase(url: directory.appendingPathComponent("feed-library.sqlite"))
+        try raw.execute("CREATE TABLE subscriptions(id TEXT PRIMARY KEY,url TEXT NOT NULL UNIQUE,title TEXT,etag TEXT,last_modified TEXT);CREATE TABLE articles(id TEXT PRIMARY KEY,feed_id TEXT NOT NULL,remote_id TEXT,title TEXT NOT NULL,url TEXT,summary TEXT NOT NULL,content TEXT NOT NULL,published REAL);CREATE TABLE bookmarks(article_id TEXT PRIMARY KEY REFERENCES articles(id));CREATE TABLE translations(article_id TEXT NOT NULL REFERENCES articles(id),source_fingerprint TEXT NOT NULL,target_language TEXT NOT NULL,title TEXT NOT NULL,body TEXT NOT NULL,PRIMARY KEY(article_id,target_language));PRAGMA user_version=1")
+        let subscription = try FeedSubscription(url: URL(string: "https://prepare.example/feed")!)
+        try raw.execute("INSERT INTO subscriptions(id,url,title) VALUES('\(subscription.id)','https://prepare.example/feed','Preparation')")
+        for index in 0 ..< 40 {
+            try raw.execute("INSERT INTO articles(id,feed_id,title,summary,content) VALUES('item-\(index)','\(subscription.id)','needle \(index)','','body')")
+        }
+        var store: FeedLibraryStore? = try FeedLibraryStore(directory: directory, deferSearchPreparation: true)
+        let cache = try await store!.articles(limit: 100)
+        XCTAssertEqual(cache.count, 40)
+        await assertSearchError(.notReady, store: store!, text: "needle")
+        let progress = try await store!.prepareSearchBatch()
+        guard case .preparing(let count) = progress else { return XCTFail("backfill completed in one batch") }
+        XCTAssertGreaterThan(count, 0)
+        XCTAssertLessThan(count, 40)
+        await assertSearchError(.notReady, store: store!, text: "needle")
+
+        // Both writes finish with most of the initial corpus still unindexed.
+        let article = try XCTUnwrap(cache.first)
+        try await store!.setBookmarked(articleID: article.id, bookmarked: true)
+        let translation = ArticleTranslation(articleID: article.id, sourceFingerprint: article.sourceFingerprint,
+                                             targetLanguage: "ja", title: "保存済み", body: "再開しても検索可能")
+        try await store!.saveTranslation(translation)
+        let newArticle = FeedArticle(id: "new", feedID: subscription.id, title: "needle added", url: nil)
+        try await store!.saveFetchedFeed(feed(subscription, [newArticle]))
+        XCTAssertEqual(try raw.scalar("SELECT count(*) FROM bookmarks"), 1)
+        store = nil
+
+        let reopened = try FeedLibraryStore(directory: directory, deferSearchPreparation: true)
+        let resumedProgress = try await reopened.searchPreparationStatus()
+        XCTAssertEqual(resumedProgress, progress)
+        // A second scene can help: both use the durable cursor under a write lock.
+        let otherScene = try FeedLibraryStore(directory: directory, deferSearchPreparation: true)
+        try await withThrowingTaskGroup(of: Bool.self) { group in
+            for active in [reopened, otherScene] {
+                group.addTask {
+                    for _ in 0 ..< 100 {
+                        if try await active.prepareSearchBatch().isReady { return true }
+                        await Task.yield()
+                    }
+                    return false
+                }
+            }
+            for try await completed in group { XCTAssertTrue(completed) }
+        }
+        let page = try await reopened.searchArticles(ArticleSearchRequest(text: "needle", limit: 100))
+        XCTAssertEqual(Set(page.results.map(\.article.id)), Set((0 ..< 40).map { "item-\($0)" } + ["new"]))
+        let japanese = try await otherScene.searchArticles(ArticleSearchRequest(text: "再開しても検索可能"))
+        XCTAssertEqual(japanese.results.first?.translation, translation)
+        XCTAssertEqual(japanese.results.first?.isBookmarked, true)
+        XCTAssertEqual(try raw.scalar("SELECT count(*) FROM sqlite_master WHERE name='article_search_preparation'"), 0)
+    }
+
+    func testCancelledPreparationDoesNotAdvanceDurableCursor() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let store = try FeedLibraryStore(directory: directory, deferSearchPreparation: true)
+        let task = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await store.prepareSearchBatch()
+        }
+        do { _ = try await task.value; XCTFail("cancelled batch completed") }
+        catch is CancellationError {} catch { XCTFail("unexpected error: \(error)") }
+        let progress = try await store.searchPreparationStatus()
+        XCTAssertEqual(progress, .preparing(processedArticles: 0))
+        let completed = try await store.prepareSearchBatch()
+        XCTAssertEqual(completed, .ready)
+    }
+
+    func testUnknownPreparationMarkerIsRejectedWithoutMutation() async throws {
+        let directory = temporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        _ = try FeedLibraryStore(directory: directory)
+        let raw = try SearchTestDatabase(url: directory.appendingPathComponent("feed-library.sqlite"))
+        try raw.execute("CREATE TABLE article_search_preparation(future TEXT); INSERT INTO article_search_preparation VALUES('preserve')")
+        XCTAssertThrowsError(try FeedLibraryStore(directory: directory, deferSearchPreparation: true))
+        XCTAssertEqual(try raw.text("SELECT future FROM article_search_preparation"), "preserve")
+    }
+
     private func makeStore() throws -> (URL, FeedLibraryStore, FeedSubscription) {
         let directory = temporaryDirectory()
         let subscription = try FeedSubscription(url: URL(string: "https://search.example/feed")!)

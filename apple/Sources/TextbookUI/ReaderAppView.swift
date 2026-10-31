@@ -67,17 +67,17 @@ struct FeedReaderView: View {
             Group {
                 if model.isLoading {
                     ProgressView("保存済み記事を読み込み中")
-                } else if model.hasSearchQuery && model.isSearching && model.searchResults.isEmpty {
+                } else if model.showsSearchResults && model.isSearching && model.searchResults.isEmpty {
                     ProgressView("すべての保存済み記事を検索中")
                         .accessibilityIdentifier("article-search-loading")
                 } else if model.visibleArticles.isEmpty {
                     VStack {
                         ContentUnavailableView(
                             searchEmptyTitle,
-                            systemImage: model.hasSearchQuery ? "magnifyingglass" : (model.showsBookmarksOnly ? "bookmark" : "newspaper"),
-                            description: Text(model.hasSearchQuery ? (model.searchMessage ?? "検索条件を変えてお試しください。") : "フィードを追加して再読み込みしてください。")
+                            systemImage: model.showsSearchResults ? "magnifyingglass" : (model.showsBookmarksOnly ? "bookmark" : "newspaper"),
+                            description: Text(model.showsSearchResults ? (model.searchMessage ?? "検索条件を変えてお試しください。") : "フィードを追加して再読み込みしてください。")
                         )
-                        if model.hasSearchQuery && (model.searchFailed || model.searchPreparing) {
+                        if model.showsSearchResults && (model.searchFailed || model.searchPreparing) {
                             Button("検索を再試行") { model.retrySearch() }
                                 .accessibilityIdentifier("article-search-retry")
                         }
@@ -102,7 +102,7 @@ struct FeedReaderView: View {
                                     Text(article.title.isEmpty ? "無題の記事" : article.title)
                                     .font(.headline).lineLimit(3)
                                     let preview = article.translationSourceBody.trimmingCharacters(in: .whitespacesAndNewlines)
-                                    if model.hasSearchQuery && !preview.isEmpty {
+                                    if model.showsSearchResults && !preview.isEmpty {
                                         Text(preview).font(.callout).foregroundStyle(.secondary).lineLimit(2)
                                     }
                                 }
@@ -117,7 +117,7 @@ struct FeedReaderView: View {
                             }
                             .accessibilityIdentifier("article-" + article.id)
                         }
-                        if model.hasSearchQuery && model.canLoadMoreSearchResults {
+                        if model.showsSearchResults && model.canLoadMoreSearchResults {
                             Button("さらに50件を読み込む") { model.loadMoreSearchResults() }
                                 .accessibilityIdentifier("article-search-load-more")
                         } else if model.isLoadingMoreSearchResults {
@@ -128,7 +128,7 @@ struct FeedReaderView: View {
                 }
             }
             .navigationTitle(model.showsBookmarksOnly ? "ブックマーク" : "記事")
-            .searchable(text: $model.searchText, placement: searchFieldPlacement, prompt: "原文・保存済み日本語訳を検索")
+            .searchable(text: $model.searchText, placement: searchFieldPlacement, prompt: model.isPreparingSearch ? "検索を準備中" : "原文・保存済み日本語訳を検索")
             .accessibilityIdentifier("article-search-field")
             .safeAreaInset(edge: .top) { controls }
         } detail: {
@@ -199,6 +199,17 @@ struct FeedReaderView: View {
                 if model.isRefreshing { ProgressView().controlSize(.small) }
                 Text(model.message).font(.caption).foregroundStyle(.secondary)
             }
+            if let preparationMessage = model.preparationMessage {
+                HStack {
+                    if model.preparationFailure == nil { ProgressView().controlSize(.small) }
+                    Text(preparationMessage).font(.caption).foregroundStyle(.secondary)
+                    if model.preparationFailure != nil {
+                        Button("検索の準備を再試行") { Task { await model.startSearchPreparation() } }
+                            .accessibilityIdentifier("article-index-retry")
+                    }
+                }
+                .accessibilityIdentifier("article-index-progress")
+            }
             if model.hasSearchQuery, let searchMessage = model.searchMessage {
                 Text(searchMessage)
                     .font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
@@ -221,7 +232,7 @@ struct FeedReaderView: View {
     }
 
     private var searchEmptyTitle: String {
-        if model.hasSearchQuery {
+        if model.showsSearchResults {
             if model.searchPreparing { return "検索索引を準備しています" }
             if model.searchFailed { return "検索できませんでした" }
             return "一致する記事はありません"
