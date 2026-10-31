@@ -181,7 +181,9 @@ export async function authWorkerFixture(
     for (const file of [
       "0001_access.sql",
       "0002_source_aliases.sql",
-      ...(documentManagement ? ["0003_policy_management.sql"] : []),
+      ...(documentManagement
+        ? ["0003_policy_management.sql", "0004_policy_history.sql"]
+        : []),
     ])
       await (
         await mf.getD1Database("DOCUMENT_ACCESS_DB")

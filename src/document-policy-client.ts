@@ -22,6 +22,12 @@ export type DocumentPolicy = PolicyMetadata & {
   members: string[];
   aliases: PolicyAlias[];
 };
+export type PolicyHistoryEntry = {
+  revision: number;
+  actor: string | null;
+  recorded: number;
+  kind: "baseline" | "create" | "update";
+};
 export type PolicyInput = Pick<
   DocumentPolicy,
   "url" | "enabled" | "expires" | "evidence" | "members" | "aliases"
@@ -98,6 +104,16 @@ function policy(v: unknown): v is DocumentPolicy {
         integer(a.policyRevision),
     ) &&
     new Set(p.aliases.map((a) => a.url)).size === p.aliases.length
+  );
+}
+function historyEntry(v: unknown): v is PolicyHistoryEntry {
+  return (
+    object(v) &&
+    integer(v.revision) &&
+    integer(v.recorded) &&
+    (v.kind === "baseline"
+      ? v.actor === null
+      : (v.kind === "create" || v.kind === "update") && policyAccount(v.actor))
   );
 }
 // Validate the explicit draft, never infer permission from a reachable URL.
@@ -293,6 +309,46 @@ export class DocumentPolicyClient {
     const result = await this.command("read", { id }, signal);
     if (!policy(result.policy) || result.policy.id !== id) throw invalid();
     return result.policy;
+  }
+  async history(id: string, before: number | null, signal: AbortSignal) {
+    const result = await this.command(
+      "history",
+      { id, ...(before ? { before } : {}) },
+      signal,
+    );
+    if (
+      result.id !== id ||
+      !Array.isArray(result.entries) ||
+      result.entries.length > 20 ||
+      !result.entries.every(historyEntry) ||
+      !result.entries.every(
+        (e, i, rows) =>
+          e.revision <
+          (i ? rows[i - 1].revision : (before ?? Number.MAX_SAFE_INTEGER)),
+      ) ||
+      !(
+        result.before === null ||
+        (result.entries.length === 20 &&
+          result.before === result.entries.at(-1)?.revision)
+      )
+    )
+      throw invalid();
+    return {
+      entries: result.entries as PolicyHistoryEntry[],
+      before: result.before as number | null,
+    };
+  }
+  async revision(id: string, revision: number, signal: AbortSignal) {
+    const result = await this.command("revision", { id, revision }, signal);
+    if (
+      !historyEntry(result.entry) ||
+      result.entry.revision !== revision ||
+      !policy(result.policy) ||
+      result.policy.id !== id ||
+      result.policy.managementRevision !== revision
+    )
+      throw invalid();
+    return { entry: result.entry, policy: result.policy };
   }
   async save(
     input: PolicyInput,

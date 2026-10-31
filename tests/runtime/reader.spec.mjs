@@ -389,6 +389,23 @@ async function runReaderScenario(browser, info, aliasMode) {
       .first();
     expect(addedPolicy.revision).toBe(1);
     expect(addedPolicy.management_revision).toBe(2);
+    await openAdmin();
+    await admin
+      .getByRole("button", { name: "変更履歴を確認", exact: true })
+      .click();
+    await admin
+      .getByRole("button", { name: "変更 #1 を読む", exact: true })
+      .click();
+    const policyHistory = admin.getByRole("region", {
+      name: "共有設定の変更履歴",
+    });
+    await expect(policyHistory).toContainText("共有する利用者（1人）");
+    await expect(policyHistory).toContainText(a.account);
+    await expect(policyHistory).not.toContainText(b.account);
+    await expect(
+      admin.getByLabel("共有する利用者ID（1行に1人）", { exact: true }),
+    ).toHaveValue([a.account, b.account].sort().join("\n"));
+    await a.page.getByRole("button", { name: "閉じる", exact: true }).click();
     const bBefore = await storedArticles(b.page);
     expect(bBefore[0].read).toBe(false);
     expect(bBefore[0].saved).toBe(false);
@@ -458,6 +475,70 @@ async function runReaderScenario(browser, info, aliasMode) {
     await expect(b.page.locator(".rss-source-text")).toContainText(
       "Runtime version 1",
     );
+    expect(articleFetches).toBe(3);
+    await openAdmin();
+    await admin
+      .getByRole("button", { name: "変更履歴を確認", exact: true })
+      .click();
+    await admin
+      .getByRole("button", { name: "変更 #2 を読む", exact: true })
+      .click();
+    await admin
+      .getByRole("button", { name: "この記録から下書きを作る", exact: true })
+      .click();
+    await expect(admin.getByRole("status")).toContainText(
+      "履歴から下書きを作りました",
+    );
+    await expect(
+      admin.getByLabel("指定した利用者への本文共有を有効にする", {
+        exact: true,
+      }),
+    ).not.toBeChecked();
+    await expect(
+      admin.getByLabel("共有する利用者ID（1行に1人）", { exact: true }),
+    ).toHaveValue([a.account, b.account].sort().join("\n"));
+    // Merely opening the recovery draft cannot reinstate the removed reader.
+    const beforeRecovery = await db
+      .prepare("SELECT management_revision FROM document_policies WHERE id=?")
+      .bind(initialPolicy.id)
+      .first();
+    expect(beforeRecovery.management_revision).toBe(3);
+    await admin
+      .getByLabel("指定した利用者への本文共有を有効にする", { exact: true })
+      .check();
+    if (aliasMode) {
+      await expect(
+        admin.getByLabel("この別名を有効にする", { exact: true }),
+      ).not.toBeChecked();
+      await expect(
+        admin.getByLabel("現在の共有条件で、同じ記事を指すことを確認しました", {
+          exact: true,
+        }),
+      ).not.toBeChecked();
+      await admin.getByLabel("この別名を有効にする", { exact: true }).check();
+      await admin
+        .getByLabel("現在の共有条件で、同じ記事を指すことを確認しました", {
+          exact: true,
+        })
+        .check();
+    }
+    await saveAdmin();
+    const recovered = await db
+      .prepare("SELECT management_revision FROM document_policies WHERE id=?")
+      .bind(initialPolicy.id)
+      .first();
+    expect(recovered.management_revision).toBe(4);
+    const events = await db
+      .prepare(
+        "SELECT management_revision FROM document_policy_history WHERE policy_id=? ORDER BY management_revision",
+      )
+      .bind(initialPolicy.id)
+      .all();
+    expect(events.results.map((e) => e.management_revision)).toEqual([
+      1, 2, 3, 4,
+    ]);
+    const restoredRead = await retainedServerVersion(b, origin, articleURL);
+    expect(restoredRead.version).toEqual(first.version);
     expect(articleFetches).toBe(3);
     await f.restart();
     fail = false;

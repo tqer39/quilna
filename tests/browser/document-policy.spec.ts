@@ -21,12 +21,14 @@ function saved(): DocumentPolicy {
 async function fixture(page: Page, initial: DocumentPolicy | null = null) {
   const state = {
     policy: initial,
+    history: initial ? [structuredClone(initial)] : ([] as DocumentPolicy[]),
     enabled: true,
     account,
     mode: "ok",
     hold: null as Promise<void> | null,
     saves: 0,
     statuses: 0,
+    updates: [] as Record<string, unknown>[],
     requests: [] as string[],
   };
   await page.route("**/api/session", (r) =>
@@ -54,10 +56,49 @@ async function fixture(page: Page, initial: DocumentPolicy | null = null) {
           after: null,
         },
       });
-    if (action === "read")
+    if (action === "read") {
+      if (state.mode === "read-failure") return r.abort("failed");
+      if (state.mode === "read-logout") state.account = other;
       return r.fulfill({ json: { account, policy: state.policy } });
+    }
+    if (action === "history") {
+      const entries = state.history
+        .map((p) => ({
+          revision: p.managementRevision,
+          actor: account,
+          recorded: 1,
+          kind: "update",
+        }))
+        .reverse();
+      return r.fulfill({ json: { account, id, entries, before: null } });
+    }
+    if (action === "revision") {
+      const p = structuredClone(
+        state.history.find((p) => p.managementRevision === body.revision)!,
+      );
+      if (state.mode === "history-invalid")
+        p.id = "88888888-8888-4888-8888-888888888888";
+      if (state.mode === "history-logout") state.account = other;
+      return r.fulfill({
+        json: {
+          account,
+          policy: p,
+          entry: {
+            revision: body.revision,
+            actor: account,
+            recorded: 1,
+            kind: "update",
+          },
+        },
+      });
+    }
     state.saves++;
-    if (state.mode === "conflict")
+    state.updates.push(body);
+    if (
+      state.mode === "conflict" ||
+      (state.policy &&
+        body.expectedRevision !== state.policy.managementRevision)
+    )
       return r.fulfill({
         status: 409,
         json: { account, status: "document-conflict" },
@@ -74,6 +115,7 @@ async function fixture(page: Page, initial: DocumentPolicy | null = null) {
       managementRevision: (old?.managementRevision ?? 0) + 1,
       updated: Date.now(),
     };
+    state.history.push(structuredClone(state.policy!));
     if (state.mode === "lost") return r.abort("failed");
     const result = structuredClone(state.policy!);
     // JSON field order is not part of the protocol's meaning.
@@ -258,6 +300,185 @@ test("conflicting edits preserve the draft and require explicit replacement with
     root.getByLabel("本文を共有できる根拠", { exact: true }),
   ).toHaveValue("Another editor's saved permission");
   expect(state.saves).toBe(1);
+});
+
+async function openOldRevision(root: ReturnType<Page["locator"]>) {
+  await root
+    .getByRole("button", { name: "変更履歴を確認", exact: true })
+    .click();
+  await root
+    .getByRole("button", { name: "変更 #1 を読む", exact: true })
+    .click();
+}
+
+for (const design of ["studio", "editorial", "focus"])
+  test(`${design} recovers a historical draft against the latest revision with explicit reapproval`, async ({
+    page,
+  }, info) => {
+    await page.setViewportSize({ width: 320, height: 844 });
+    await page.addInitScript(
+      (d) => localStorage.setItem("quilna.reader.design.v1", d),
+      design,
+    );
+    const old = saved();
+    old.members.push(other);
+    old.aliases.push({
+      url: url + "?old-alias",
+      enabled: true,
+      expires: old.expires,
+      evidence: "Old explicit source alias",
+      policyRevision: 1,
+    });
+    const { state, root } = await fixture(page, old);
+    await edit(root);
+    const reason = root.getByLabel("本文を共有できる根拠", { exact: true });
+    await reason.fill("Keep my unsaved draft");
+    await openOldRevision(root);
+    // Another administrator changed the source after this editor was opened.
+    state.policy = {
+      ...old,
+      enabled: false,
+      members: [account],
+      aliases: [],
+      evidence: "Current updated permission",
+      policyRevision: 4,
+      managementRevision: 5,
+    };
+    const current = structuredClone(state.policy);
+    const recover = root.getByRole("button", {
+      name: "この記録から下書きを作る",
+      exact: true,
+    });
+    await Promise.all([
+      new Promise<void>((resolve) =>
+        page.once("dialog", async (d) => {
+          await d.dismiss();
+          resolve();
+        }),
+      ),
+      recover.click(),
+    ]);
+    await expect(recover).toBeEnabled();
+    await expect(reason).toHaveValue("Keep my unsaved draft");
+    expect(state.policy).toEqual(current);
+    page.once("dialog", (d) => d.accept());
+    await root
+      .getByRole("button", { name: "この記録から下書きを作る", exact: true })
+      .click();
+    await expect(reason).toHaveValue(old.evidence);
+    await expect(
+      root.getByLabel("共有する利用者ID（1行に1人）", { exact: true }),
+    ).toHaveValue(account + "\n" + other);
+    const enabled = root.getByLabel("指定した利用者への本文共有を有効にする", {
+      exact: true,
+    });
+    const alias = root.getByLabel("この別名を有効にする", { exact: true });
+    const approval = root.getByLabel(
+      "現在の共有条件で、同じ記事を指すことを確認しました",
+      { exact: true },
+    );
+    await expect(enabled).not.toBeChecked();
+    await expect(alias).not.toBeChecked();
+    await expect(approval).not.toBeChecked();
+    expect(state.saves).toBe(0);
+    expect(state.policy).toEqual(current);
+    await enabled.check();
+    await alias.check();
+    await root
+      .getByRole("button", { name: "変更内容を確認", exact: true })
+      .click();
+    await expect(root.getByRole("status")).toContainText(
+      "同じ記事を指すことを確認してください",
+    );
+    await approval.check();
+    await preview(root);
+    await expect(root.locator(".rss-policy-review")).toContainText(other);
+    expect(state.saves).toBe(0);
+    await root.locator(".rss-policy-review").scrollIntoViewIfNeeded();
+    await page.screenshot({ path: info.outputPath(`recovery-${design}.png`) });
+    await root
+      .getByRole("button", { name: "この内容を保存", exact: true })
+      .click();
+    await expect(root.getByRole("status")).toContainText(
+      "共有設定を保存しました",
+    );
+    expect(state.updates[0].expectedRevision).toBe(5);
+    expect(state.policy?.managementRevision).toBe(6);
+    expect(state.policy?.policyRevision).toBe(5);
+    expect(state.policy?.aliases[0].policyRevision).toBe(5);
+    expect(state.policy?.expires).toBe(old.expires);
+    expect(state.history[0]).toEqual(old);
+    expect(state.history.at(-1)?.members).toEqual([account, other]);
+  });
+
+for (const mode of ["read-failure", "read-logout"])
+  test(`${mode} during historical recovery preserves the draft and saved permissions`, async ({
+    page,
+  }) => {
+    const original = saved(),
+      { state, root } = await fixture(page, original);
+    await edit(root);
+    const reason = root.getByLabel("本文を共有できる根拠", { exact: true });
+    await reason.fill("Unchanged draft after failed recovery");
+    await openOldRevision(root);
+    state.mode = mode;
+    await root
+      .getByRole("button", { name: "この記録から下書きを作る", exact: true })
+      .click();
+    await expect(root.getByRole("status")).toContainText("確認できません");
+    if (mode === "read-logout") {
+      await expect(reason).toBeHidden();
+      state.account = account;
+      await connect(root);
+    }
+    await expect(reason).toHaveValue("Unchanged draft after failed recovery");
+    expect(state.policy).toEqual(original);
+    expect(state.saves).toBe(0);
+  });
+
+test("historical recovery does not renew an expired grant and a concurrent save cannot overwrite new permissions", async ({
+  page,
+}) => {
+  const old = saved();
+  old.expires = Date.now() - 86400000;
+  const { state, root } = await fixture(page, old);
+  await edit(root);
+  await openOldRevision(root);
+  await root
+    .getByRole("button", { name: "この記録から下書きを作る", exact: true })
+    .click();
+  await expect(root.getByRole("status")).toContainText(
+    "履歴から下書きを作りました",
+  );
+  const enabled = root.getByLabel("指定した利用者への本文共有を有効にする", {
+    exact: true,
+  });
+  await enabled.check();
+  await root
+    .getByRole("button", { name: "変更内容を確認", exact: true })
+    .click();
+  await expect(root.getByRole("status")).toContainText("未来の期限が必要");
+  expect(state.saves).toBe(0);
+  await enabled.uncheck();
+  await preview(root);
+  state.policy = {
+    ...old,
+    managementRevision: 2,
+    members: [],
+    evidence: "Another administrator revoked permission",
+  };
+  const current = structuredClone(state.policy);
+  await root
+    .getByRole("button", { name: "この内容を保存", exact: true })
+    .click();
+  await expect(root.getByRole("status")).toContainText("別の編集");
+  expect(state.policy).toEqual(current);
+  await expect(
+    root.getByLabel("本文を共有できる根拠", { exact: true }),
+  ).toHaveValue(old.evidence);
+  await expect(
+    root.getByRole("button", { name: "変更内容を確認", exact: true }),
+  ).toBeDisabled();
 });
 test("a committed save with a lost response cannot be retried blindly and remains recoverable", async ({
   page,
@@ -472,3 +693,57 @@ test("a second pending save replaces the previous success notice until its own c
   expect(state.policy?.managementRevision).toBe(3);
   expect(state.policy?.members).toEqual([account, other]);
 });
+
+for (const design of ["studio", "editorial", "focus"]) {
+  test(`${design} reads historical permission without changing the dirty draft at 320px`, async ({
+    page,
+  }, info) => {
+    await page.setViewportSize({ width: 320, height: 844 });
+    await page.addInitScript(
+      (design) => localStorage.setItem("quilna.reader.design.v1", design),
+      design,
+    );
+    const p = saved(),
+      { state, root } = await fixture(page, p);
+    await edit(root);
+    const reason = root.getByLabel("本文を共有できる根拠", { exact: true });
+    await reason.fill("Unsaved current permission draft");
+    await root
+      .getByRole("button", { name: "変更履歴を確認", exact: true })
+      .click();
+    await root
+      .getByRole("button", { name: "変更 #1 を読む", exact: true })
+      .click();
+    const history = root.getByRole("region", { name: "共有設定の変更履歴" });
+    await expect(history).toContainText(p.evidence);
+    await expect(history).toContainText(account);
+    await expect(reason).toHaveValue("Unsaved current permission draft");
+    expect(state.saves).toBe(0);
+    const box = await history.evaluate((e) => ({
+      right: e.getBoundingClientRect().right,
+      width: innerWidth,
+    }));
+    expect(box.right).toBeLessThanOrEqual(box.width);
+    expect(await history.evaluate((e) => e.scrollWidth <= e.clientWidth)).toBe(
+      true,
+    );
+    await history.scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: `.local-state/policy-history-qa/${design}-${info.project.name}.png`,
+    });
+    state.mode = "history-invalid";
+    await root
+      .getByRole("button", { name: "変更 #1 を読む", exact: true })
+      .click();
+    await expect(root.getByRole("status")).toContainText(
+      "応答を確認できません",
+    );
+    await expect(reason).toHaveValue("Unsaved current permission draft");
+    state.mode = "history-logout";
+    await root
+      .getByRole("button", { name: "変更 #1 を読む", exact: true })
+      .click();
+    await expect(history).toBeHidden();
+    expect(state.saves).toBe(0);
+  });
+}

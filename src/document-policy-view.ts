@@ -175,25 +175,41 @@ export function documentPolicySettings(client = new DocumentPolicyClient()) {
     }
     controls();
   }
-  function renderEditor(saved: DocumentPolicy | null) {
+  function renderEditor(
+    saved: DocumentPolicy | null,
+    historical?: DocumentPolicy,
+  ) {
     previous = saved;
-    dirty = false;
+    dirty = !!historical;
     uncertain = false;
     recovery.replaceChildren();
     editor.replaceChildren();
-    const data: PolicyInput = saved ?? {
-      url: "",
-      enabled: false,
-      expires: Math.floor((Date.now() + 30 * 86400000) / 60000) * 60000,
-      evidence: "",
-      members: bound ? [bound] : [],
-      aliases: [],
-    };
+    const data: PolicyInput = historical
+      ? {
+          ...historical,
+          enabled: false,
+          aliases: historical.aliases.map((a) => ({ ...a, enabled: false })),
+        }
+      : (saved ?? {
+          url: "",
+          enabled: false,
+          expires: Math.floor((Date.now() + 30 * 86400000) / 60000) * 60000,
+          evidence: "",
+          members: bound ? [bound] : [],
+          aliases: [],
+        });
     const form = el("form"),
       fields = el("fieldset"),
       aliases = el("div"),
       preview = el("div");
     fields.append(el("legend", saved ? "共有設定を編集" : "新しい共有出典"));
+    if (historical)
+      fields.append(
+        el(
+          "p",
+          `変更 #${historical.managementRevision} から作った下書きです。共有と別名は無効にしてあり、期限は延長していません。利用者・根拠・期限を確認し、必要な共有と別名だけ有効にしてください。保存するまで現在の設定は変わりません。`,
+        ),
+      );
     const field = (
       parent: HTMLElement,
       label: string,
@@ -319,7 +335,7 @@ export function documentPolicySettings(client = new DocumentPolicyClient()) {
       const approve = check(
         node,
         "現在の共有条件で、同じ記事を指すことを確認しました",
-        !!a && a.policyRevision === revision(),
+        !historical && !!a && a.policyRevision === revision(),
       );
       const row = {
         node,
@@ -473,6 +489,116 @@ export function documentPolicySettings(client = new DocumentPolicyClient()) {
     });
     form.append(fields, review, reread, preview);
     editor.append(form);
+    if (saved) {
+      const history = el("section"),
+        entries = el("div"),
+        detail = el("div");
+      history.setAttribute("aria-label", "共有設定の変更履歴");
+      const show = async (before: number | null, signal: AbortSignal) => {
+        const page = await client.history(saved.id, before, signal);
+        entries.replaceChildren();
+        detail.replaceChildren();
+        if (!page.entries.length)
+          entries.append(
+            el(
+              "p",
+              "記録された変更はありません。履歴機能の導入前の変更は復元できません。",
+            ),
+          );
+        for (const entry of page.entries)
+          entries.append(
+            button(
+              `変更 #${entry.revision} を読む`,
+              () =>
+                void run(async (s) => {
+                  const result = await client.revision(
+                    saved.id,
+                    entry.revision,
+                    s,
+                  );
+                  const p = result.policy,
+                    e = result.entry;
+                  detail.replaceChildren(
+                    el("h4", `変更 #${e.revision} の保存内容`),
+                    el(
+                      "p",
+                      "過去の記録の閲覧です。現在の共有設定と編集中の内容は変更しません。",
+                    ),
+                    el(
+                      "p",
+                      e.kind === "baseline"
+                        ? "履歴機能を導入する前の設定です。変更した人と元の変更日時は不明です。"
+                        : `変更した利用者: ${e.actor}`,
+                    ),
+                    el(
+                      "p",
+                      `${e.kind === "baseline" ? "履歴への記録" : "変更"}日時: ${new Date(e.recorded).toLocaleString()}`,
+                    ),
+                    el("p", `出典: ${p.url}`),
+                    el(
+                      "p",
+                      `共有: ${p.enabled ? "有効" : "無効"} · 期限: ${new Date(p.expires).toLocaleString()}`,
+                    ),
+                    el("p", `共有の根拠: ${p.evidence}`),
+                    el("p", `共有する利用者（${p.members.length}人）`),
+                  );
+                  const people = el("ul");
+                  for (const member of p.members)
+                    people.append(el("li", member));
+                  detail.append(
+                    people,
+                    el("p", `別名（${p.aliases.length}件）`),
+                  );
+                  for (const a of p.aliases)
+                    detail.append(
+                      el(
+                        "p",
+                        `${a.enabled ? "有効" : "無効"}: ${a.url} · 期限: ${new Date(a.expires).toLocaleString()} · 根拠: ${a.evidence} · 承認した共有条件 #${a.policyRevision}`,
+                      ),
+                    );
+                  detail.append(
+                    button(
+                      "この記録から下書きを作る",
+                      () =>
+                        void run(async (signal) => {
+                          const latest = await client.read(saved.id, signal);
+                          if (
+                            latest.url !== p.url ||
+                            latest.managementRevision < p.managementRevision
+                          )
+                            throw new PolicyError(
+                              "現在の共有設定と履歴の対応を確認できません。下書きは変更していません。",
+                            );
+                          if (!discard()) return;
+                          renderEditor(latest, p);
+                          notice.textContent =
+                            "履歴から下書きを作りました。現在の共有設定は変更していません。内容を確認してから保存してください。";
+                        }),
+                    ),
+                  );
+                  notice.textContent =
+                    "過去の保存内容を読み込みました。下書きは保持しています。";
+                }),
+            ),
+          );
+        if (page.before)
+          entries.append(
+            button(
+              "さらに前の20件",
+              () => void run((s) => show(page.before, s)),
+            ),
+          );
+        notice.textContent =
+          "変更履歴を読み込みました。下書きは保持しています。";
+      };
+      history.append(
+        el("h4", "変更履歴"),
+        button("変更履歴を確認", () => void run((s) => show(null, s))),
+        entries,
+        detail,
+      );
+      editor.append(history);
+    }
     controls();
   }
   window.addEventListener("beforeunload", (event) => {

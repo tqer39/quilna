@@ -35,6 +35,8 @@ const fields = {
 const commands = {
   "admin-list": z.object({ after: uuid.optional() }).strict(),
   "admin-read": z.object({ id: uuid }).strict(),
+  "admin-history": z.object({ id: uuid, before: revision.optional() }).strict(),
+  "admin-revision": z.object({ id: uuid, revision }).strict(),
   "admin-create": z.object({ url: z.string().max(2048), ...fields }).strict(),
   "admin-update": z
     .object({ id: uuid, expectedRevision: revision, ...fields })
@@ -48,6 +50,19 @@ const policySelect = `SELECT ${baseColumns},
   (SELECT json_group_array(json_object('url',alias_url,'enabled',enabled,'expires',expires,'evidence',evidence,'policyRevision',policy_revision)) FROM
     (SELECT * FROM document_aliases WHERE policy_id=p.id ORDER BY alias_url)) AS aliases
   FROM document_policies p`;
+
+const snapshot = `json_object('id',id,'source_url',source_url,'revision',revision,
+  'enabled',enabled,'expires',expires,'evidence',evidence,
+  'management_revision',management_revision,'management_updated',management_updated,
+  'members',CAST(members AS TEXT),'aliases',CAST(aliases AS TEXT))`;
+const auditMetadata = z
+  .object({
+    revision,
+    actor: ownerHash.nullable(),
+    recorded: timestamp,
+    kind: z.enum(["baseline", "create", "update"]),
+  })
+  .refine((v) => (v.kind === "baseline") === (v.actor === null));
 
 export class DocumentPolicyAdmin {
   constructor(env, now = Date.now) {
@@ -138,6 +153,18 @@ export class DocumentPolicyAdmin {
       aliases,
     };
   }
+  historyMetadata(row) {
+    const parsed = auditMetadata.safeParse(row);
+    if (!parsed.success) throw Error("document-invalid");
+    return parsed.data;
+  }
+  historyPolicy(row) {
+    try {
+      return this.decode(JSON.parse(row.snapshot));
+    } catch {
+      throw Error("document-invalid");
+    }
+  }
   async handle(owner, action, raw) {
     if (action === "admin-status")
       return json(200, { account: owner, enabled: this.enabled(owner) });
@@ -161,6 +188,49 @@ export class DocumentPolicyAdmin {
           policies: rows.slice(0, 20).map((r) => this.metadata(r)),
           after: rows.length > 20 ? rows[19].id : null,
         };
+      } else if (action === "admin-history" || action === "admin-revision") {
+        // Check existence without exposing historical records to ordinary readers.
+        if (
+          !(await db
+            .prepare("SELECT id FROM document_policies WHERE id=?")
+            .bind(input.id)
+            .first())
+        )
+          throw Error("document-unavailable");
+        if (action === "admin-history") {
+          const rows = (
+            await db
+              .prepare(
+                `SELECT management_revision AS revision, actor, recorded, kind
+            FROM document_policy_history WHERE policy_id=? AND management_revision<?
+            ORDER BY management_revision DESC LIMIT 21`,
+              )
+              .bind(input.id, input.before ?? Number.MAX_SAFE_INTEGER)
+              .all()
+          ).results;
+          value = {
+            id: input.id,
+            entries: rows.slice(0, 20).map((r) => this.historyMetadata(r)),
+            before: rows.length > 20 ? rows[19].revision : null,
+          };
+        } else {
+          const row = await db
+            .prepare(
+              `SELECT management_revision AS revision,actor,recorded,kind,snapshot
+            FROM document_policy_history WHERE policy_id=? AND management_revision=?`,
+            )
+            .bind(input.id, input.revision)
+            .first();
+          if (!row) throw Error("document-unavailable");
+          const entry = this.historyMetadata(row),
+            policy = this.historyPolicy(row);
+          if (
+            policy.id !== input.id ||
+            policy.managementRevision !== entry.revision
+          )
+            throw Error("document-invalid");
+          value = { entry, policy };
+        }
       } else if (action === "admin-read") {
         value = {
           policy: this.decode(
@@ -210,6 +280,22 @@ export class DocumentPolicyAdmin {
         // All dependent writes are gated by a fresh server-only token. A losing
         // compare-and-swap cannot delete or replace another edit's membership.
         const result = await db.batch([
+          // Retain the pre-audit state once, without inventing its original actor/date.
+          ...(action === "admin-update"
+            ? [
+                sql(
+                  `INSERT INTO document_policy_history(policy_id,management_revision,actor,recorded,kind,snapshot)
+            SELECT id,management_revision,NULL,?,'baseline',${snapshot} FROM (${policySelect} WHERE p.id=? AND p.management_revision=? AND p.management_revision<? AND (p.evidence=? OR p.revision<?)) q
+            WHERE NOT EXISTS (SELECT 1 FROM document_policy_history h WHERE h.policy_id=q.id AND h.management_revision=q.management_revision)`,
+                  now,
+                  id,
+                  input.expectedRevision,
+                  Number.MAX_SAFE_INTEGER - 1,
+                  data.evidence,
+                  Number.MAX_SAFE_INTEGER - 1,
+                ),
+              ]
+            : []),
           first,
           sql(
             `DELETE FROM document_members WHERE policy_id IN (${owned})`,
@@ -233,6 +319,15 @@ export class DocumentPolicyAdmin {
             SELECT json_extract(j.value,'$.url'),p.id,json_extract(j.value,'$.policyRevision'),json_extract(j.value,'$.enabled'),json_extract(j.value,'$.expires'),json_extract(j.value,'$.evidence')
             FROM document_policies p,json_each(?) j WHERE p.id=? AND p.management_operation=?`,
             JSON.stringify(data.aliases),
+            id,
+            operation,
+          ),
+          sql(
+            `INSERT INTO document_policy_history(policy_id,management_revision,actor,recorded,kind,snapshot)
+            SELECT id,management_revision,?,?,?,${snapshot} FROM (${policySelect} WHERE p.id=? AND p.management_operation=?)`,
+            owner,
+            now,
+            action === "admin-create" ? "create" : "update",
             id,
             operation,
           ),
