@@ -153,11 +153,13 @@ export class DocumentPolicyAdmin {
       aliases,
     };
   }
+  /** Validate stored audit metadata; reject malformed actors, kinds or revisions. */
   historyMetadata(row) {
     const parsed = auditMetadata.safeParse(row);
     if (!parsed.success) throw Error("document-invalid");
     return parsed.data;
   }
+  /** Decode an immutable snapshot, reporting corrupt JSON or policy data as invalid. */
   historyPolicy(row) {
     try {
       return this.decode(JSON.parse(row.snapshot));
@@ -165,6 +167,12 @@ export class DocumentPolicyAdmin {
       throw Error("document-invalid");
     }
   }
+  /**
+   * Report admin availability or dispatch commands for the configured admin only.
+   * History reads are bounded; writes atomically persist policy and audit snapshots
+   * with revision checks, rolling back on SQL failure. Failures become account-bound
+   * error responses rather than automatic retries or partial-success responses.
+   */
   async handle(owner, action, raw) {
     if (action === "admin-status")
       return json(200, { account: owner, enabled: this.enabled(owner) });

@@ -18,6 +18,11 @@ function saved(): DocumentPolicy {
     aliases: [],
   };
 }
+/**
+ * Mount policy settings with mutable, intercepted session/policy/history responses.
+ * Return the UI and synthetic server state so tests can gate requests or inject
+ * failures and account changes without granting real access or calling a service.
+ */
 async function fixture(page: Page, initial: DocumentPolicy | null = null) {
   const state = {
     policy: initial,
@@ -302,6 +307,7 @@ test("conflicting edits preserve the draft and require explicit replacement with
   expect(state.saves).toBe(1);
 });
 
+/** Open the fixture's first historical revision without replacing the draft. */
 async function openOldRevision(root: ReturnType<Page["locator"]>) {
   await root
     .getByRole("button", { name: "変更履歴を確認", exact: true })

@@ -41,7 +41,12 @@ export async function readBody(request, limit = 32768) {
     reader.releaseLock();
   }
 }
-/** Production entry supplies no authenticator; only a separately bundled test entry injects a principal. */
+/**
+ * Build the API router with origin, principal and account-binding checks.
+ * Document admin POSTs recheck identity before dispatch and after processing;
+ * the account command enforces CSRF. Without an authenticator, API requests fail
+ * closed; the production auth wrapper and isolated test entries inject one.
+ */
 export function createHandler({
   authenticate = null,
   credentialsEnabled = false,
