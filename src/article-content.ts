@@ -1,3 +1,4 @@
+import type { ArticleStructure, ArticleInfo } from "./article-structure";
 import { extractArticleDocument } from "./article-extraction";
 import { sourceURL } from "./feed-discovery";
 import type { DocumentReference } from "./source-document";
@@ -16,6 +17,9 @@ export type ArticleContent = {
   fetchedAt: string;
   codeRanges?: ArticleCodeRange[];
   document?: DocumentReference;
+  sourceTags?: string[];
+  structure?: ArticleStructure;
+  info?: ArticleInfo;
 };
 export type ArticleTranslation = {
   text: string;

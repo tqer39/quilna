@@ -424,66 +424,79 @@ function validateDocumentReferences(db: IDBDatabase) {
       const row = cursor.result;
       if (!row) return;
       const entry = row.value as BackupEntry;
-      let documentId: string | undefined,
-        versionId: string | undefined,
-        scope: string | undefined;
       const value = entry.value;
-      if (entry.kind === "documents") {
-        documentId = value.id as string;
-        versionId = value.currentVersionId as string;
-        scope = value.scope as string;
-      } else if (entry.kind === "documentVersions") {
-        documentId = value.documentId as string;
-        versionId = value.id as string;
-        scope = value.scope as string;
-      } else if (entry.kind === "articles") {
-        const content = value.content as
-          import("./article-content").ArticleContent | undefined;
-        documentId = content?.document?.documentId;
-        versionId = content?.document?.versionId;
-        scope = content?.document?.scope;
+      type Reference = {
+        documentId: string;
+        versionId: string;
+        scope: string;
+        sourceURL?: string;
+        content?: import("./article-content").ArticleContent;
+      };
+      const references: Reference[] = [];
+      if (entry.kind === "documents")
+        references.push({
+          documentId: value.id as string,
+          versionId: value.currentVersionId as string,
+          scope: value.scope as string,
+        });
+      else if (entry.kind === "documentVersions")
+        references.push({
+          documentId: value.documentId as string,
+          versionId: value.id as string,
+          scope: value.scope as string,
+        });
+      else if (entry.kind === "articles") {
+        const article = value as unknown as import("./feed-parser").FeedArticle;
+        if (article.content?.document)
+          references.push({
+            ...article.content.document,
+            content: article.content,
+          });
+        if (article.bodyUpdate?.latest)
+          references.push(article.bodyUpdate.latest);
       }
-      if (!documentId || !versionId) {
+      if (!references.length) {
         row.continue();
         return;
       }
-      const doc = store.get(["documents", documentId]),
-        version = store.get(["documentVersions", versionId]);
-      version.onsuccess = () => {
-        try {
-          const d = doc.result?.value as SourceDocument | undefined,
-            v = version.result?.value as DocumentVersion | undefined;
-          if (
-            !d ||
-            !v ||
-            d.id !== v.documentId ||
-            d.scope !== scope ||
-            v.scope !== scope ||
-            d.sourceURL !== v.sourceURL ||
-            (d.currentVersionId === v.id &&
-              d.validators !== undefined &&
-              d.validators.url !== v.content.url)
-          ) {
-            refuse();
-            return;
-          }
-          if (entry.kind === "articles") {
-            const content =
-              value.content as import("./article-content").ArticleContent;
+      let remaining = references.length;
+      for (const ref of references) {
+        const doc = store.get(["documents", ref.documentId]),
+          version = store.get(["documentVersions", ref.versionId]);
+        version.onsuccess = () => {
+          try {
+            const d = doc.result?.value as SourceDocument | undefined,
+              v = version.result?.value as DocumentVersion | undefined;
             if (
-              content.document?.sourceURL !== v.sourceURL ||
-              JSON.stringify({ ...sourceContent(content), fetchedAt: "" }) !==
-                JSON.stringify({ ...sourceContent(v.content), fetchedAt: "" })
+              !d ||
+              !v ||
+              d.id !== v.documentId ||
+              d.scope !== ref.scope ||
+              v.scope !== ref.scope ||
+              d.sourceURL !== v.sourceURL ||
+              (ref.sourceURL !== undefined && ref.sourceURL !== v.sourceURL) ||
+              (d.currentVersionId === v.id &&
+                d.validators !== undefined &&
+                d.validators.url !== v.content.url) ||
+              (ref.content &&
+                JSON.stringify({
+                  ...sourceContent(ref.content),
+                  fetchedAt: "",
+                }) !==
+                  JSON.stringify({
+                    ...sourceContent(v.content),
+                    fetchedAt: "",
+                  }))
             ) {
               refuse();
               return;
             }
+            if (--remaining === 0) row.continue();
+          } catch {
+            refuse();
           }
-          row.continue();
-        } catch {
-          refuse();
-        }
-      };
+        };
+      }
     };
     tx.oncomplete = () => resolve();
     tx.onerror = tx.onabort = () =>

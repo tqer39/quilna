@@ -34,6 +34,9 @@ test("menu counts follow committed cross-tab replacements, source changes and fu
           read,
           saved,
           title: id,
+          ...(id === "b"
+            ? { tags: { version: 1, state: "unclassified", suggestions: [] } }
+            : {}),
           body: "Body",
           url: "",
           published: null,
@@ -92,7 +95,7 @@ test("menu counts follow committed cross-tab replacements, source changes and fu
           feedUrl: "https://example.org/b",
           read: true,
           saved: true,
-          tags: { version: 1, state: "unclassified", suggestions: [] },
+          tags: { version: 2, state: "unclassified", suggestions: [] },
         });
       tx.oncomplete = () => {
         db.close();

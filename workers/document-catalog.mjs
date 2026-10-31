@@ -207,7 +207,10 @@ export class DocumentCatalog {
           ? {
               content: structuredClone(work.current.content),
               validators:
-                work.state.validators && structuredClone(work.state.validators),
+                force && !work.current.content.structure
+                  ? undefined
+                  : work.state.validators &&
+                    structuredClone(work.state.validators),
             }
           : undefined,
       );

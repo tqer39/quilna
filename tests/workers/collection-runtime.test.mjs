@@ -24,7 +24,8 @@ test("real DO alarm collects without browser traffic, persists, isolates owners 
   const origin = "http://collection.test",
     url = "https://publisher.example.org/feed";
   const xml = `<rss><channel><title>Cloud</title><item><guid>one</guid><title>Collected while closed</title><description>${"😀".repeat(18000)}</description></item></channel></rss>`;
-  let outbound = 0;
+  let outbound = 0,
+    iconFetches = 0;
   const options = {
     modules: true,
     script,
@@ -36,6 +37,14 @@ test("real DO alarm collects without browser traffic, persists, isolates owners 
     resourcePersistencePath: dir,
     bindings: { APP_ORIGIN: origin, RSS_COLLECTION_ENABLED: "true" },
     outboundService: (request) => {
+      if (request.url === "https://publisher.example.org/favicon.ico") {
+        iconFetches++;
+        assert.equal(request.headers.get("Cookie"), null);
+        return new Response(
+          Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]),
+          { headers: { "Content-Type": "image/png" } },
+        );
+      }
       assert.equal(request.url, url);
       assert.equal(request.headers.get("Cookie"), null);
       outbound++;
@@ -264,4 +273,27 @@ test("real DO alarm collects without browser traffic, persists, isolates owners 
   });
   assert.equal(refused.status, 409);
   assert.equal(outbound, 4);
+  for (let i = 0; i < 8; i++) {
+    const icon = await api("/api/feeds/fetch", {
+      method: "POST",
+      body: { url, icon: true },
+    });
+    assert.equal(icon.status, 200);
+    assert.equal(icon.value.url, "https://publisher.example.org/favicon.ico");
+    assert.match(icon.value.icon, /^data:image\/png;base64,/);
+  }
+  assert.equal(
+    (
+      await api("/api/feeds/fetch", {
+        method: "POST",
+        body: { url, icon: true },
+      })
+    ).status,
+    429,
+  );
+  assert.equal(iconFetches, 8);
+  assert.equal(
+    (await api("/api/feeds/fetch", { method: "POST", body: { url } })).status,
+    200,
+  );
 });

@@ -447,6 +447,7 @@ test("private Dev serves no-store reader assets only to the verified owner and b
   assert.equal(page.headers.get("cache-control"), "no-store");
   assert.match(page.headers.get("content-security-policy"), /script-src 'self'/);
   assert.ok(!page.headers.get("content-security-policy").includes("unsafe-inline"));
+  assert.match(page.headers.get("content-security-policy"), /img-src 'self' data:/);
   const cached = await a.api("/not-modified");
   assert.equal(cached.status, 304);
   assert.equal(cached.value, "");

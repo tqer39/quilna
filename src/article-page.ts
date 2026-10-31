@@ -27,14 +27,12 @@ export function articlePage(
     if (filter === "saved" && !article.saved) continue;
     if (filter === "unread" && article.read) continue;
     if (tag !== null) {
-      // Manual tags (including an empty override) always replace suggestions.
-      // Checking suggestions directly avoids one array allocation per article.
+      // Check each independent layer without allocating arrays per article.
       const hasTag =
-        article.manualTags !== undefined
-          ? article.manualTags.includes(tag)
-          : article.tags?.suggestions.some(
-              (suggestion) => suggestion.tag === tag,
-            );
+        article.sourceTags?.includes(tag) ||
+        article.content?.sourceTags?.includes(tag) ||
+        article.manualTags?.includes(tag) ||
+        article.tags?.suggestions.some((suggestion) => suggestion.tag === tag);
       if (!hasTag) continue;
     } else if (state !== null && tagState(article) !== state) continue;
     if (count >= start && count < start + pageSize) items.push(article);

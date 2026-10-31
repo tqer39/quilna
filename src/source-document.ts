@@ -1,3 +1,5 @@
+import { validArticleStructure, validArticleInfo } from "./article-structure";
+import { validSourceTags } from "./source-tags";
 import type { ArticleContent } from "./article-content";
 import { articleTextLimit, validCodeRanges } from "./document-format";
 import { sourceURL } from "./feed-discovery";
@@ -94,6 +96,9 @@ export function validDocumentContent(v: unknown): v is ArticleContent {
     v.language.length <= 40000 &&
     timestamp(v.fetchedAt) &&
     validCodeRanges(v.text, v.codeRanges) &&
+    validArticleStructure(v.text, v.structure) &&
+    validArticleInfo(v.info) &&
+    (v.sourceTags === undefined || validSourceTags(v.sourceTags)) &&
     v.document === undefined
   );
 }
@@ -118,6 +123,13 @@ export function sourceContent(content: ArticleContent): ArticleContent {
     title: content.title,
     language: content.language,
     fetchedAt: content.fetchedAt,
+    ...(content.structure === undefined
+      ? {}
+      : { structure: structuredClone(content.structure) }),
+    ...(content.info === undefined ? {} : { info: { ...content.info } }),
+    ...(content.sourceTags === undefined
+      ? {}
+      : { sourceTags: [...content.sourceTags] }),
     ...(content.codeRanges === undefined
       ? {}
       : {
@@ -143,6 +155,9 @@ export async function representationHash(content: ArticleContent) {
       c.title,
       c.language,
       c.codeRanges ?? null,
+      ...(c.sourceTags === undefined ? [] : [{ sourceTags: c.sourceTags }]),
+      ...(c.structure === undefined ? [] : [{ structure: c.structure }]),
+      ...(c.info === undefined ? [] : [{ info: c.info }]),
     ]),
   );
   return Array.from(

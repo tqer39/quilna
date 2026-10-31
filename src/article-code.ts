@@ -1,3 +1,6 @@
+import { readerIcon } from "./reader-icons";
+import { safeArticleLink, type ArticleStructure } from "./article-structure";
+import { decorateArticleLink } from "./link-preview";
 import { codeTokens } from "./code-syntax";
 
 import { validCodeRanges, type ArticleCodeRange } from "./document-format";
@@ -40,7 +43,8 @@ function codeCopyControl(text: string) {
   const button = document.createElement("button");
   button.type = "button";
   button.part.add("copy-button");
-  button.textContent = "コピー";
+  button.append(readerIcon("copy"));
+  button.title = "コードをコピー";
   button.setAttribute("aria-label", "コードをコピー");
   const status = document.createElement("span");
   status.part.add("copy-status");
@@ -70,7 +74,48 @@ export function appendArticleText(
   ranges: ArticleCodeRange[] = [],
   renderText: (text: string, start: number) => Node = (value) =>
     document.createTextNode(value),
+  structure?: ArticleStructure,
 ) {
+  if (!structure) {
+    const links = [];
+    for (const match of text.matchAll(/https?:\/\/[^\s<>"「」]+/gu)) {
+      const start = match.index!,
+        value = match[0].replace(/[.,;:!?、。)）]+$/u, "");
+      if (ranges.some((r) => r.start < start + value.length && r.end > start))
+        continue;
+      const href = safeArticleLink(value);
+      if (href) links.push({ start, end: start + value.length, href });
+      if (links.length === 2000) break;
+    }
+    structure = { version: 1, links, headings: [] };
+  }
+  const renderPlain = renderText;
+  renderText = (value, start) => {
+    const fragment = document.createDocumentFragment();
+    let offset = start;
+    for (const link of structure?.links ?? []) {
+      if (link.end <= offset) continue;
+      if (link.start >= start + value.length) break;
+      if (link.start > offset)
+        fragment.append(
+          renderPlain(value.slice(offset - start, link.start - start), offset),
+        );
+      const from = Math.max(offset, link.start),
+        to = Math.min(start + value.length, link.end);
+      const anchor = document.createElement("a");
+      anchor.href = link.href;
+      anchor.target = "_blank";
+      anchor.rel = "noopener noreferrer";
+      anchor.className = "rss-body-link";
+      anchor.append(renderPlain(value.slice(from - start, to - start), from));
+      fragment.append(anchor);
+      if (from === link.start) decorateArticleLink(anchor, link.href);
+      offset = to;
+    }
+    if (offset < start + value.length)
+      fragment.append(renderPlain(value.slice(offset - start), offset));
+    return fragment;
+  };
   const previousControls = copyControls.get(parent);
   const currentControls = new Map<
     number,
@@ -80,10 +125,22 @@ export function appendArticleText(
   let offset = 0;
   let syntaxBudget = 20_000;
   let syntaxBlocks = 0;
-  let paragraph: HTMLParagraphElement | undefined;
+  let paragraph: HTMLElement | undefined;
   const getParagraph = () => {
     if (!paragraph) {
-      paragraph = document.createElement("p");
+      const heading = structure?.headings.find(
+        (h) =>
+          h.end > offset &&
+          (h.start <= offset || !text.slice(offset, h.start).trim()),
+      );
+      paragraph = document.createElement(
+        heading ? `h${Math.max(2, heading.level)}` : "p",
+      );
+      if (heading) {
+        paragraph.id = `rss-section-${heading.start}`;
+        paragraph.tabIndex = -1;
+      }
+      paragraph.dataset.readingStart = String(offset);
       parent.append(paragraph);
     }
     return paragraph;
@@ -113,6 +170,7 @@ export function appendArticleText(
       if (segment.code.block) {
         paragraph = undefined;
         const pre = document.createElement("pre");
+        pre.dataset.readingStart = String(offset);
         pre.append(code);
         const block = document.createElement("div");
         block.className = "rss-code-block";

@@ -14,6 +14,64 @@ const xml = `<rss version="2.0"><channel><title>Quilna Journal</title>${[
   )
   .join("")}</channel></rss>`;
 
+for (const design of ["studio", "editorial", "focus"])
+  test(`${design} keeps the settings close button clear of scrolled controls`, async ({
+    page,
+  }, info) => {
+    await page.addInitScript(
+      (value) => localStorage.setItem("quilna.reader.design.v1", value),
+      design,
+    );
+    await page.goto("/?view=feeds");
+    await page.getByRole("button", { name: "設定", exact: true }).click();
+    const dialog = page.getByRole("dialog");
+    const close = dialog.getByRole("button", { name: "閉じる", exact: true });
+    for (const viewport of [
+      { width: 320, height: 740 },
+      { width: 640, height: 360 },
+      { width: 1440, height: 1000 },
+    ]) {
+      await page.setViewportSize(viewport);
+      for (const label of [
+        "ロケール（翻訳・読み上げ）",
+        "新しく取り込む本文の取得先",
+      ]) {
+        const input = dialog.getByLabel(label, { exact: true });
+        await input.evaluate((e) => e.scrollIntoView({ block: "start" }));
+        const a = await close.boundingBox(),
+          b = await input.boundingBox();
+        expect(a).not.toBeNull();
+        expect(b).not.toBeNull();
+        const overlaps =
+          a!.x < b!.x + b!.width &&
+          a!.x + a!.width > b!.x &&
+          a!.y < b!.y + b!.height &&
+          a!.y + a!.height > b!.y;
+        await page.screenshot({
+          path: info.outputPath(
+            `${design}-${viewport.width}-${label.startsWith("ロケール") ? "locale" : "source"}.png`,
+          ),
+        });
+        expect(
+          overlaps,
+          `Close must not cover ${label} at ${viewport.width}x${viewport.height}`,
+        ).toBe(false);
+        expect(a!.y).toBeGreaterThanOrEqual(0);
+        expect(a!.y + a!.height).toBeLessThanOrEqual(viewport.height);
+        await input.focus();
+        await expect(input).toBeFocused();
+      }
+      expect(await dialog.evaluate((e) => e.scrollWidth <= e.clientWidth)).toBe(
+        true,
+      );
+    }
+    await close.click();
+    await expect(dialog).not.toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "設定", exact: true }),
+    ).toBeFocused();
+  });
+
 for (const design of ["Studio", "Editorial", "Focus"]) {
   test(`${design} preserves reading and saved state across a design change and reload`, async ({
     page,

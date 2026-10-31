@@ -182,6 +182,16 @@ async function runReaderScenario(browser, info, aliasMode) {
         server: { host: "127.0.0.1", port, https: true, logRequests: false },
         assets: await assets(),
         sourceResponses: {
+          ["https://publisher.example.org/favicon.ico"]: () =>
+            new Response(
+              Uint8Array.from(
+                Buffer.from(
+                  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Wl6GtIAAAAASUVORK5CYII=",
+                  "base64",
+                ),
+              ),
+              { headers: { "Content-Type": "image/png" } },
+            ),
           [aliasFeed]: () =>
             new Response(
               xml
@@ -346,6 +356,14 @@ async function runReaderScenario(browser, info, aliasMode) {
     await expect(a.page.locator(".rss-source-text")).toContainText(
       "Runtime version 1",
     );
+    await expect
+      .poll(() =>
+        a.page
+          .locator(".rss-site-icon img")
+          .first()
+          .evaluate((img) => img.complete && img.naturalWidth > 0),
+      )
+      .toBe(true);
     const first = await retainedServerVersion(
       a,
       origin,
@@ -562,3 +580,235 @@ async function runReaderScenario(browser, info, aliasMode) {
   }
   expect(cleanupErrors).toEqual([]);
 }
+
+test("closed reader receives a durable RSS revision and retains the old body until explicit selection", async ({
+  browser,
+}, info) => {
+  test.setTimeout(120_000);
+  const cleanup = [],
+    unexpected = [],
+    browserErrors = [];
+  const port = await freePort(),
+    origin = `https://127.0.0.1:${port}`;
+  let context,
+    holdCollection = false,
+    heldRequests = 0,
+    articleFetches = 0,
+    version = 1,
+    release;
+  const publisherGate = new Promise((resolve) => {
+    release = resolve;
+  });
+  try {
+    const f = await authWorkerFixture(
+      { after: (fn) => cleanup.push(fn) },
+      {
+        entry: "tests/runtime/reader-entry.mjs",
+        documents: true,
+        missing: { RSS_COLLECTION_ENABLED: "true" },
+        origin,
+        server: { host: "127.0.0.1", port, https: true, logRequests: false },
+        assets: await assets(),
+        sourceResponses: {
+          [feedURL]: async () => {
+            if (holdCollection) {
+              heldRequests++;
+              await publisherGate;
+            }
+            return new Response(
+              xml.replace(
+                "Summary from the runtime feed.",
+                `RSS revision ${version}.`,
+              ),
+              {
+                headers: { "Content-Type": "application/rss+xml" },
+              },
+            );
+          },
+          ["https://publisher.example.org/favicon.ico"]: () =>
+            new Response("", { status: 404 }),
+        },
+        articleResponse: (request) => {
+          articleFetches++;
+          expect(request.headers.get("Cookie")).toBeNull();
+          expect(request.headers.get("Authorization")).toBeNull();
+          return new Response(
+            `<html lang="en"><title>Collected original ${version}</title><article><p>${`Collected version ${version} preserves original source evidence for later reading. `.repeat(15)}</p></article></html>`,
+            { headers: { "Content-Type": "text/html", ETag: `"v${version}"` } },
+          );
+        },
+      },
+    );
+    await f.ready();
+    context = await browser.newContext({
+      ignoreHTTPSErrors: true,
+      serviceWorkers: "block",
+      viewport: info.project.use.viewport,
+      isMobile: info.project.use.isMobile,
+      locale: "ja-JP",
+    });
+    context.on("page", (page) =>
+      page.on("pageerror", (error) => browserErrors.push(error.message)),
+    );
+    await context.route("**/*", async (route) => {
+      const url = new URL(route.request().url());
+      if (url.origin === origin) return route.continue();
+      if (
+        url.origin === "https://accounts.google.com" &&
+        url.pathname === "/o/oauth2/v2/auth"
+      ) {
+        return route.fulfill({
+          status: 302,
+          headers: {
+            Location:
+              origin + f.callback(f.rememberAuthorization(url.href), "a"),
+          },
+          body: "",
+        });
+      }
+      unexpected.push(url.origin + url.pathname);
+      return route.abort();
+    });
+    let page = await context.newPage();
+    await page.goto(origin);
+    await page
+      .getByRole("button", { name: "Googleでログイン", exact: true })
+      .click();
+    await page.waitForURL(origin + "/?auth=success");
+    await page.goto(origin + "/?view=feeds");
+    await subscribe(page);
+    await page
+      .getByRole("button", { name: "Runtime article", exact: true })
+      .click();
+    await expect(page.locator(".rss-source-text")).toContainText(
+      "Collected version 1",
+    );
+    await page
+      .getByRole("button", { name: "この記事を保存", exact: true })
+      .click();
+    await expect(page.locator("#rss-save-article")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    const [before] = await storedArticles(page);
+    expect(before.saved).toBe(true);
+    expect(before.read).toBe(true);
+    expect(articleFetches).toBe(1);
+
+    // The real Durable Object alarm starts the request; the publisher completes
+    // only after all app pages close. No browser timer or test alarm hook runs it.
+    holdCollection = true;
+    version = 2;
+    await page.getByRole("button", { name: "設定", exact: true }).click();
+    await page
+      .getByRole("button", {
+        name: "クラウド収集を開始・設定を更新",
+        exact: true,
+      })
+      .click();
+    await expect(page.locator("#rss-cloud-status")).toContainText("15分ごと");
+    await expect.poll(() => heldRequests).toBe(1);
+    await page.close();
+    expect(context.pages()).toHaveLength(0);
+    const closedAt = Date.now();
+    release();
+    async function cloudState() {
+      const response = await context.request.get(origin + "/api/collection", {
+        headers: { Origin: origin },
+      });
+      expect(response.status()).toBe(200);
+      return response.json();
+    }
+    await expect.poll(async () => (await cloudState()).pending.length).toBe(1);
+    const queued = await cloudState();
+    expect(queued.pending[0].fetchedAt).toBeGreaterThanOrEqual(closedAt);
+    expect(queued.feeds[0].lastSuccess).toBeGreaterThan(
+      Date.parse(before.content.fetchedAt),
+    );
+    expect(articleFetches).toBe(1); // No background original-body acquisition is claimed.
+    await f.restart();
+    expect((await cloudState()).pending).toEqual(queued.pending);
+
+    page = await context.newPage();
+    await page.goto(origin + "/?view=feeds");
+    const item = page.getByRole("button", {
+      name: "Collected original 1",
+      exact: true,
+    });
+    await expect(item).toBeVisible();
+    await expect.poll(async () => (await cloudState()).pending.length).toBe(0);
+    await expect
+      .poll(
+        async () =>
+          (await storedArticles(page))[0]?.bodyUpdate?.latest?.versionId,
+        { timeout: 45_000 },
+      )
+      .toBeTruthy();
+    const [updated] = await storedArticles(page);
+    expect(updated.content).toEqual(before.content);
+    expect(updated.body).toBe(before.body);
+    expect(updated.saved).toBe(true);
+    expect(updated.read).toBe(true);
+    expect(updated.feedRevision.fingerprint).not.toBe(
+      before.feedRevision.fingerprint,
+    );
+    expect(updated.bodyUpdate.latest.versionId).not.toBe(
+      before.content.document.versionId,
+    );
+    expect(articleFetches).toBe(2);
+    await item.click();
+    await expect(
+      page.getByRole("region", { name: "本文の更新", exact: true }),
+    ).toContainText("本文の更新あり");
+    await expect(page.locator(".rss-source-text")).toContainText(
+      "Collected version 1",
+    );
+    await page.screenshot({
+      path: info.outputPath("closed-reader-update.png"),
+    });
+    await page
+      .getByRole("button", { name: "更新された本文を読む", exact: true })
+      .click();
+    await expect(page.locator(".rss-source-text")).toContainText(
+      "Collected version 2",
+    );
+    await expect(page.locator("#rss-save-article")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await page.locator(".rss-document-history summary").click();
+    await expect(page.locator(".rss-document-version")).toHaveCount(2);
+    await page.reload();
+    await page
+      .getByRole("button", { name: "Collected original 2", exact: true })
+      .click();
+    await expect(page.locator(".rss-source-text")).toContainText(
+      "Collected version 2",
+    );
+    expect((await storedArticles(page))[0].saved).toBe(true);
+    await page.locator(".rss-document-history summary").click();
+    await expect(page.locator(".rss-document-version")).toHaveCount(2);
+    await page
+      .locator(".rss-document-version")
+      .filter({ hasText: "Collected version 1" })
+      .getByRole("button", { name: "この本文を表示", exact: true })
+      .click();
+    await expect(page.locator(".rss-source-text")).toContainText(
+      "Collected version 1",
+    );
+    expect((await storedArticles(page))[0].content).toEqual(before.content);
+    expect(articleFetches).toBe(2);
+    expect((await cloudState()).pending).toEqual([]);
+    expect(unexpected).toEqual([]);
+    expect(browserErrors).toEqual([]);
+  } finally {
+    release();
+    const closed = await Promise.allSettled([context?.close()]);
+    const disposed = await Promise.allSettled(
+      cleanup.reverse().map((dispose) => dispose()),
+    );
+    expect(
+      [...closed, ...disposed].filter((result) => result.status === "rejected"),
+    ).toEqual([]);
+  }
+});

@@ -132,23 +132,29 @@ export class FeedCollector {
       .object({
         url: z.string().max(2048),
         discover: z.boolean().optional(),
+        icon: z.boolean().optional(),
         validators: z.custom(validSourceValidators).optional(),
       })
       .strict()
       .parse(input);
     cloudFeedURL(request.url, this.blockedHosts);
     await this.storage.transaction(async (tx) => {
-      const recent = ((await tx.get("rss:requests")) ?? []).filter(
+      const key = request.icon ? "rss:icon-requests" : "rss:requests";
+      const recent = ((await tx.get(key)) ?? []).filter(
         (time) => time > this.now() - 60_000,
       );
-      if (recent.length >= 20) throw Error("rate-limit");
-      await tx.put("rss:requests", [...recent, this.now()]);
+      if (recent.length >= (request.icon ? 8 : 20)) throw Error("rate-limit");
+      await tx.put(key, [...recent, this.now()]);
     });
-    return fetchCloudFeed(request.url, {
-      blockedHosts: this.blockedHosts,
-      allowHTML: request.discover === true,
-      validators: request.validators,
-    });
+    return fetchCloudFeed(
+      request.icon ? new URL("/favicon.ico", request.url).href : request.url,
+      {
+        blockedHosts: this.blockedHosts,
+        allowHTML: request.discover === true,
+        allowIcon: request.icon === true,
+        validators: request.validators,
+      },
+    );
   }
   async configure(input) {
     if (!this.enabled) throw Error("collection-unconfigured");

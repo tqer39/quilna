@@ -418,7 +418,12 @@ export async function acquireDocument(
           current
             ? {
                 content: current.version.content,
-                validators: current.document.validators,
+                // Explicit format repair needs HTML, even when the source has
+                // not changed. Ordinary cached reads still avoid a fetch.
+                validators:
+                  options.force && !current.version.content.structure
+                    ? undefined
+                    : current.document.validators,
               }
             : undefined,
         );
