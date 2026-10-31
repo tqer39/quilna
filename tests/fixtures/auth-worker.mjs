@@ -13,6 +13,12 @@ const ring = () =>
     active: "test",
     keys: { test: encode(crypto.getRandomValues(new Uint8Array(32))) },
   });
+/**
+ * Create an isolated persistent Worker/D1 fixture with offline Google OAuth replies.
+ * Options select the entry, assets, bindings and document migrations, including
+ * management/history when enabled. Return browser, DB and restart controls;
+ * register disposal and temporary-storage cleanup with the test's after hook.
+ */
 export async function authWorkerFixture(
   t,
   {
