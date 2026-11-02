@@ -1,5 +1,15 @@
 export const readerContentSecurityPolicy =
   "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
+/** Only the explicit DOI metadata page can contact Crossref; other reader routes retain the default. */
+export function readerPolicyForURL(url) {
+  const target = new URL(url);
+  return target.pathname === "/" && target.searchParams.get("view") === "papers"
+    ? readerContentSecurityPolicy.replace(
+        "connect-src 'self'",
+        "connect-src 'self' https://api.crossref.org",
+      )
+    : readerContentSecurityPolicy;
+}
 import { loginPage } from "./login-page.mjs";
 import { betterAuth } from "better-auth";
 import { verifyProviderIdToken } from "better-auth/oauth2";
@@ -427,7 +437,7 @@ export async function productionFetch(request, env) {
     headers.set("Cache-Control", "no-store");
     headers.set("Referrer-Policy", "no-referrer");
     headers.set("X-Content-Type-Options", "nosniff");
-    headers.set("Content-Security-Policy", readerContentSecurityPolicy);
+    headers.set("Content-Security-Policy", readerPolicyForURL(request.url));
     if (
       headers.get("Content-Type")?.includes("text/html") &&
       request.method !== "HEAD" &&

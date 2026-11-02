@@ -1431,6 +1431,41 @@ header {
   }
 }
 /* File-based learning stays separate from the primary article reader. */
+.paper-page {
+  max-width: 900px;
+  margin: auto;
+  padding: 20px;
+  overflow-wrap: anywhere;
+}
+.paper-page header,
+.paper-page section,
+.paper-page form {
+  margin-bottom: 24px;
+}
+.paper-page label,
+.paper-page input {
+  display: block;
+  max-width: 100%;
+}
+.paper-page input[type="text"] {
+  width: 100%;
+  box-sizing: border-box;
+}
+.paper-page button {
+  margin: 8px 8px 8px 0;
+}
+.paper-page dt {
+  font-weight: bold;
+  margin-top: 12px;
+}
+.paper-page dd {
+  margin-left: 0;
+  white-space: pre-wrap;
+}
+.paper-row {
+  border-top: 1px solid var(--border);
+  padding: 12px 0;
+}
 .shared-textbook-page {
   max-width: 54rem;
   margin: auto;

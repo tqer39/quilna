@@ -1,0 +1,57 @@
+{
+  "status": "ok",
+  "message-type": "work",
+  "message-version": "1.0.0",
+  "message": {
+    "DOI": "10.5555/quilna.synthetic",
+    "type": "posted-content",
+    "version": "2",
+    "title": ["Synthetic paper <script>window.PAPER_XSS=true</script>"],
+    "author": [
+      {
+        "given": "Taro",
+        "family": "Example",
+        "ORCID": "https://orcid.org/0000-0000-0000-000X"
+      }
+    ],
+    "container-title": ["Synthetic preprints"],
+    "publisher": "Fixture publisher",
+    "resource": {
+      "primary": { "URL": "https://publisher.example.org/preprint/v2" }
+    },
+    "published": { "date-parts": [[2026, 10]] },
+    "published-online": { "date-parts": [[2026, 10, 29]] },
+    "created": {
+      "date-parts": [[2026, 10, 1]],
+      "date-time": "2026-10-01T01:02:03Z"
+    },
+    "deposited": {
+      "date-parts": [[2026, 10, 30]],
+      "date-time": "2026-10-30T01:02:03Z"
+    },
+    "indexed": {
+      "date-parts": [[2026, 11, 1]],
+      "date-time": "2026-11-01T01:02:03Z"
+    },
+    "relation": {
+      "is-preprint-of": [
+        {
+          "id": "10.5555/published.synthetic",
+          "id-type": "doi",
+          "asserted-by": "subject"
+        }
+      ]
+    },
+    "update-to": [
+      {
+        "DOI": "10.5555/earlier.synthetic",
+        "type": "correction",
+        "label": "Synthetic correction",
+        "updated": { "date-parts": [[2026, 10, 30]] }
+      }
+    ],
+    "abstract": "COPYRIGHTED ABSTRACT MUST NOT BE RETAINED",
+    "reference": [{ "unstructured": "UNSELECTED REFERENCE" }],
+    "privateFixtureField": "PRIVATE MUST NOT BE RETAINED"
+  }
+}
