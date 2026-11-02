@@ -118,6 +118,7 @@ export async function feedReader(root: HTMLElement) {
     source = "",
     input = "";
   let navigationRevision = 0;
+  let problemRevision = 0;
   let problem = "",
     retry: (() => void) | null = null,
     connecting = true;
@@ -955,6 +956,7 @@ export async function feedReader(root: HTMLElement) {
     }
   }
   async function changeSubscription(address: string, subscribed: boolean) {
+    const errorTicket = problemRevision;
     if (!db || cloudBusy || updating.has(address)) return;
     const feed = feeds.find((item) => item.url === address);
     if (
@@ -1003,7 +1005,7 @@ export async function feedReader(root: HTMLElement) {
         throw Error(
           "この配信元をほかの画面で更新中です。少し待ってから購読操作を再試行してください。",
         );
-      problem = "";
+      clearProblem(errorTicket);
     } catch (error) {
       const current = await readFeed(db!, address).catch(() => undefined);
       showError(
@@ -1136,7 +1138,11 @@ export async function feedReader(root: HTMLElement) {
     collectionProblem = "";
     collectionWake();
   });
+  function clearProblem(revision: number) {
+    if (revision === problemRevision) problem = "";
+  }
   function showError(message: string, action: () => void) {
+    problemRevision++;
     problem = message;
     retry = action;
     renderError();
@@ -1232,13 +1238,14 @@ export async function feedReader(root: HTMLElement) {
     channel?.postMessage(id ? { articleId: id } : "changed");
   }
   async function connect() {
+    const errorTicket = problemRevision;
     connecting = true;
     render();
     try {
       db?.close();
       db = await openFeedLibrary();
       await load();
-      problem = "";
+      clearProblem(errorTicket);
     } catch (error) {
       showError((error as Error).message, () => void connect());
     } finally {
@@ -1430,6 +1437,7 @@ export async function feedReader(root: HTMLElement) {
     registering = false,
     automatic = false,
   ) {
+    const errorTicket = problemRevision;
     const registrationTicket = discoveryEpoch;
     const registrationNavigation = navigationRevision;
     let url: URL;
@@ -1483,7 +1491,7 @@ export async function feedReader(root: HTMLElement) {
           await mergeFeed(db!, parsed.feed, parsed.articles);
           await load();
           announceChange();
-          if (!registering) problem = "";
+          if (!registering) clearProblem(errorTicket);
           // Keep the subscription, but a completed older action must not
           // navigate over a newer reader/list/import context (including A-B-A).
           if (
@@ -1491,7 +1499,7 @@ export async function feedReader(root: HTMLElement) {
             registrationTicket === discoveryEpoch &&
             registrationNavigation === navigationRevision
           ) {
-            problem = "";
+            clearProblem(errorTicket);
             clearDiscovery();
             input = "";
             source = address;
@@ -1556,13 +1564,14 @@ export async function feedReader(root: HTMLElement) {
     value: boolean,
   ) {
     if (!db || changing.has(article.id)) return;
+    const errorTicket = problemRevision;
     changing.add(article.id);
     render();
     try {
       await flagArticle(db, article.id, field, value);
       await load(article.id);
       announceChange(article.id);
-      problem = "";
+      clearProblem(errorTicket);
     } catch (error) {
       showError(
         (error as Error).message,
@@ -1580,6 +1589,7 @@ export async function feedReader(root: HTMLElement) {
     refreshOriginal = false,
   ) {
     if (!db || importing.has(article.id)) return;
+    const errorTicket = problemRevision;
     if (selected === article.id) cancelReading();
     importing.add(article.id);
     render();
@@ -1620,7 +1630,7 @@ export async function feedReader(root: HTMLElement) {
       );
       await load(article.id);
       announceChange(article.id);
-      problem = "";
+      clearProblem(errorTicket);
       if (selected === article.id && patch.content) {
         // A faster tab may have saved a different original. Use the persisted
         // snapshot, not the language of a response that the store discarded.
