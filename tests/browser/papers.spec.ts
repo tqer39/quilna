@@ -42,6 +42,86 @@ async function records(page: Page) {
     return api.listPapers();
   });
 }
+/** Hold delivery of one real committed save without changing its data or transaction result. */
+async function holdPaperCompletion(page: Page) {
+  await page.evaluate(() => {
+    const original = IDBDatabase.prototype.transaction;
+    const state = window as unknown as {
+      heldPaperCompletion: boolean;
+      settledPaperCompletion: boolean;
+      releasePaperCompletion: () => void;
+    };
+    state.heldPaperCompletion = false;
+    state.settledPaperCompletion = false;
+    let first = true;
+    IDBDatabase.prototype.transaction = function (...args) {
+      const tx = original.apply(this, args);
+      if (
+        first &&
+        this.name === "quilna.papers.v1" &&
+        tx.mode === "readwrite"
+      ) {
+        first = false;
+        const close = this.close;
+        this.close = function () {
+          close.call(this);
+          state.settledPaperCompletion = true;
+        };
+        let completed:
+          ((this: IDBTransaction, event: Event) => unknown) | null = null;
+        Object.defineProperty(tx, "oncomplete", {
+          set(value) {
+            completed = value;
+          },
+          get() {
+            return completed;
+          },
+        });
+        tx.addEventListener("complete", (event) => {
+          state.heldPaperCompletion = true;
+          state.releasePaperCompletion = () => {
+            const callback = completed;
+            completed = null;
+            callback?.call(tx, event);
+          };
+        });
+      }
+      return tx;
+    };
+  });
+}
+/** Observe actual commit delivery being held before changing focus or the selected observation. */
+async function waitForPaperCompletion(page: Page) {
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as unknown as { heldPaperCompletion: boolean })
+            .heldPaperCompletion,
+      ),
+    )
+    .toBe(true);
+}
+/** Resume the commit, observe validation/connection cleanup, then cross the UI continuation boundary. */
+async function releasePaperCompletion(page: Page) {
+  await page.evaluate(() => {
+    (
+      window as unknown as { releasePaperCompletion: () => void }
+    ).releasePaperCompletion();
+  });
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as unknown as { settledPaperCompletion: boolean })
+            .settledPaperCompletion,
+      ),
+    )
+    .toBe(true);
+  await page.evaluate(async () => {
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  });
+}
 test("explicit preview/save/file round trip preserves bibliographic identity and excludes unselected/private fields", async ({
   page,
   browser,
@@ -160,6 +240,60 @@ test("concurrent recaptures reuse the original timestamp while a changed deposit
     page.getByRole("button", { name: "書誌情報を開く" }),
   ).toHaveCount(2);
 });
+test("saving unchanged metadata again displays and exports the first retained capture without losing keyboard focus", async ({
+  page,
+}, info) => {
+  await page.addInitScript(() => {
+    const clock = window as unknown as { paperTime: number };
+    clock.paperTime = Date.parse("2026-11-01T00:00:00.000Z");
+    Date.now = () => clock.paperTime;
+  });
+  const requests = await provider(page);
+  await page.goto("/?view=papers");
+  await lookup(page);
+  await page.getByRole("button", { name: "この書誌情報を保存" }).click();
+  await expect(
+    page.getByRole("button", { name: "保存済み", exact: true }),
+  ).toBeVisible();
+  const first = (await records(page)).snapshots[0];
+  expect(first.capturedAt).toBe("2026-11-01T00:00:00.000Z");
+  await page.evaluate(() => {
+    (window as unknown as { paperTime: number }).paperTime = Date.parse(
+      "2026-11-02T00:00:00.000Z",
+    );
+  });
+  await lookup(page);
+  const preview = page.getByRole("region", { name: "書誌情報のプレビュー" });
+  const nextTime = await page.evaluate(() =>
+    new Date("2026-11-02T00:00:00.000Z").toLocaleString("ja-JP"),
+  );
+  await expect(
+    preview.getByText(`Crossref · ${nextTime}`, { exact: true }),
+  ).toBeVisible();
+  const save = page.getByRole("button", { name: "この書誌情報を保存" });
+  await save.focus();
+  await save.press("Enter");
+  await expect(preview).toContainText("同じ書誌情報は保存済み");
+  await expect(
+    page.getByRole("button", { name: "保存済み", exact: true }),
+  ).toBeFocused();
+  const download = page.waitForEvent("download");
+  await page.getByRole("button", { name: "この記録をファイルに保存" }).click();
+  const path = info.outputPath("retained-paper.json");
+  await (await download).saveAs(path);
+  expect(JSON.parse(new TextDecoder().decode(await readFile(path)))).toEqual(
+    first,
+  );
+  const firstTime = await page.evaluate(
+    (time: string) => new Date(time).toLocaleString("ja-JP"),
+    first.capturedAt,
+  );
+  await expect(
+    preview.getByText(`Crossref · ${firstTime}`, { exact: true }),
+  ).toBeVisible();
+  expect((await records(page)).snapshots).toEqual([first]);
+  expect(requests).toHaveLength(2);
+});
 test("invalid DOI and imports cannot dispatch a provider or overwrite saved observations", async ({
   page,
 }, info) => {
@@ -183,6 +317,85 @@ test("invalid DOI and imports cannot dispatch a provider or overwrite saved obse
   await expect(page.getByRole("status")).toContainText("形式または保存記録");
   expect(await records(page)).toEqual(before);
   expect(requests).toHaveLength(1);
+});
+test("a delayed reused save respects newer focus and a different selected observation", async ({
+  page,
+}, info) => {
+  await page.goto("/?view=papers");
+  const metadata = crossrefMetadata(fixture, doi),
+    first = await paperSnapshot(metadata, "2026-11-01T00:00:00.000Z");
+  const other = await paperSnapshot(
+    {
+      ...metadata,
+      doi: "10.5555/other",
+      titles: ["Different retained observation"],
+    },
+    "2026-11-01T01:00:00.000Z",
+  );
+  await page.evaluate(
+    async ({ first, other }) => {
+      const path = "/src/paper-store.ts",
+        api: typeof import("../../src/paper-store") = await import(path);
+      await api.savePaper(first);
+      await api.savePaper(other);
+    },
+    { first, other },
+  );
+  await page.reload();
+  const path = info.outputPath("recapture.json");
+  await writeFile(
+    path,
+    new TextEncoder().encode(
+      JSON.stringify({ ...first, capturedAt: "2026-11-02T00:00:00.000Z" }),
+    ),
+  );
+  await page.getByLabel("保存した書誌ファイルを確認").setInputFiles(path);
+  await expect(page.getByRole("status")).toContainText(
+    "書誌ファイルを確認しました",
+  );
+  await holdPaperCompletion(page);
+  await page.getByRole("button", { name: "この書誌情報を保存" }).click();
+  await waitForPaperCompletion(page);
+  const input = page.getByLabel("DOIまたは https://doi.org/ のURL");
+  await input.focus();
+  await releasePaperCompletion(page);
+  await expect(input).toBeFocused();
+  await expect(
+    page.getByRole("region", { name: "書誌情報のプレビュー" }),
+  ).toContainText("同じ書誌情報は保存済み");
+  await page.getByLabel("保存した書誌ファイルを確認").setInputFiles(path);
+  await expect(page.getByRole("status")).toContainText(
+    "書誌ファイルを確認しました",
+  );
+  await holdPaperCompletion(page);
+  await page.getByRole("button", { name: "この書誌情報を保存" }).click();
+  await waitForPaperCompletion(page);
+  await page
+    .locator(".paper-row")
+    .filter({ hasText: "Different retained observation" })
+    .getByRole("button", { name: "書誌情報を開く" })
+    .click();
+  const heading = page.getByRole("heading", {
+    name: "Different retained observation",
+    exact: true,
+  });
+  await expect(heading).toBeFocused();
+  await releasePaperCompletion(page);
+  await expect(heading).toBeFocused();
+  await expect(
+    page.getByRole("region", { name: "書誌情報のプレビュー" }),
+  ).toContainText("10.5555/other");
+  const download = page.waitForEvent("download");
+  await page.getByRole("button", { name: "この記録をファイルに保存" }).click();
+  const exported = info.outputPath("selected.json");
+  await (await download).saveAs(exported);
+  expect(
+    JSON.parse(new TextDecoder().decode(await readFile(exported))),
+  ).toEqual(other);
+  expect((await records(page)).snapshots).toEqual(
+    expect.arrayContaining([first, other]),
+  );
+  expect((await records(page)).snapshots).toHaveLength(2);
 });
 test("editing the DOI cancels late completion without replacing a newer preview or sending a new request", async ({
   page,

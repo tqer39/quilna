@@ -114,8 +114,12 @@ export async function paperView(root: HTMLElement, client = new PaperClient()) {
       heading = el("h2", m.titles.join(" / ") || "題名不明"),
       facts = el("dl");
     heading.tabIndex = -1;
-    const fact = (name: string, value: string) =>
-      facts.append(el("dt", name), el("dd", value || "不明"));
+    /** Return the value node so a confirmed save can update it without replacing focused controls. */
+    const fact = (name: string, value: string) => {
+      const detail = el("dd", value || "不明");
+      facts.append(el("dt", name), detail);
+      return detail;
+    };
     fact("DOI", m.doi);
     fact(
       "著者",
@@ -157,7 +161,7 @@ export async function paperView(root: HTMLElement, client = new PaperClient()) {
         .filter(Boolean)
         .join(" / "),
     );
-    fact(
+    const capturedAtDisplay = fact(
       "提供元・取得日時",
       `Crossref · ${new Date(p.capturedAt).toLocaleString("ja-JP")}`,
     );
@@ -185,7 +189,8 @@ export async function paperView(root: HTMLElement, client = new PaperClient()) {
         ),
       );
     let saving = false,
-      isSaved = saved;
+      isSaved = saved,
+      activeSnapshot = p;
     const state = el(
         "p",
         saved ? "この記録は保存済みです。" : "まだ保存していません。",
@@ -196,8 +201,10 @@ export async function paperView(root: HTMLElement, client = new PaperClient()) {
         save.setAttribute("aria-disabled", "true");
         state.textContent = "書誌情報を保存しています…";
         try {
-          const result = await savePaper(p);
+          const result = await savePaper(activeSnapshot);
           if (current !== revision) return;
+          activeSnapshot = result.snapshot;
+          capturedAtDisplay.textContent = `Crossref · ${new Date(activeSnapshot.capturedAt).toLocaleString("ja-JP")}`;
           isSaved = true;
           save.textContent = "保存済み";
           state.textContent = result.reused
@@ -215,13 +222,13 @@ export async function paperView(root: HTMLElement, client = new PaperClient()) {
       }),
       download = button("この記録をファイルに保存", () => {
         const url = URL.createObjectURL(
-            new Blob([JSON.stringify(p)], {
+            new Blob([JSON.stringify(activeSnapshot)], {
               type: "application/json",
             }),
           ),
           link = el("a");
         link.href = url;
-        link.download = `quilna-paper-${p.digest.slice(0, 12)}.json`;
+        link.download = `quilna-paper-${activeSnapshot.digest.slice(0, 12)}.json`;
         link.click();
         setTimeout(() => URL.revokeObjectURL(url), 1000);
       });
