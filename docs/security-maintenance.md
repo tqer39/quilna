@@ -43,6 +43,8 @@ PR dependency review also rejects newly introduced advisories at low severity an
 Go scanning covers reachable findings for the scanned platform; an exit-zero scan does not prove every platform or unknown vulnerability safe.
 The daily workflow does not rebuild macOS/iOS applications or use deployment secrets.
 
+If mise setup fails, a single HTTPS-only GET probes the same pinned Linux release asset with a 30-second limit and records HTTP status, redirect count and curl exit code. The response body is discarded, and nothing from this diagnostic is installed or executed. This later request cannot recover the original request's status or establish the cause of the 2026-10-27 incident (#70). The security job remains failed and the scanner remains unexecuted; a successful probe is not a successful security scan.
+
 ## Renovate and urgent updates
 
 `renovate.json5` extends [tqer39/renovate-config](https://github.com/tqer39/renovate-config).
