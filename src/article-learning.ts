@@ -1,3 +1,4 @@
+import { libraryName, openLibraryDatabase } from "./library-context";
 import { validHighlight, type ArticleHighlight } from "./article-highlights";
 
 // Explicit reflections are independent of read/save flags and mutable highlights.
@@ -9,7 +10,7 @@ export type LearningRecord = {
   createdAt: string;
   revision: number;
 };
-export const learningDatabase = "quilna.learning.v1";
+export const learningDatabase = libraryName("quilna.learning.v1");
 export const learningLimit = 200;
 export function validLearningRecord(value: unknown): value is LearningRecord {
   if (!value || typeof value !== "object") return false;
@@ -33,7 +34,7 @@ export function openLearning(): Promise<IDBDatabase> {
   if (connection) return connection;
   let failed = false;
   const pending = new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open(learningDatabase, 1);
+    const request = openLibraryDatabase(learningDatabase, 1);
     request.onupgradeneeded = () => {
       request.result
         .createObjectStore("records", { keyPath: "id" })

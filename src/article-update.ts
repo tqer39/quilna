@@ -1,3 +1,4 @@
+import { libraryName } from "./library-context";
 import type { FeedArticle } from "./feed-parser";
 import {
   documentFreshnessMs,
@@ -13,7 +14,7 @@ export type ArticleUpdate = {
   latest?: DocumentReference;
   error?: string;
 };
-export const articleUpdatePreferenceKey = "quilna.article.updates.v1";
+export const articleUpdatePreferenceKey = libraryName("quilna.article.updates.v1");
 export function automaticArticleUpdates(): boolean {
   try {
     return localStorage.getItem(articleUpdatePreferenceKey) !== "false";

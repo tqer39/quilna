@@ -1,6 +1,7 @@
+import { libraryName } from "./library-context";
 import { el } from "./ui";
 
-export const readerDesignKey = "quilna.reader.design.v1";
+export const readerDesignKey = libraryName("quilna.reader.design.v1");
 export const readerDesigns = [
   {
     id: "studio",

@@ -1,3 +1,4 @@
+import { libraryName, hasAccountLibrary, librarySignedOut } from "./library-context";
 import { ReaderLocation } from "./reader-location";
 import { ArticleOutline } from "./article-outline";
 import { ArticleAutoUpdate } from "./article-auto-update";
@@ -197,7 +198,7 @@ export async function feedReader(root: HTMLElement) {
   const channel =
     typeof BroadcastChannel === "undefined"
       ? null
-      : new BroadcastChannel("tsumiki.rss.v1");
+      : new BroadcastChannel(libraryName("tsumiki.rss.v1"));
   const rootHeader = el("header", undefined, "rss-header");
   const brand = el("a", "Quilna", "brand");
   brand.href = "/?view=feeds";
@@ -219,7 +220,7 @@ export async function feedReader(root: HTMLElement) {
     designSettings,
     el(
       "p",
-      "記事・既読・保存済みの印は、このブラウザ内に保存します。これらの状態は別の端末やブラウザとは同期しません。ブラウザのデータを消去すると失われます。",
+      hasAccountLibrary() ? "記事・既読・保存済みの印と個人記録は、このブラウザの現在のログイン専用のライブラリに保存します。別の端末やブラウザとは同期しません。ログアウトしても記録は残り、同じアカウントで戻ると利用できます。ブラウザのデータを消去すると失われます。" : "記事・既読・保存済みの印は、このブラウザ内に保存します。これらの状態は別の端末やブラウザとは同期しません。ブラウザのデータを消去すると失われます。",
     ),
     el(
       "p",
@@ -230,6 +231,26 @@ export async function feedReader(root: HTMLElement) {
       "記事を開くと選択した取得先から本文を取り込み、このブラウザに保存します。取得できないときは理由と元のRSS情報を表示します。翻訳は対応ブラウザの端末内機能を使い、初回に翻訳データをダウンロードする場合があります。読み上げは端末内の音声を使います。",
     ),
   );
+  if (hasAccountLibrary()) {
+    const auth = new AuthClient();
+    const notice = el("p");
+    notice.setAttribute("role", "status");
+    const logout = button("ログアウト", () => {
+      logout.disabled = true;
+      notice.textContent = "ログアウトを確認しています。";
+      void (async () => {
+        const state = await auth.status();
+        if (state.available && !state.authenticated) {
+          librarySignedOut();
+          return;
+        }
+        if (state.authenticated && await auth.logout()) return;
+        notice.textContent = "ログアウトを確認できませんでした。記録はこのアカウントのまま保持しています。接続後に再試行してください。";
+        logout.disabled = false;
+      })();
+    });
+    settingsBody.append(logout, notice);
+  }
   const backupSettings = new LibraryBackupView(async () => {
     await load();
     render();

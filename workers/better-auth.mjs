@@ -417,9 +417,10 @@ export function createAuthBridge(
     },
   };
 }
+/** Gate private/library assets and request account bootstrap only for authenticated HTML. */
 export async function productionFetch(request, env) {
   const path = new URL(request.url).pathname;
-  if (env.PRIVATE_DEV === "true" && !path.startsWith("/api/")) {
+  if ((env.PRIVATE_DEV === "true" || env.LIBRARY_ISOLATION_ENABLED === "true") && !path.startsWith("/api/")) {
     const bridge = productionAuth(env);
     let principal = null;
     try {
@@ -446,7 +447,8 @@ export async function productionFetch(request, env) {
       return new Response(
         (await asset.text()).replace(
           "</head>",
-          '<meta name="private-dev" content="true"></head>',
+          '<meta name="private-dev" content="true">' +
+            (env.LIBRARY_ISOLATION_ENABLED === "true" ? '<meta name="account-libraries" content="required">' : '') + '</head>',
         ),
         { status: asset.status, headers },
       );

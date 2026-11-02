@@ -1,3 +1,4 @@
+import { libraryName, openLibraryDatabase } from "./library-context";
 // References use UTF-16 offsets into an exact original/translation version.
 export type HighlightSource = {
   articleId: string;
@@ -16,7 +17,7 @@ export type ArticleHighlight = HighlightSource & {
   createdAt: string;
   revision: number;
 };
-export const highlightDatabase = "quilna.highlights.v1";
+export const highlightDatabase = libraryName("quilna.highlights.v1");
 export const highlightLimit = 200;
 const bounded = (v: unknown, max: number) =>
   typeof v === "string" && v.length <= max;
@@ -80,7 +81,7 @@ export function openHighlights(): Promise<IDBDatabase> {
   if (connection) return connection;
   let failed = false;
   const pending = new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open(highlightDatabase, 1);
+    const request = openLibraryDatabase(highlightDatabase, 1);
     request.onupgradeneeded = () => {
       const store = request.result.createObjectStore("highlights", {
         keyPath: "id",

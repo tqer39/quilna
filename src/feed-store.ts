@@ -1,3 +1,4 @@
+import { libraryName, openLibraryDatabase } from "./library-context";
 import { validArticleUpdate } from "./article-update";
 import {
   feedFingerprint,
@@ -94,10 +95,10 @@ export function readArticle(db: IDBDatabase, id: string): Promise<FeedArticle> {
   });
 }
 
-export const feedDatabase = "tsumiki.rss.v1";
+export const feedDatabase = libraryName("tsumiki.rss.v1");
 export function openFeedLibrary(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(feedDatabase, 1);
+    const request = openLibraryDatabase(feedDatabase, 1);
     request.onupgradeneeded = () => {
       request.result.createObjectStore("feeds", { keyPath: "url" });
       request.result.createObjectStore("articles", { keyPath: "id" });

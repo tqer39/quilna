@@ -1,3 +1,4 @@
+import { libraryName, openLibraryDatabase } from "./library-context";
 import type { FeedArticle } from "./feed-parser";
 
 export type ArticleReference = { id: string; title: string; url: string };
@@ -11,7 +12,7 @@ export type ArticleConnection = {
   createdAt: string;
   revision: number;
 };
-export const connectionDatabase = "quilna.connections.v1";
+export const connectionDatabase = libraryName("quilna.connections.v1");
 export const connectionLimit = 200;
 export function articleReference(a: FeedArticle): ArticleReference {
   return {
@@ -65,7 +66,7 @@ export function openConnections(): Promise<IDBDatabase> {
   if (connection) return connection;
   let failed = false;
   const pending = new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open(connectionDatabase, 1);
+    const request = openLibraryDatabase(connectionDatabase, 1);
     request.onupgradeneeded = () => {
       const store = request.result.createObjectStore("connections", {
         keyPath: "id",

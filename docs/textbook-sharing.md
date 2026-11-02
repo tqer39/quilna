@@ -52,7 +52,7 @@ Unknown extra fields are refused, including fields that might otherwise conceal 
 ## Local retention and verification
 
 `quilna.shared-textbooks.v1` is a separate IndexedDB database with imported editions and recipient-only answers.
-The browser-profile/origin boundary is unchanged: different people must use separate browser profiles. Login/logout does not isolate or erase this library.
+By default the library is shared within one browser profile/origin; different people need separate profiles. The opt-in [account libraries](source-document-catalog.md#account-bound-browser-libraries-opt-in) also scope imported books and recipient answers, while logging out retains them for that account. This does not change the exported file or grant synchronization.
 It is not synchronized between devices or included in the article-library backup. Keep the original textbook files as well.
 Reading retained data assumes the app has loaded; offline startup installation is not provided.
 

@@ -1,3 +1,4 @@
+import { libraryName } from "./library-context";
 import type { FeedArticle } from "./feed-parser";
 import { articleURL } from "./feed-parser";
 import {
@@ -46,7 +47,7 @@ export class ArticleConnectionView {
   private readonly channel =
     typeof BroadcastChannel === "undefined"
       ? null
-      : new BroadcastChannel("quilna.connections.v1");
+      : new BroadcastChannel(libraryName("quilna.connections.v1"));
   private article?: FeedArticle;
   private libraryRevision = -1;
   private context = 0;

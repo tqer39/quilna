@@ -1,3 +1,4 @@
+import { libraryName } from "./library-context";
 export const readerLanguages = [
   ["ja", "日本語"],
   ["en", "英語"],
@@ -21,7 +22,7 @@ export const readerLocales = [
   ["pt-BR", "ポルトガル語（ブラジル）"],
   ["pt-PT", "ポルトガル語（ポルトガル）"],
 ] as const;
-export const readerPreferencesKey = "quilna.reader.preferences.v1";
+export const readerPreferencesKey = libraryName("quilna.reader.preferences.v1");
 export type ReaderPreferences = { targetLanguage: string; automatic: boolean };
 export function languageName(code: string): string {
   return readerLanguages.find(([value]) => value === code)?.[1] ?? code;
