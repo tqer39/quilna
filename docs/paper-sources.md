@@ -84,7 +84,7 @@ The source digest binds selected facts, the linked bibliography and text-format 
 Retained facts are capped at 1,500,000 serialized UTF-8 bytes, including repeated section headings; this prevents a small XML document from creating an unexportable record.
 The archive cap is 3,000,000 bytes. **保存した論文引用ファイルを確認** validates UTF-8, exact fields, versions, bindings and hashes before preview, without provider requests or automatic saving.
 The independent `quilna.paper-excerpts.v1` database retains at most 100 citation records with 20-item pages and opt-in account scoping.
-Identical quotes reuse the first retained body, bibliography and quote dates; changed content is a separate record. Capacity/corruption/transaction/schema failures preserve existing data without eviction/reset.
+Identical quotes reuse the first retained body, bibliography and quote dates; changed content is a separate record. Capacity/corruption/transaction/schema failures preserve existing data without eviction/reset. At capacity, the save message explains the 100-record limit and offers file export; it does not suggest a retry that cannot free capacity.
 Download a citation before sharing and check its contents and terms. There is no citation-management/deletion UI or automatic expiry.
 
 ## Local snapshots and files

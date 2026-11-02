@@ -113,14 +113,13 @@ export function paperExcerptView(
       saved ? "引用を保存済み" : "この論文引用を保存",
       async () => {
         if (!active || !save.isConnected || saving || isSaved) return;
-        const current = revision;
         saving = true;
         save.setAttribute("aria-disabled", "true");
         state.textContent = "論文引用を保存しています…";
         try {
           const result = await savePaperExcerpt(retained);
           void onSaved();
-          if (!active || current !== revision) return;
+          if (!active || !save.isConnected) return;
           retained = result.record;
           source = result.record.source;
           dates(source);
@@ -133,7 +132,7 @@ export function paperExcerptView(
             ? "同じ引用は保存済みです。最初の本文・書誌・引用の取得記録を保持しました。"
             : "論文引用を保存しました。以前の記録は変更していません。";
         } catch (error) {
-          if (active && current === revision) {
+          if (active && save.isConnected) {
             state.textContent = (error as Error).message;
             save.setAttribute("aria-disabled", "false");
           }

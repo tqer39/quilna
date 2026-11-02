@@ -59,6 +59,7 @@ export async function savePaperExcerpt(input: PaperExcerpt) {
   const record = await parsePaperExcerpt(JSON.stringify(input)),
     db = await open();
   let old: unknown;
+  let full = false;
   try {
     await new Promise<void>((resolve, reject) => {
       const tx = db.transaction("excerpts", "readwrite"),
@@ -69,13 +70,21 @@ export async function savePaperExcerpt(input: PaperExcerpt) {
         old = get.result;
         if (old !== undefined) return;
         if (count.result >= 100) {
+          full = true;
           tx.abort();
           return;
         }
         store.add(JSON.stringify(record), record.digest);
       };
       tx.oncomplete = () => resolve();
-      tx.onabort = tx.onerror = () => reject(failed());
+      tx.onabort = tx.onerror = () =>
+        reject(
+          full
+            ? Error(
+                "論文引用の保存上限100件に達しています。既存の記録は保持しています。新しい引用はファイルに保存できます。",
+              )
+            : failed(),
+        );
     });
     if (old !== undefined)
       return { record: await stored(record.digest, old), reused: true };

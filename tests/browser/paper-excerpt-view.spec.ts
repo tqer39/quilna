@@ -47,6 +47,122 @@ async function records(page: Page) {
     return (await api.listPaperExcerpts()).records;
   });
 }
+/** Delay delivery of a real committed/aborted transaction, without substituting its stored result. */
+async function holdCitationSave(page: Page, fail: boolean) {
+  await page.evaluate((fail) => {
+    const original = IDBDatabase.prototype.transaction;
+    let first = true;
+    const state = window as unknown as {
+      heldCitation: boolean;
+      releaseCitation: () => void;
+      settledCitation: boolean;
+    };
+    IDBDatabase.prototype.transaction = function (...args) {
+      const tx = original.apply(this, args);
+      if (
+        first &&
+        this.name === "quilna.paper-excerpts.v1" &&
+        tx.mode === "readwrite"
+      ) {
+        first = false;
+        let callback: ((this: IDBTransaction, event: Event) => unknown) | null =
+          null;
+        for (const field of fail ? ["onabort", "onerror"] : ["oncomplete"])
+          Object.defineProperty(tx, field, {
+            get: () => callback,
+            set(value) {
+              callback = value;
+            },
+          });
+        tx.addEventListener(fail ? "abort" : "complete", (event) => {
+          state.heldCitation = true;
+          state.releaseCitation = () => {
+            const completion = callback;
+            callback = null;
+            completion?.call(tx, event);
+          };
+        });
+        const close = this.close;
+        this.close = function () {
+          close.call(this);
+          state.settledCitation = true;
+        };
+        if (fail) queueMicrotask(() => tx.abort());
+      }
+      return tx;
+    };
+  }, fail);
+}
+for (const fail of [false, true])
+  for (const replace of [false, true])
+    test(`pending citation save ${fail ? "failure" : "success"} settles only its ${replace ? "replaced" : "connected"} panel after PMCID edit`, async ({
+      page,
+    }) => {
+      await providers(page);
+      await selected(page);
+      await page
+        .getByRole("button", { name: "この段落全体を引用として確認" })
+        .click();
+      await holdCitationSave(page, fail);
+      await page
+        .getByRole("button", { name: "この論文引用を保存", exact: true })
+        .click();
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () => (window as unknown as { heldCitation: boolean }).heldCitation,
+          ),
+        )
+        .toBe(true);
+      await expect(
+        page.getByRole("region", { name: "論文引用のプレビュー", exact: true }),
+      ).toContainText("論文引用を保存しています…");
+      await page.getByLabel("Europe PMCのPMCID").fill("PMC7654321");
+      if (replace) {
+        await page
+          .getByLabel("引用する段落", { exact: true })
+          .selectOption({ index: 1 });
+        await page
+          .getByRole("button", { name: "この段落全体を引用として確認" })
+          .click();
+      }
+      await page.evaluate(() =>
+        (
+          window as unknown as { releaseCitation: () => void }
+        ).releaseCitation(),
+      );
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () =>
+              (window as unknown as { settledCitation: boolean })
+                .settledCitation,
+          ),
+        )
+        .toBe(true);
+      const quote = page.getByRole("region", {
+        name: "論文引用のプレビュー",
+        exact: true,
+      });
+      if (replace) {
+        await expect(quote.locator("blockquote")).toHaveText("CO_{2} x^{3}.");
+        await expect(quote).toContainText("この引用はまだ保存していません。");
+        await expect(quote).not.toContainText("再試行してください");
+      } else if (fail) {
+        await expect(quote).toContainText("再試行してください");
+        await expect(
+          quote.getByRole("button", {
+            name: "この論文引用を保存",
+            exact: true,
+          }),
+        ).toHaveAttribute("aria-disabled", "false");
+        await quote
+          .getByRole("button", { name: "この論文引用を保存", exact: true })
+          .click();
+        await expect(quote).toContainText("論文引用を保存しました");
+      } else await expect(quote).toContainText("論文引用を保存しました");
+      expect(await records(page)).toHaveLength(fail && replace ? 0 : 1);
+    });
 for (const outcome of ["success", "failure", "disposed"] as const)
   test(`late body ${outcome} cannot replace a retained quote after selection changes`, async ({
     page,

@@ -400,13 +400,16 @@ test("concurrent quote saves enforce the record capacity atomically and all page
       return {
         success: attempts.filter((a) => a.status === "fulfilled").length,
         failure: attempts.filter((a) => a.status === "rejected").length,
+        errors: attempts.filter((a) => a.status === "rejected").map((a) => a.reason.message as string),
         count: records.length,
         unique: new Set(records.map((r) => r.digest)).size,
       };
     },
     { xml, paper },
   );
-  expect(result).toEqual({ success: 100, failure: 1, count: 100, unique: 100 });
+  expect(result).toEqual({ success: 100, failure: 1, count: 100, unique: 100,
+    errors: ["論文引用の保存上限100件に達しています。既存の記録は保持しています。新しい引用はファイルに保存できます。"],
+  });
 });
 test("an aborted save can be retried and a future database schema refuses reads without changing retained bytes", async ({
   page,
