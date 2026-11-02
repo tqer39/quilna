@@ -164,6 +164,7 @@ func validCommand(command []string) bool {
 	return true
 }
 
+// validate rejects malformed task contracts before a command or model can be dispatched.
 func (t Task) validate() error {
 	if err := t.validateArtifacts(); err != nil {
 		return err

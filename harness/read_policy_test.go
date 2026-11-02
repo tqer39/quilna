@@ -9,6 +9,7 @@ import (
 	"testing"
 )
 
+// TestCodexReviewReadPathsRoundTrip checks persisted grants, successful restricted turns and confirmed profile metadata.
 func TestCodexReviewReadPathsRoundTrip(t *testing.T) {
 	e, path, task := codexFixture(t, "restricted")
 	data, err := os.ReadFile(path)
@@ -39,6 +40,7 @@ func TestCodexReviewReadPathsRoundTrip(t *testing.T) {
 	}
 }
 
+// TestReviewReadPathsValidation distinguishes omitted legacy grants from invalid explicit scopes.
 func TestReviewReadPathsValidation(t *testing.T) {
 	_, _, task := codexFixture(t, "restricted")
 	file := filepath.Join(task.Workspace, "code.txt")
@@ -84,6 +86,7 @@ func TestReviewReadPathsValidation(t *testing.T) {
 	}
 }
 
+// TestCodexReviewRefusesUnconfirmedReadProfile rejects missing, changed, inherited or network-enabled profiles before dispatch.
 func TestCodexReviewRefusesUnconfirmedReadProfile(t *testing.T) {
 	for _, mode := range []string{"restricted-missing", "restricted-other", "restricted-inherits", "restricted-network"} {
 		t.Run(mode, func(t *testing.T) {
@@ -99,6 +102,7 @@ func TestCodexReviewRefusesUnconfirmedReadProfile(t *testing.T) {
 	}
 }
 
+// TestReadProfileCollisionRefusesInheritedGrant prevents a thread-local name from adopting an inherited profile.
 func TestReadProfileCollisionRefusesInheritedGrant(t *testing.T) {
 	_, _, task := codexFixture(t, "restricted")
 	s, err := startAppServer(context.Background(), *task.Review.Codex, task.Workspace, 16384)
@@ -115,6 +119,7 @@ func TestReadProfileCollisionRefusesInheritedGrant(t *testing.T) {
 	}
 }
 
+// TestChangingReviewReadPathsInvalidatesFrozenTask prevents a broader grant from bypassing the frozen task hash.
 func TestChangingReviewReadPathsInvalidatesFrozenTask(t *testing.T) {
 	e, path, task := codexFixture(t, "restricted")
 	task.Review.ReadPaths = []string{filepath.Join(task.Workspace, "code.txt")}

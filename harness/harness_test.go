@@ -469,6 +469,7 @@ func fakeQuota(mode string) map[string]any {
 	return map[string]any{"rateLimits": bucket, "rateLimitsByLimitId": buckets}
 }
 
+// fakeAppServer emits deterministic protocol replies and rejects incorrect adapter policies without contacting a provider.
 func fakeAppServer(mode string) {
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 4096), 1024*1024)

@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 )
 
+// validateReviewReadPaths accepts omitted legacy grants and validates explicit, trusted canonical files or directories.
 // Review paths are trusted grants, not paths suggested by model output.
 // The CLI's minimal runtime reads remain necessary for its command tools.
 func validateReviewReadPaths(review Reviewer) error {
@@ -35,6 +36,7 @@ func validateReviewReadPaths(review Reviewer) error {
 	return nil
 }
 
+// reviewPermissionProfile builds read-only grants with the minimal CLI runtime and no network from validated paths.
 func reviewPermissionProfile(paths []string) map[string]any {
 	filesystem := map[string]any{":minimal": "read"}
 	for _, path := range paths {

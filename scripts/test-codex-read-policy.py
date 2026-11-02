@@ -19,6 +19,7 @@ import unittest
 
 
 def available_tools(items, namespace=None):
+    """Flatten tool namespaces so the fixed response can use the CLI-advertised command tool."""
     result = []
     for item in items:
         if item.get("type") == "namespace":
@@ -30,6 +31,7 @@ def available_tools(items, namespace=None):
 
 class FixedResponses(http.server.BaseHTTPRequestHandler):
     def do_POST(self):
+        """Accept bounded request bodies and emit deterministic tool-call or final SSE responses."""
         length = int(self.headers.get("Content-Length", "0"))
         if length > 4 * 1024 * 1024:
             self.send_error(413)
@@ -74,14 +76,17 @@ class FixedResponses(http.server.BaseHTTPRequestHandler):
         self.wfile.write(payload)
 
     def do_GET(self):
+        """Reject unsupported routes instead of forwarding them to another service."""
         self.send_error(404)
 
     def log_message(self, *_args):
+        """Suppress HTTP access logs for this synthetic local fixture."""
         pass
 
 
 class NativeClient:
     def __init__(self, process):
+        """Track framed replies and notifications from one isolated app-server process."""
         self.process = process
         self.selector = selectors.DefaultSelector()
         self.selector.register(process.stdout, selectors.EVENT_READ)
@@ -90,10 +95,12 @@ class NativeClient:
         self.counter = 0
 
     def send(self, value):
+        """Write and flush one newline-delimited JSON message to the server."""
         self.process.stdin.write((json.dumps(value) + "\n").encode())
         self.process.stdin.flush()
 
     def receive(self, deadline):
+        """Read within the deadline and refuse unexpected server-originated approval or tool requests."""
         while b"\n" not in self.buffer:
             if not self.selector.select(timeout=max(0, deadline - time.monotonic())):
                 raise TimeoutError("native CLI response")
@@ -111,6 +118,7 @@ class NativeClient:
         return value
 
     def call(self, method, params):
+        """Match a request identifier while retaining intervening notifications and surfacing RPC errors."""
         self.counter += 1
         identifier = self.counter
         self.send({"id": identifier, "method": method, "params": params})
@@ -124,6 +132,7 @@ class NativeClient:
             self.pending.append(value)
 
     def completed_turn(self):
+        """Consume queued and live notifications until a turn completes or the deadline expires."""
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
             value = self.pending.pop(0) if self.pending else self.receive(deadline)
@@ -134,6 +143,7 @@ class NativeClient:
 
 @contextmanager
 def native_fixture(binary, directory):
+    """Run an isolated CLI against a fixed loopback provider and close every process and server resource."""
     home = directory / "empty-codex-home"
     home.mkdir()
     workspace = directory / "workspace"
@@ -190,6 +200,7 @@ def native_fixture(binary, directory):
 
 class ReadPolicyTests(unittest.TestCase):
     def check_policy(self, restricted, directory_grant=False):
+        """Compare allowed and unlisted canary reads under the requested scope using fixed provider responses."""
         with tempfile.TemporaryDirectory(prefix="native-read-policy-", dir=SCRATCH) as temporary:
             with native_fixture(BINARY, Path(temporary).resolve()) as (client, workspace, server):
                 allowed = workspace / "allowed.txt"
@@ -244,12 +255,15 @@ class ReadPolicyTests(unittest.TestCase):
                     self.assertIn(unlisted_marker, outputs)
 
     def test_restricted_turn_inherits_read_paths(self):
+        """Verify a file-scoped turn inherits its thread policy and cannot return an unlisted canary."""
         self.check_policy(True)
 
     def test_legacy_read_only_remains_broad(self):
+        """Verify omitted explicit grants preserve the legacy broad read-only behavior."""
         self.check_policy(False)
 
     def test_directory_grant_includes_ignored_descendants(self):
+        """Verify a directory grant covers ignored descendants while denying an outside sibling."""
         self.check_policy(True, directory_grant=True)
 
 

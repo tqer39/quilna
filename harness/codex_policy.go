@@ -6,6 +6,7 @@ import (
 	"errors"
 )
 
+// minimalThreadConfig disables inherited integrations and optionally adds a collision-free, thread-local read profile.
 // Read only config keys, never retain or log MCP/plugin definitions or credentials.
 // An empty table would not clear inherited MCP entries: each name is disabled.
 func minimalThreadConfig(s *appServer, workspace, readProfile string, readPaths []string) (map[string]any, error) {

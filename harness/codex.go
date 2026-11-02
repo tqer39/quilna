@@ -160,10 +160,12 @@ func (s *appServer) call(method string, params any) (json.RawMessage, error) {
 	}
 }
 
+// initialize performs the legacy handshake without enabling experimental APIs.
 func (s *appServer) initialize() error {
 	return s.initializeWithExperimental(false)
 }
 
+// initializeWithExperimental opts into named profiles only when the caller needs restricted reads.
 func (s *appServer) initializeWithExperimental(experimental bool) error {
 	params := map[string]any{"clientInfo": map[string]any{"name": "adaptive_textbook_harness", "title": "Adaptive Textbook Development Harness", "version": "0.1.0"}}
 	if experimental {
@@ -223,6 +225,7 @@ func (e Engine) codexReview(ctx context.Context, r *Run, input []byte, recover b
 	return e.codexOperation(ctx, r, input, recover)
 }
 
+// codexOperation dispatches one guarded operation or recovers its recorded result without replaying an unknown turn.
 func (e Engine) codexOperation(ctx context.Context, r *Run, input []byte, recover bool) (result processResult) {
 	started := time.Now()
 	result.exitCode = -1
