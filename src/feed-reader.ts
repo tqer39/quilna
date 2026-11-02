@@ -519,7 +519,7 @@ export async function feedReader(root: HTMLElement) {
   );
   const outline = new ArticleOutline();
   let readerFocused = true;
-  const focusToggle = button("収集メニューを表示", () => {
+  const focusToggle = button("配信元", () => {
     readerFocused = !readerFocused;
     render();
   });
@@ -2133,7 +2133,7 @@ export async function feedReader(root: HTMLElement) {
       focusToggle.textContent = readerFocused ? "配信元" : "本文に集中";
       focusToggle.setAttribute(
         "aria-label",
-        readerFocused ? "収集メニューを表示" : "本文に集中",
+        readerFocused ? "配信元の収集メニューを表示" : "本文に集中",
       );
       focusToggle.setAttribute("aria-pressed", String(readerFocused));
       const articleNode = el("article", undefined, "rss-article");

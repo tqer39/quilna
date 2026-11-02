@@ -99,6 +99,10 @@ for (const design of ["studio", "editorial", "focus"])
     );
     await expect(current(page)).toContainText("Location article 110");
     await expect(page).toHaveTitle("Location article 110 | Quilna");
+    await expect(page.locator("#rss-focus-toggle")).toHaveText("配信元");
+    await expect(page.locator("#rss-focus-toggle")).toHaveAccessibleName(
+      "配信元の収集メニューを表示",
+    );
     const contrasts = await page
       .locator(".rss-location-bar button")
       .evaluateAll((buttons) => {

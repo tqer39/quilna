@@ -179,7 +179,7 @@ test("no feed and failed discovery leave cached articles readable and let a new 
   );
   mode = "failed";
   await page
-    .getByRole("button", { name: "収集メニューを表示", exact: true })
+    .getByRole("button", { name: "配信元の収集メニューを表示", exact: true })
     .click();
   await page
     .getByRole("button", { name: "フィードを探す", exact: true })
@@ -436,7 +436,7 @@ test("failed and pending feed refresh keep cached articles readable and retryabl
   hold = false;
   release!();
   await page
-    .getByRole("button", { name: "収集メニューを表示", exact: true })
+    .getByRole("button", { name: "配信元の収集メニューを表示", exact: true })
     .click();
   await expect(
     page.getByRole("button", { name: "検証用フィードを再試行", exact: true }),
@@ -479,7 +479,7 @@ test("Atom, malformed XML and malicious feed markup are handled without executin
   );
   expect(requests).toEqual([]);
   await page
-    .getByRole("button", { name: "収集メニューを表示", exact: true })
+    .getByRole("button", { name: "配信元の収集メニューを表示", exact: true })
     .click();
   xml = "<rss><broken>";
   await page.getByRole("button", { name: "すべて更新", exact: true }).click();
