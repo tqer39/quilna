@@ -311,7 +311,7 @@ async function runReaderScenario(browser, info, aliasMode) {
     const results = a.page.getByRole("region", { name: "書誌キーワードの検索結果", exact: true });
     await expect(results.getByRole("heading", { name: paperFixture.message.title[0], exact: true })).toBeVisible();
     expect(paperRequests).toBe(1);
-    await a.page.evaluate(() => globalThis.localStorage.setItem("quilna.crossref-rate.v1", "0"));
+    await expect.poll(() => a.page.evaluate(() => Date.now() >= Number(globalThis.localStorage.getItem("quilna.crossref-rate.v1")))).toBe(true);
     await results.getByRole("button", { name: "このDOIをCrossrefへ送って詳細を確認" }).click();
     await expect(
       a.page.getByRole("region", { name: "書誌情報のプレビュー", exact: true }).getByRole("heading", {

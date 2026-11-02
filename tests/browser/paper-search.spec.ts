@@ -62,10 +62,15 @@ test("explicit keyword search selects a separate DOI observation before save, wi
       () => document.documentElement.scrollWidth <= innerWidth,
     ),
   ).toBe(true);
-  // Advance the shared provider boundary explicitly; no implicit retry or queued request.
-  await page.evaluate(() =>
-    localStorage.setItem("quilna.crossref-rate.v1", "0"),
-  );
+  // Wait for the real shared provider boundary; no queued request or test-only unlock.
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          Date.now() >= Number(localStorage.getItem("quilna.crossref-rate.v1")),
+      ),
+    )
+    .toBe(true);
   const choose = results.getByRole("button", {
     name: "このDOIをCrossrefへ送って詳細を確認",
   });
