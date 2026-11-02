@@ -88,6 +88,14 @@ The existing `quilna.documents.v1` database is upgraded in place to schema versi
 
 The browser library is still shared by one browser profile, not isolated per login. Use separate browser profiles for different people; logging out does not erase retained copies or personal records. This remains a prerequisite for broader multi-user rollout. Browser fixtures use separate disposable profiles. In addition to mocked-response cases and server authorization tests, the maintained reader runtime suite connects the browser to real local authentication, RSS, extraction and persistence with offline Google/publisher fixtures; see [browser validation](browser-validation.md). Neither proves live multi-user usability. Offline reading assumes the app has loaded; offline startup installation is not provided.
 
+### Local-library identity contract (not yet browser isolation)
+
+`GET /api/library/status` is a preparatory, read-only endpoint. It is disabled (404) unless `LIBRARY_ISOLATION_ENABLED=true`. When enabled, an explicit lowercase 64-character `LIBRARY_LEGACY_OWNER_HASH` and working authentication are required; missing configuration returns 503. No deployment configuration enables this endpoint in this change. The legacy owner must be independently verified before future rollout; this endpoint cannot determine who owns existing browser data.
+
+A same-origin GET without query parameters returns only `{schema: 1, account, legacy}`. `account` is the existing SHA-256 account identifier derived from the verified Better Auth subject, and `legacy` indicates an exact match to the configured legacy owner. It exposes no email, user/session ID, other account identifier, credentials or library content. An optional `X-Library-Account` must match the authenticated account. Authentication is rechecked after asynchronous work; logout, expiry, account/session replacement or authentication failure withholds the assignment. Responses use `no-store`, do not enable CORS and do not create sessions or modify library content or stored assignments.
+
+This contract alone does **not** change browser database names, migrate or isolate libraries, grant source access, erase downloaded copies, or enable synchronization. The browser still has the shared-profile limitation above. Browser bootstrap, immutable local assignment, per-account storage, account-switch invalidation and their acceptance tests remain required before enabling multiple users in one browser profile.
+
 ## Persistence and recovery
 
 - A fresh original is reusable for 24 hours. Explicit refresh bypasses freshness. Concurrent requests receive a pending result with a retry time while one durable 30-second lease owns acquisition. The caller must retry; this core has no background worker or polling UI.

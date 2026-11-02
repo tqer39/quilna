@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { hash, bytes } from "./crypto.mjs";
+import { libraryStatus } from "./library-status.mjs";
 const principal = z
   .object({
     subject: z.string().min(1).max(300),
@@ -53,6 +54,8 @@ export function createHandler({
 } = {}) {
   return async (request, env) => {
     const url = new URL(request.url);
+    if (url.pathname === "/api/library/status")
+      return libraryStatus(request, env, authenticate);
     if (!url.pathname.startsWith("/api/"))
       return env.ASSETS
         ? env.ASSETS.fetch(request)

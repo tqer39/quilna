@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { hash } from "../../workers/crypto.mjs";
 import {
   authWorkerFixture as fixture,
   authFixtureOrigin as origin,
@@ -550,4 +551,59 @@ test("real verified sessions gate shared document reuse and logout during acquis
     (await b.api("/api/documents/read", "POST", body, bcsrf)).status,
     200,
   );
+});
+
+test("local library identity is opt-in, account-bound and stable across logout/login and restart", async (t) => {
+  const f = await fixture(t, {
+    missing: {
+      LIBRARY_ISOLATION_ENABLED: "true",
+      LIBRARY_LEGACY_OWNER_HASH: "f".repeat(64),
+    },
+  });
+  const browser = f.browser();
+  assert.equal((await browser.api("/api/library/status")).status, 401);
+  await browser.api(f.callback(await f.start(browser), "a"));
+  const calls = f.calls.length;
+  const a = await browser.api("/api/library/status");
+  assert.equal(a.status, 200);
+  assert.equal(f.calls.length, calls);
+  const db = await f.db();
+  const user = await db
+    .prepare("SELECT id FROM user WHERE email=?")
+    .bind("a@example.test")
+    .first();
+  assert.equal(a.value.account, await hash("better-auth:" + user.id));
+  assert.match(a.value.account, /^[a-f0-9]{64}$/);
+  assert.deepEqual(Object.keys(a.value).sort(), [
+    "account",
+    "legacy",
+    "schema",
+  ]);
+  assert.equal(a.value.schema, 1);
+  assert.equal(a.value.legacy, false);
+  assert.equal(a.headers.get("cache-control"), "no-store");
+  const csrf = (await browser.api("/api/auth/status")).value.csrfToken;
+  await browser.api("/api/auth/logout", "POST", {}, csrf);
+  assert.equal((await browser.api("/api/library/status")).status, 401);
+  await browser.api(f.callback(await f.start(browser), "b"));
+  const b = await browser.api("/api/library/status");
+  assert.equal(b.status, 200);
+  assert.notEqual(b.value.account, a.value.account);
+  assert.equal(
+    (
+      await browser.api("/api/library/status", "GET", undefined, undefined, {
+        "X-Library-Account": a.value.account,
+      })
+    ).status,
+    403,
+  );
+  await f.restart();
+  assert.deepEqual((await browser.api("/api/library/status")).value, b.value);
+  const bcsrf = (await browser.api("/api/auth/status")).value.csrfToken;
+  await browser.api("/api/auth/logout", "POST", {}, bcsrf);
+  await browser.api(f.callback(await f.start(browser), "a"));
+  assert.deepEqual((await browser.api("/api/library/status")).value, a.value);
+  const restartedDB = await f.db();
+  await restartedDB.prepare("UPDATE session SET expiresAt=0").run();
+  assert.equal((await browser.api("/api/library/status")).status, 401);
 });
