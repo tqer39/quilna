@@ -243,9 +243,11 @@ New reviews are read-only; implementation and repair use workspace-write, with `
 For Codex reviews, optional `review.readPaths` restricts command reads to explicitly supplied canonical absolute files/directories plus the CLI's minimal runtime.
 Directories grant all descendants, including ignored files; avoid broad workspace/build/data roots and list the required source, instruction and diagnostic paths.
 Up to 128 paths and 32 KiB of combined path text are supported.
-The adapter opts into the experimental named-permissions API, disables image loading, and uses the same read-only, network-disabled profile at thread and turn start.
+The adapter opts into the experimental named-permissions API, disables image loading, and confirms the read-only, network-disabled profile at thread start.
+Restricted turns inherit that verified profile without turn-level `permissions` or `sandboxPolicy` overrides; reselecting the name can reload global configuration without the thread-local profile definition.
 An unconfirmed profile or inherited profile-name collision stops before a model turn, without falling back to the broad legacy policy.
 The confirmed profile ID is recorded in model metadata. Tasks omitting `readPaths` retain the existing policy.
+To run the optional real-CLI regressions, set `QUILNA_CODEX_BINARY=/absolute/path/to/native/codex` and run `mise run harness:check` (`TSUMIKI_CODEX_BINARY` remains a legacy alias). The fixture uses an empty temporary CLI home and fixed loopback responses to verify file grants, denied unlisted reads, directory grants including ignored descendants, and legacy behavior. It uses no real credentials or model. Supply the native executable rather than an npm launcher because the isolated PATH excludes Node. Freeze `scripts/test-codex-read-policy.py` alongside the check wrapper when enabling this coverage in a fixed task.
 An explicit empty list is refused so it cannot silently select the legacy policy.
 This does not freeze ignored-file contents: use existing protected files/artifact manifests for that. It is not a token/cost cap or model-quality result.
 Connecting to the model service itself still uses the network.

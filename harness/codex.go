@@ -406,9 +406,9 @@ func (e Engine) codexOperation(ctx context.Context, r *Run, input []byte, recove
 	turnParams := map[string]any{"threadId": thread.Thread.ID, "model": cfg.Model, "serviceTier": "default", "cwd": r.Task.Workspace, "approvalPolicy": approval, "approvalsReviewer": "user", "input": []any{map[string]any{"type": "text", "text": prompt}}, "outputSchema": schema}
 	if readProfile == "" {
 		turnParams["sandboxPolicy"] = policy
-	} else {
-		turnParams["permissions"] = readProfile
 	}
+	// Restricted reviews inherit the already verified thread profile. An
+	// explicit permissions override reloads global config without its table.
 	data, err = s.call("turn/start", turnParams)
 	if err != nil {
 		result.outcome = "codex-turn-start-failed"

@@ -636,6 +636,12 @@ func fakeAppServer(mode string) {
 				Schema map[string]any `json:"outputSchema"`
 			}
 			_ = json.Unmarshal(m.Params, &p)
+			if mode == "restricted" && p.Permissions != "" {
+				// Match CLI0.148.0: this override reloads the global config,
+				// where the thread-local permissions table is absent.
+				send(map[string]any{"id": m.ID, "error": map[string]any{"code": -32600, "message": "default_permissions requires a permissions table"}})
+				continue
+			}
 			if p.ThreadID != threadID || p.Sandbox.Network || p.Tier != "default" || len(p.Schema) == 0 || len(p.Input) != 1 {
 				os.Exit(5)
 			}
@@ -646,7 +652,7 @@ func fakeAppServer(mode string) {
 				role = "repair"
 			}
 			if role == "review" {
-				if p.Approval != "on-request" || (mode == "restricted" && (p.Permissions != activeReadProfile || p.Permissions == "" || p.Sandbox.Type != "")) || (mode != "restricted" && (p.Permissions != "" || p.Sandbox.Type != "readOnly")) {
+				if p.Approval != "on-request" || (mode == "restricted" && (p.Permissions != "" || activeReadProfile == "" || p.Sandbox.Type != "")) || (mode != "restricted" && (p.Permissions != "" || p.Sandbox.Type != "readOnly")) {
 					os.Exit(5)
 				}
 			} else {
