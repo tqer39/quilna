@@ -92,7 +92,12 @@ for (const design of ["studio", "editorial", "focus"])
       "href",
       "https://example.org/guide",
     );
-    await page.locator(".rss-article-outline summary").click();
+    if (
+      !(await page
+        .locator(".rss-article-outline")
+        .evaluate((element) => (element as HTMLDetailsElement).open))
+    )
+      await page.locator(".rss-article-outline summary").click();
     await page.evaluate(() => {
       speechSynthesis.dispatchEvent(new Event("voiceschanged"));
     });

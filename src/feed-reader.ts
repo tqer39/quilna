@@ -1,3 +1,4 @@
+import { ArticleOutline } from "./article-outline";
 import { ArticleAutoUpdate } from "./article-auto-update";
 import {
   automaticArticleUpdates,
@@ -485,8 +486,7 @@ export async function feedReader(root: HTMLElement) {
       if (article) article.readingPositions = positions;
     },
   );
-  const outline = el("details", undefined, "rss-article-outline");
-  let outlineKey = "";
+  const outline = new ArticleOutline();
   let readerFocused = true;
   const focusToggle = button("収集メニューを表示", () => {
     readerFocused = !readerFocused;
@@ -495,6 +495,13 @@ export async function feedReader(root: HTMLElement) {
   focusToggle.id = "rss-focus-toggle";
   const readerNavigation = el("nav", undefined, "rss-reader-navigation");
   readerNavigation.setAttribute("aria-label", "記事の移動");
+  new ResizeObserver(() => {
+    main.style.setProperty(
+      "--rss-navigation-height",
+      `${readerNavigation.getBoundingClientRect().height + 16}px`,
+    );
+  }).observe(readerNavigation);
+  const showOutline = button("目次・見出しマップ", () => outline.show());
   const returnToList = button("← 記事一覧へ", () => {
     readingProgress.detach();
     selected = null;
@@ -506,7 +513,7 @@ export async function feedReader(root: HTMLElement) {
     listPosition = null;
   });
   returnToList.id = "rss-return-to-list";
-  readerNavigation.append(returnToList, focusToggle);
+  readerNavigation.append(returnToList, showOutline, focusToggle);
   const listView = new ArticleListView({
     open: (id) => {
       const position = articlePositions.get(id);
@@ -2222,6 +2229,7 @@ export async function feedReader(root: HTMLElement) {
       }
       const originalText = article.content?.text || article.body;
       const hasText = !!article.content || !isLinkOnly(article.body);
+      showOutline.disabled = !hasText;
       const validTranslation =
         article.translation?.sourceText === originalText &&
         article.translation.targetLanguage === targetLanguageFor(preferences)
@@ -2232,50 +2240,6 @@ export async function feedReader(root: HTMLElement) {
       const structure = displayTranslation
         ? undefined
         : article.content?.structure;
-      const nextOutlineKey = JSON.stringify([
-        article.id,
-        !!displayTranslation,
-        structure?.headings.map((h) => [
-          h.start,
-          h.end,
-          h.level,
-          text.slice(h.start, h.end),
-        ]),
-      ]);
-      // Background tag/voice updates must not close or replace an open TOC.
-      if (outlineKey !== nextOutlineKey) {
-        outlineKey = nextOutlineKey;
-        outline.replaceChildren();
-        outline.open = false;
-        outline.append(
-          el(
-            "summary",
-            `この記事の目次${structure?.headings.length ? ` · ${structure.headings.length}` : ""}`,
-          ),
-        );
-        if (structure?.headings.length) {
-          const links = el("nav");
-          links.setAttribute("aria-label", "この記事の目次");
-          for (const heading of structure.headings) {
-            const link = readingJump(
-              text.slice(heading.start, heading.end),
-              `rss-section-${heading.start}`,
-            );
-            link.style.paddingInlineStart = `${Math.min(heading.level - 1, 3) * 12}px`;
-            links.append(link);
-          }
-          outline.append(links);
-        } else
-          outline.append(
-            el(
-              "p",
-              displayTranslation
-                ? "見出しとリンクは原文で確認できます。"
-                : "この記事には見出し情報がありません。",
-            ),
-          );
-      }
-      if (hasText) articleNode.append(outline);
       let readingTools: HTMLElement | null = null;
       if (hasText) {
         const shortcuts = el("nav", undefined, "rss-reading-shortcuts");
@@ -2505,6 +2469,17 @@ export async function feedReader(root: HTMLElement) {
             : article.content?.codeRanges,
         };
         const panel = highlights.mount(readingView, sourceText);
+        const readingLayout = el("div", undefined, "rss-reading-layout");
+        readingLayout.append(
+          outline.mount(
+            article.id,
+            text,
+            structure,
+            !!displayTranslation,
+            sourceText,
+          ),
+          body,
+        );
         readerNavigation.append(
           readingProgress.mount(
             article,
@@ -2515,7 +2490,7 @@ export async function feedReader(root: HTMLElement) {
           ),
         );
         articleNode.append(
-          body,
+          readingLayout,
           panel,
           quoteConnections.mount(article.id),
           learningRecords.mount(article.id),
@@ -2525,6 +2500,7 @@ export async function feedReader(root: HTMLElement) {
           tagsPanel,
         );
       } else {
+        outline.detach();
         readingProgress.detach();
         highlights.detach();
         quoteConnections.detach();
@@ -2539,6 +2515,7 @@ export async function feedReader(root: HTMLElement) {
       articleNode.append(documentHistory.root);
       main.append(articleNode);
     } else {
+      outline.detach();
       documentHistory.show(undefined);
       highlights.detach();
       quoteConnections.detach();
