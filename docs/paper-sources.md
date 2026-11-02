@@ -30,7 +30,7 @@ Results show selected titles/authors/type/container/publisher/publication dates 
 A pending/failed/cancelled search keeps the last successful results labeled with their original query. Input changes and selection invalidate late completions, even if transport ignores cancellation.
 Search summaries and queries disappear on reload; saved observations remain.
 
-The page does not store/display abstracts, obtain PDFs/full text, select source excerpts or invoke textbook generation/review.
+The Crossref adapter excludes abstracts. PDF acquisition and textbook generation/review remain unconnected.
 Those parts of [Issue #31](https://github.com/tqer39/quilna/issues/31) and the connected [generation workflow](https://github.com/tqer39/quilna/issues/7) remain unfinished.
 Bibliographic retrieval does not establish claim correctness, peer review, full-text version identity or permission to redistribute publisher content.
 
@@ -56,8 +56,38 @@ These browser controls do not coordinate different profiles, origins or people s
 If CORS does not expose optional rate headers, the conservative local defaults apply. A blocked cross-origin request fails without a proxy or fallback.
 Each request has a 16-second deadline and a 1,000,000-byte response cap; invalid UTF-8, wrong DOI, malformed dates and oversized selected arrays fail without saving a partial result.
 
-The authenticated Worker permits `https://api.crossref.org` in `connect-src` only on the root `?view=papers` document.
+The authenticated Worker permits `https://api.crossref.org` and the path-scoped `https://www.ebi.ac.uk/europepmc/webservices/rest/` in `connect-src` only on the root `?view=papers` document.
 Other reader pages and login retain their existing policy. No authentication or deployment setting is enabled by this change.
+
+## Licensed body paragraphs and citations
+
+After selecting a bibliographic observation, enter a PMCID and explicitly press **PMCIDをEurope PMCへ送って本文を確認**.
+The disclosure explains that Europe PMC receives that identifier and IP/access information; accounts, email and learning history are excluded.
+The fixed endpoint is `https://www.ebi.ac.uk/europepmc/webservices/rest/{PMCID}/fullTextXML`, as implemented in the [provider's client](https://github.com/EuropePMC/epmc-tools/blob/27f1efbf59aac6895ba283a5231d5361c3201169/europmc_dev_tool/api/articles.py).
+No registration, API key or email is configured. Requests omit credentials/referrers and refuse redirects, with a 16-second deadline and 2,000,000-byte XML cap.
+A separate profile-wide Web Lock and persisted next-attempt time enforce a conservative local one-second gap, not a provider service guarantee. There are no automatic retries; 429/503 impose at least 60 seconds and honor a longer `Retry-After`.
+
+Only a matching DOI/PMCID and a single unscoped explicit CC BY 4.0 or CC0 1.0 grant are accepted. Missing, conflicting, conditional, older or NC/ND grants are refused.
+[Europe PMC's open-access guidance](https://dev.europepmc.org/downloads/openaccess) distinguishes reusable content from merely readable articles; this adapter supports only this narrow subset and does not establish the correctness of the provider's rights claim.
+The UI retains source title/authors, copyright, license statement/link and capture dates, keeping JATS version labels and their supplied `article-version-type` separate from Crossref's metadata version.
+The [JATS definition](https://jats.nlm.nih.gov/publishing/tag-library/1.4/attribute/article-version-type.html) uses that attribute to explain a version statement's meaning. `pmc-version` is labeled as the PMC archive revision, not inferred to be a manuscript revision. Missing labels/types remain unknown.
+Follow the linked license and source before reuse. [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) requires attribution, a license link and identification of changes.
+
+The native XML parser never mounts source HTML or fetches external DTDs, images or media. Entity declarations and internal subsets are refused.
+The `jats-paragraphs-v1` representation normalizes whitespace and renders subscript/superscript as `_{…}` / `^{…}`; unsupported figures, tables, math, code and paragraphs are omitted and counted.
+This is not PDF pagination, complete typesetting or a full fidelity article archive.
+Choose one paragraph and select a range, or use the whole-paragraph button, then review the quote before saving.
+Ranges use UTF-16 offsets in that retained paragraph, exclude split surrogate pairs/whitespace-only selections and have a 6,000-unit limit.
+Pending/failed/cancelled body requests retain the previous body under its original PMCID. Late completions cannot replace newer selections.
+
+`QuilnaPaperExcerpt`, schema 1, contains the selected quote/range, normalized source paragraphs, source attribution, linked bibliographic observation, capture dates and digests; it excludes answers, notes and account identifiers.
+The source digest binds selected facts, the linked bibliography and text-format version, including a hash of the decoded XML text. These are conflict checks, not provider signatures or authenticity proofs.
+When supplied, the optional version-1 `versionType` fact is retained and included in the source digest. Older citation files without it remain readable with unknown type, preserving their facts, hashes and capture dates unchanged.
+Retained facts are capped at 1,500,000 serialized UTF-8 bytes, including repeated section headings; this prevents a small XML document from creating an unexportable record.
+The archive cap is 3,000,000 bytes. **保存した論文引用ファイルを確認** validates UTF-8, exact fields, versions, bindings and hashes before preview, without provider requests or automatic saving.
+The independent `quilna.paper-excerpts.v1` database retains at most 100 citation records with 20-item pages and opt-in account scoping.
+Identical quotes reuse the first retained body, bibliography and quote dates; changed content is a separate record. Capacity/corruption/transaction/schema failures preserve existing data without eviction/reset. At capacity, the save message explains the 100-record limit and offers file export; it does not suggest a retry that cannot free capacity.
+Download a citation before sharing and check its contents and terms. There is no citation-management/deletion UI or automatic expiry.
 
 ## Local snapshots and files
 
@@ -79,4 +109,7 @@ There is no cloud synchronization, automatic deletion or snapshot-management UI.
 
 Synthetic fixtures cover field selection, partial dates, deposited version/relationship records, request bounds, list validation/deduplication, query encoding, shared list/DOI rate responses, late success/failure cancellation, immutable saves and separate-profile file exchange.
 The built reader runtime uses real local authentication with offline Google/provider responses to check page-specific CSP and explicit keyword/DOI dispatch.
-These are not live Crossref availability/CORS tests, real-source licensing approval, owner usability acceptance or completion of paper-to-textbook generation.
+Synthetic body fixtures also cover native XML parsing, grant/identity refusal, bounded archives, exact quote ranges, immutable citation storage, file exchange and account isolation. Real Chrome on 2026-11-03 JST imported a synthetic citation through the native file picker, saved/reopened it after reload and exported an identical JSON record. This is agent verification of a local development build.
+The offline fixtures are not live provider tests. Separately, on 2026-11-03 JST an isolated browser explicitly retrieved DOI `10.1038/s41586-021-03819-2` / [PMC8371605](https://www.ebi.ac.uk/europepmc/webservices/rest/PMC8371605/fullTextXML) from both real APIs with HTTP 200 and browser CORS acceptance. The supplied CC BY 4.0 declaration, 45 retained paragraphs, six omitted blocks and version label `2` / type `pmc-version` were checked. Quote save, actual download and a second isolated context's import/save/reload/re-export retained an identical JSON record without further provider requests. The served source maps were compared with the tested files before this check.
+An earlier replay against a stale development preview is excluded from final-source evidence; its source-cache mismatch is tracked in [Issue #123](https://github.com/tqer39/quilna/issues/123).
+This single recorded example does not establish other papers' availability/rights, correctness of the provider's licensing claim, content quality, owner usability acceptance or completion of paper-to-textbook generation.

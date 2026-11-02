@@ -1,12 +1,12 @@
 export const readerContentSecurityPolicy =
   "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
-/** Only the explicit DOI metadata page can contact Crossref; other reader routes retain the default. */
+/** Only the paper-source page can contact the explicit metadata/body endpoints; other reader routes retain the default. */
 export function readerPolicyForURL(url) {
   const target = new URL(url);
   return target.pathname === "/" && target.searchParams.get("view") === "papers"
     ? readerContentSecurityPolicy.replace(
         "connect-src 'self'",
-        "connect-src 'self' https://api.crossref.org",
+        "connect-src 'self' https://api.crossref.org https://www.ebi.ac.uk/europepmc/webservices/rest/",
       )
     : readerContentSecurityPolicy;
 }
