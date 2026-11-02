@@ -93,7 +93,7 @@ test("failed extraction preserves a saved link and retry recovers without duplic
     "Final paragraph.",
   );
   await page
-    .getByRole("button", { name: "収集メニューを表示", exact: true })
+    .getByRole("button", { name: "配信元の収集メニューを表示", exact: true })
     .click();
   await expect(
     page.getByRole("button", { name: /保存した記事 · 1/ }),
@@ -884,7 +884,7 @@ test("late import preserves current article and concurrent saved flags", async (
   }, firstId);
   release!();
   await page
-    .getByRole("button", { name: "収集メニューを表示", exact: true })
+    .getByRole("button", { name: "配信元の収集メニューを表示", exact: true })
     .click();
   await expect(
     page.getByRole("button", { name: /保存した記事 · 1/ }),

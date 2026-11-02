@@ -97,7 +97,7 @@
   letter-spacing: 0.12em;
 }
 :root[data-reader-design]
-  :is(.rss-shell, .rss-header, .rss-settings)
+  :is(.rss-shell, .rss-header, .rss-settings, .rss-import-dialog)
   :where(button, select, input:not([type="radio"]):not([type="checkbox"])) {
   min-height: 44px;
   font: inherit;
@@ -110,7 +110,7 @@
   max-width: 100%;
 }
 :root[data-reader-design]
-  :is(.rss-shell, .rss-header, .rss-settings)
+  :is(.rss-shell, .rss-header, .rss-settings, .rss-import-dialog)
   button:not(:disabled):hover {
   background: var(--viewer-soft);
   border-color: var(--viewer-accent);
@@ -120,7 +120,9 @@
   outline-offset: 3px;
   box-shadow: none;
 }
-:root[data-reader-design] :is(.rss-shell, .rss-settings) button:disabled {
+:root[data-reader-design]
+  :is(.rss-shell, .rss-settings, .rss-import-dialog)
+  button:disabled {
   color: var(--viewer-muted);
   background: var(--viewer-soft);
 }
@@ -138,7 +140,7 @@
   color: var(--viewer-accent);
 }
 :root[data-reader-design]
-  :is(.rss-shell, .rss-settings)
+  :is(.rss-shell, .rss-settings, .rss-import-dialog)
   :is(
     .muted,
     .rss-lede,
@@ -311,7 +313,7 @@
 :root[data-reader-design] .rss-reader-tools button {
   font-size: 13px;
 }
-:root[data-reader-design] .rss-settings {
+:root[data-reader-design] :is(.rss-settings, .rss-import-dialog) {
   width: min(760px, calc(100% - 32px));
   max-width: 760px;
   padding: 0;
@@ -322,7 +324,7 @@
   border-radius: 20px;
   overscroll-behavior: contain;
 }
-:root[data-reader-design] .rss-settings[open] {
+:root[data-reader-design] :is(.rss-settings, .rss-import-dialog)[open] {
   display: flex;
   flex-direction: column;
 }
@@ -342,11 +344,11 @@
   padding: 0 28px 28px;
   scroll-padding-block: 12px;
 }
-:root[data-reader-design] .rss-settings::backdrop {
+:root[data-reader-design] :is(.rss-settings, .rss-import-dialog)::backdrop {
   background: #101c30a8;
   backdrop-filter: blur(4px);
 }
-:root[data-reader-design] .rss-settings h2 {
+:root[data-reader-design] :is(.rss-settings, .rss-import-dialog) h2 {
   font-size: 24px;
 }
 :root[data-reader-design] .rss-settings-header h2 {
@@ -1283,4 +1285,116 @@
   :root[data-reader-design] .rss-article [id] {
     scroll-margin-top: max(150px, var(--rss-navigation-height, 0px));
   }
+}
+
+/* One persistent place for current context and the reader's main destinations. */
+.rss-location-bar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  max-width: 1360px;
+  margin: 0 auto 16px;
+  padding: 8px 12px;
+  border: 1px solid var(--viewer-line);
+  border-radius: var(--viewer-radius);
+  background: var(--viewer-surface);
+  color: var(--viewer-text);
+  box-shadow: var(--viewer-shadow);
+}
+.rss-location-bar [hidden] {
+  display: none !important;
+}
+.rss-location-current {
+  margin: 0 0 6px;
+  font-size: 12px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.rss-location-actions {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+:root[data-reader-design] .rss-location-bar .rss-reader-navigation {
+  position: static;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  gap: 6px;
+}
+:root[data-reader-design] .rss-location-bar .rss-reader-navigation button {
+  min-height: 44px;
+  padding: 8px 10px;
+  font-size: 13px;
+}
+.rss-destinations {
+  position: relative;
+}
+.rss-destinations > summary {
+  min-height: 44px;
+  padding: 10px;
+  cursor: pointer;
+  white-space: nowrap;
+  border: 1px solid var(--viewer-line);
+  border-radius: 8px;
+}
+.rss-destination-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.rss-destination-links a {
+  min-height: 44px;
+  padding: 10px;
+  font-size: 13px;
+  border: 1px solid var(--viewer-line);
+  border-radius: 8px;
+  background: var(--viewer-surface);
+  color: var(--viewer-accent);
+  text-decoration: none;
+}
+.rss-destination-links a[aria-current] {
+  border-color: var(--viewer-accent);
+  background: var(--viewer-soft);
+  color: var(--viewer-accent);
+  font-weight: 700;
+}
+.rss-location-bar[data-screen="article"] .rss-destination-links {
+  position: absolute;
+  inset-inline-end: 0;
+  top: calc(100% + 6px);
+  display: grid;
+  width: min(260px, 80vw);
+  padding: 8px;
+  border: 1px solid var(--viewer-line);
+  border-radius: 12px;
+  background: var(--viewer-surface);
+  box-shadow: var(--viewer-shadow);
+}
+.rss-location-progress {
+  margin-block-start: 6px;
+}
+:root[data-reader-design] #rss-main {
+  scroll-margin-top: var(--rss-navigation-height, 24px);
+}
+.rss-import-dialog {
+  max-height: calc(100dvh - 24px);
+}
+
+:root[data-reader-design] .rss-location-bar button {
+  background: var(--viewer-surface);
+  color: var(--viewer-text);
+  border: 1px solid var(--viewer-line);
+  border-radius: 8px;
+}
+:root[data-reader-design] .rss-location-bar button:hover {
+  background: var(--viewer-soft);
+  color: var(--viewer-text);
+  border-color: var(--viewer-accent);
+}
+.rss-location-bar :is(a, button, summary):focus-visible {
+  outline: 3px solid var(--viewer-accent);
+  outline-offset: 3px;
 }

@@ -58,6 +58,8 @@ export class CollectionNavigation {
     }
   >();
   private readonly feedList = el("div");
+  private readonly importSlot = el("div");
+  private importParts: HTMLElement[] = [];
 
   constructor(
     root: HTMLElement,
@@ -149,12 +151,13 @@ export class CollectionNavigation {
       ),
       retrySubscription: button("", () => actions.subscription(url, false)),
     });
+    this.importParts = [form, this.presets];
+    this.restoreImport();
     root.append(
       el("p", "COLLECT → READ → LEARN", "eyebrow"),
       el("h2", "情報収集"),
       menus,
-      form,
-      this.presets,
+      this.importSlot,
       sourceLabel,
       this.select,
       this.refresh,
@@ -168,6 +171,14 @@ export class CollectionNavigation {
     subscription: HTMLButtonElement;
     retrySubscription: HTMLButtonElement;
   };
+
+  presentImport(host: HTMLElement) {
+    host.append(...this.importParts);
+    this.field.focus();
+  }
+  restoreImport() {
+    this.importSlot.append(...this.importParts);
+  }
 
   update(state: State) {
     this.state = state;

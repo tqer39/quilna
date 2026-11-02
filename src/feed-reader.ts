@@ -1,3 +1,4 @@
+import { ReaderLocation } from "./reader-location";
 import { ArticleOutline } from "./article-outline";
 import { ArticleAutoUpdate } from "./article-auto-update";
 import {
@@ -108,10 +109,15 @@ export async function feedReader(root: HTMLElement) {
   let db: IDBDatabase | null = null;
   let feeds: Feed[] = [],
     articles: FeedArticle[] = [];
+  const initialFilter = new URLSearchParams(location.search).get("filter");
   let selected: string | null = null,
-    filter = "all",
+    filter =
+      initialFilter === "saved" || initialFilter === "unread"
+        ? initialFilter
+        : "all",
     source = "",
     input = "";
+  let navigationRevision = 0;
   let problem = "",
     retry: (() => void) | null = null,
     connecting = true;
@@ -397,22 +403,47 @@ export async function feedReader(root: HTMLElement) {
   settingsBody.append(demo);
   actions.append(skipToArticles, settingsOpen);
   rootHeader.append(brand, actions);
+  const locationNavigation = new ReaderLocation({
+    list: (next) => {
+      navigationRevision++;
+      filter = next;
+      selected = null;
+      render();
+      listHeading.focus({ preventScroll: true });
+      main.scrollIntoView({ block: "start" });
+    },
+    import: () => openImport(),
+  });
+  const importDialog = el("dialog", undefined, "rss-import-dialog");
+  const importHeading = el("h2", "サイト・記事の取り込み");
+  importHeading.id = "rss-import-title";
+  importDialog.setAttribute("aria-labelledby", importHeading.id);
+  const importClose = button("元の画面へ戻る", () => importDialog.close());
+  const importHeader = el("div", undefined, "rss-settings-header");
+  const importBody = el("div", undefined, "rss-settings-body");
+  importHeader.append(importHeading, importClose);
+  importDialog.append(importHeader, importBody);
+  let importFinished = false;
+  let discoveryInDialog = false;
   const layout = el("div", undefined, "rss-shell");
   const navigation = el("section", undefined, "rss-navigation");
   navigation.setAttribute("aria-label", "収集メニュー");
   const collectionNavigation = new CollectionNavigation(navigation, {
     filter: (value) => {
+      navigationRevision++;
       filter = value;
       selected = null;
       render();
     },
     input: (value) => {
+      if (!importDialog.open) discoveryInDialog = false;
       input = value;
       clearDiscovery();
     },
     discover: (value) => void discover(value),
     add: (value) => void addArticle(value),
     source: (value) => {
+      navigationRevision++;
       source = value;
       selected = null;
       render();
@@ -488,21 +519,23 @@ export async function feedReader(root: HTMLElement) {
   );
   const outline = new ArticleOutline();
   let readerFocused = true;
-  const focusToggle = button("収集メニューを表示", () => {
+  const focusToggle = button("配信元", () => {
     readerFocused = !readerFocused;
     render();
   });
   focusToggle.id = "rss-focus-toggle";
-  const readerNavigation = el("nav", undefined, "rss-reader-navigation");
+  const readerNavigation = locationNavigation.reader;
   readerNavigation.setAttribute("aria-label", "記事の移動");
   new ResizeObserver(() => {
-    main.style.setProperty(
+    root.style.setProperty(
       "--rss-navigation-height",
-      `${readerNavigation.getBoundingClientRect().height + 16}px`,
+      `${locationNavigation.root.getBoundingClientRect().height + 16}px`,
     );
-  }).observe(readerNavigation);
-  const showOutline = button("目次・見出しマップ", () => outline.show());
+  }).observe(locationNavigation.root);
+  const showOutline = button("目次", () => outline.show());
+  showOutline.setAttribute("aria-label", "目次・見出しマップ");
   const returnToList = button("← 記事一覧へ", () => {
+    navigationRevision++;
     readingProgress.detach();
     selected = null;
     render();
@@ -529,10 +562,12 @@ export async function feedReader(root: HTMLElement) {
         showError((error as Error).message, () => void connect()),
       ),
     clear: () => {
+      navigationRevision++;
       searchQuery = displayedQuery = "";
       render();
     },
     page: (delta) => {
+      navigationRevision++;
       pageNumber += delta;
       render();
     },
@@ -551,6 +586,7 @@ export async function feedReader(root: HTMLElement) {
   const updateQuery = () => {
     searchQuery = searchField.value;
     if (!composing) {
+      navigationRevision++;
       displayedQuery = searchQuery;
       pageNumber = 0;
       render();
@@ -566,6 +602,7 @@ export async function feedReader(root: HTMLElement) {
   const tagsSelect = el("select");
   tagsSelect.id = tagFilterLabel.htmlFor;
   tagsSelect.addEventListener("change", () => {
+    navigationRevision++;
     tagFilter = tagsSelect.value;
     pageNumber = 0;
     render();
@@ -576,7 +613,62 @@ export async function feedReader(root: HTMLElement) {
   errors.setAttribute("role", "alert");
   errors.hidden = true;
   layout.append(navigation, main);
-  root.append(rootHeader, layout, errors, settings);
+  root.append(
+    rootHeader,
+    locationNavigation.root,
+    layout,
+    errors,
+    settings,
+    importDialog,
+  );
+  importDialog.addEventListener("close", () => {
+    if (importDialog.open) return;
+    if (!importFinished) navigationRevision++;
+    collectionNavigation.restoreImport();
+    root.insertBefore(errors, settings);
+    render();
+    if (importFinished) {
+      (main.querySelector<HTMLElement>("h1") ?? main).focus({
+        preventScroll: true,
+      });
+      main.scrollIntoView({ block: "start" });
+    }
+    importFinished = false;
+  });
+  function openImport() {
+    if (importDialog.open) return;
+    navigationRevision++;
+    discoveryInDialog = true;
+    importFinished = false;
+    importClose.textContent = selected ? "記事詳細へ戻る" : "記事一覧へ戻る";
+    collectionNavigation.presentImport(importBody);
+    importBody.append(discoveryPanel, errors);
+    importDialog.showModal();
+    importBody.querySelector<HTMLInputElement>("#feed-url")?.focus();
+    updateLocation();
+  }
+  function finishImport() {
+    if (importDialog.open) {
+      importFinished = true;
+      importDialog.close();
+    }
+  }
+  function updateLocation() {
+    const article = selected
+      ? articles[articlePositions.get(selected) ?? -1]
+      : undefined;
+    locationNavigation.update({
+      articleId: article?.id,
+      title: article?.content?.title || article?.title,
+      filter,
+      source: source
+        ? feeds.find((feed) => feed.url === source)?.title || "選択中の配信元"
+        : "",
+      importing: importDialog.open,
+    });
+  }
+  if (new URLSearchParams(location.search).get("screen") === "import")
+    openImport();
 
   function canCollect() {
     return (
@@ -1194,6 +1286,7 @@ export async function feedReader(root: HTMLElement) {
     return result as { url: string; xml?: string; html?: string };
   }
   async function discover(value: string) {
+    discoveryInDialog = importDialog.open;
     clearDiscovery();
     let address: string;
     try {
@@ -1296,10 +1389,12 @@ export async function feedReader(root: HTMLElement) {
             : "登録して読む",
         () => {
           if (registered) {
+            navigationRevision++;
             source = candidate.url;
             filter = "all";
             selected = null;
             clearDiscovery();
+            finishImport();
             render();
           } else if (existing?.unsubscribed)
             void changeSubscription(candidate.url, true);
@@ -1336,6 +1431,7 @@ export async function feedReader(root: HTMLElement) {
     automatic = false,
   ) {
     const registrationTicket = discoveryEpoch;
+    const registrationNavigation = navigationRevision;
     let url: URL;
     try {
       url = new URL(value.trim());
@@ -1387,15 +1483,21 @@ export async function feedReader(root: HTMLElement) {
           await mergeFeed(db!, parsed.feed, parsed.articles);
           await load();
           announceChange();
-          problem = "";
-          if (registering) {
-            if (registrationTicket === discoveryEpoch) {
-              clearDiscovery();
-              input = "";
-            }
+          if (!registering) problem = "";
+          // Keep the subscription, but a completed older action must not
+          // navigate over a newer reader/list/import context (including A-B-A).
+          if (
+            registering &&
+            registrationTicket === discoveryEpoch &&
+            registrationNavigation === navigationRevision
+          ) {
+            problem = "";
+            clearDiscovery();
+            input = "";
             source = address;
             filter = "all";
             selected = null;
+            finishImport();
           }
         } catch (error) {
           const message = controller.signal.aborted
@@ -1865,6 +1967,8 @@ export async function feedReader(root: HTMLElement) {
     }
   }
   function showArticle(article: FeedArticle) {
+    navigationRevision++;
+    finishImport();
     selected = article.id;
     render();
     main.querySelector<HTMLElement>("h1")?.focus({ preventScroll: true });
@@ -2019,15 +2123,19 @@ export async function feedReader(root: HTMLElement) {
       }),
     });
     renderDiscovery();
-    if (discoveryPanel.parentNode !== main) main.append(discoveryPanel);
+    const discoveryHost = discoveryInDialog ? importBody : main;
+    if (discoveryPanel.parentNode !== discoveryHost)
+      discoveryHost.append(discoveryPanel);
+    updateLocation();
     if (article) {
       main.classList.add("rss-reading");
       layout.classList.toggle("rss-focused", readerFocused);
-      focusToggle.textContent = readerFocused
-        ? "収集メニューを表示"
-        : "本文に集中";
+      focusToggle.textContent = readerFocused ? "配信元" : "本文に集中";
+      focusToggle.setAttribute(
+        "aria-label",
+        readerFocused ? "配信元の収集メニューを表示" : "本文に集中",
+      );
       focusToggle.setAttribute("aria-pressed", String(readerFocused));
-      main.append(readerNavigation);
       const articleNode = el("article", undefined, "rss-article");
       const title = el("h1", article.content?.title || article.title);
       title.id = "rss-current-title";
@@ -2480,7 +2588,7 @@ export async function feedReader(root: HTMLElement) {
           ),
           body,
         );
-        readerNavigation.append(
+        locationNavigation.progress.append(
           readingProgress.mount(
             article,
             text,
