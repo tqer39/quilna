@@ -52,7 +52,16 @@ test("explicit keyword search selects a separate DOI observation before save, wi
   expect(keys).toEqual(["query.bibliographic", "rows", "select"]);
   await expect(results).toContainText("2026-10");
   await expect(results.locator("script")).toHaveCount(0);
-  await expect(results).not.toContainText("PRIVATE_ABSTRACT");
+  await expect(results).not.toContainText(
+    "COPYRIGHTED ABSTRACT MUST NOT BE RETAINED",
+  );
+  await expect(results).not.toContainText("UNSELECTED REFERENCE");
+  await expect(results).not.toContainText("PRIVATE MUST NOT BE RETAINED");
+  expect(
+    await page.evaluate(
+      () => (window as unknown as Record<string, unknown>).PAPER_XSS,
+    ),
+  ).toBeUndefined();
   expect((await records(page)).snapshots).toEqual([]);
   await expect(
     page.getByRole("region", { name: "書誌情報のプレビュー", exact: true }),
@@ -224,7 +233,7 @@ for (const outcome of ["resolve", "reject"] as const)
     await finish(0, "FIRST_RESULT");
     await expect(page.getByText("FIRST_RESULT", { exact: true })).toBeVisible();
     await search("second");
-    await page.getByLabel("書誌キーワード", { exact: true }).fill("third");
+    await page.getByLabel("書誌キーワード", { exact: true }).fill("first");
     await page
       .getByRole("button", { name: "キーワードをCrossrefへ送って検索" })
       .click();
