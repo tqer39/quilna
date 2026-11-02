@@ -32,6 +32,7 @@ type Task struct {
 }
 
 type Action struct {
+	Artifacts      []string     `json:"artifacts,omitempty"`
 	Kind           string       `json:"kind,omitempty"`
 	Command        []string     `json:"command,omitempty"`
 	Codex          *CodexConfig `json:"codex,omitempty"`
@@ -163,6 +164,9 @@ func validCommand(command []string) bool {
 }
 
 func (t Task) validate() error {
+	if err := t.validateArtifacts(); err != nil {
+		return err
+	}
 	if err := validateSnapshots(t.ProtectedFiles); err != nil {
 		return err
 	}

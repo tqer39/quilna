@@ -71,6 +71,14 @@ func (e Engine) New(taskPath string) (*Run, error) {
 			return nil, errors.New("state-must-not-be-tracked")
 		}
 	}
+	for _, check := range task.Checks {
+		for _, path := range check.Artifacts {
+			root := filepath.Join(task.Workspace, path)
+			if withinPath(root, e.Store.Directory) || withinPath(e.Store.Directory, root) {
+				return nil, errors.New("artifact-overlaps-state")
+			}
+		}
+	}
 	if task.usesCodex() && !e.AllowCodex {
 		return nil, errors.New("codex-disabled")
 	}
@@ -203,6 +211,12 @@ func (e Engine) Execute(ctx context.Context, id string, reconcileLocal bool) (*R
 		if err := verifySnapshots(r.Task.ProtectedFiles); err != nil {
 			return e.finish(r, "blocked", err.Error())
 		}
+		if err := e.verifyArtifactsDuringRun(ctx, r); err != nil {
+			if ctx.Err() != nil {
+				return e.finish(r, "stopped", "interrupted")
+			}
+			return e.finish(r, "blocked", err.Error())
+		}
 		if r.Operations >= r.Task.MaxOperations {
 			return e.finish(r, "blocked", "operation-budget-exhausted")
 		}
@@ -235,6 +249,9 @@ func (e Engine) Execute(ctx context.Context, id string, reconcileLocal bool) (*R
 		inputEvidence := latestCheckEvidence(r)
 		for i := range inputEvidence {
 			inputEvidence[i].Log = filepath.Join(e.Store.Directory, inputEvidence[i].Log)
+			if ref := inputEvidence[i].Artifacts; ref != nil {
+				inputEvidence[i].Artifacts = &ArtifactReference{Manifest: filepath.Join(e.Store.Directory, ref.Manifest), SHA256: ref.SHA256}
+			}
 		}
 		history, historyErr := summarizeHistory(r)
 		if historyErr != nil {
@@ -295,9 +312,28 @@ func (e Engine) Execute(ctx context.Context, id string, reconcileLocal bool) (*R
 		if r.Phase == "checks" {
 			index := r.CheckIndex
 			r.Evidence[len(r.Evidence)-1].CheckIndex = &index
+			if result.outcome == "complete" && result.exitCode == 0 && before == after {
+				artifactStarted := time.Now()
+				ref, err := e.captureArtifacts(r, r.Evidence[len(r.Evidence)-1])
+				r.ElapsedMillis += time.Since(artifactStarted).Milliseconds()
+				if err != nil {
+					r.Evidence[len(r.Evidence)-1].Outcome = "artifact-capture-failed"
+					r.Evidence[len(r.Evidence)-1].ArtifactError = err.Error()
+					return e.finish(r, "blocked", "artifact-capture-failed")
+				}
+				r.Evidence[len(r.Evidence)-1].Artifacts = ref
+			}
 		}
 		if err := verifySnapshots(r.Task.ProtectedFiles); err != nil {
 			return e.finish(r, "blocked", err.Error())
+		}
+		if r.Phase == "review" {
+			if err := e.verifyArtifactsDuringRun(ctx, r); err != nil {
+				if ctx.Err() != nil {
+					return e.finish(r, "stopped", "interrupted")
+				}
+				return e.finish(r, "blocked", err.Error())
+			}
 		}
 		if (effect == "verification" || effect == "model-review") && before != after {
 			return e.finish(r, "blocked", "verification-modified-code")
@@ -376,7 +412,7 @@ func (e Engine) verifyEvidence(r *Run) error {
 			return errors.New("evidence-modified")
 		}
 	}
-	return nil
+	return e.verifyArtifactEvidence(r)
 }
 
 func (e Engine) prepareRepair(r *Run) bool {
@@ -427,6 +463,12 @@ func (e Engine) recoverReview(ctx context.Context, r *Run) (*Run, error) {
 	}
 	r.Evidence = append(r.Evidence, Evidence{Model: r.Pending.Model, Operation: r.Operations, Phase: "review-recovery", CodeHash: current, AfterHash: after, ExitCode: result.exitCode, Outcome: result.outcome, StartedAt: started.Format(time.RFC3339Nano), DurationMillis: result.duration.Milliseconds(), Log: logName, LogHash: logHash})
 	if err := verifySnapshots(r.Task.ProtectedFiles); err != nil {
+		return e.finish(r, "blocked", err.Error())
+	}
+	if err := e.verifyArtifactsDuringRun(ctx, r); err != nil {
+		if ctx.Err() != nil {
+			return e.finish(r, "stopped", "interrupted")
+		}
 		return e.finish(r, "blocked", err.Error())
 	}
 	if current != after {

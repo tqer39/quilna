@@ -13,18 +13,20 @@ import (
 )
 
 type Evidence struct {
-	CheckIndex     *int           `json:"checkIndex,omitempty"`
-	Model          *ModelMetadata `json:"model,omitempty"`
-	Operation      int            `json:"operation"`
-	Phase          string         `json:"phase"`
-	CodeHash       string         `json:"codeHash"`
-	AfterHash      string         `json:"afterHash"`
-	ExitCode       int            `json:"exitCode"`
-	Outcome        string         `json:"outcome"`
-	StartedAt      string         `json:"startedAt"`
-	DurationMillis int64          `json:"durationMillis"`
-	Log            string         `json:"log"`
-	LogHash        string         `json:"logHash"`
+	ArtifactError  string             `json:"artifactError,omitempty"`
+	Artifacts      *ArtifactReference `json:"artifacts,omitempty"`
+	CheckIndex     *int               `json:"checkIndex,omitempty"`
+	Model          *ModelMetadata     `json:"model,omitempty"`
+	Operation      int                `json:"operation"`
+	Phase          string             `json:"phase"`
+	CodeHash       string             `json:"codeHash"`
+	AfterHash      string             `json:"afterHash"`
+	ExitCode       int                `json:"exitCode"`
+	Outcome        string             `json:"outcome"`
+	StartedAt      string             `json:"startedAt"`
+	DurationMillis int64              `json:"durationMillis"`
+	Log            string             `json:"log"`
+	LogHash        string             `json:"logHash"`
 }
 
 type Pending struct {

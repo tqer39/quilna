@@ -8,14 +8,16 @@ import (
 
 // CheckSummary deliberately contains references rather than raw logs.
 type CheckSummary struct {
-	Operation      int    `json:"operation"`
-	CheckIndex     *int   `json:"checkIndex,omitempty"`
-	CodeHash       string `json:"codeHash"`
-	ExitCode       int    `json:"exitCode"`
-	Outcome        string `json:"outcome"`
-	DurationMillis int64  `json:"durationMillis"`
-	Log            string `json:"log"`
-	LogHash        string `json:"logHash"`
+	ArtifactError  string             `json:"artifactError,omitempty"`
+	Artifacts      *ArtifactReference `json:"artifacts,omitempty"`
+	Operation      int                `json:"operation"`
+	CheckIndex     *int               `json:"checkIndex,omitempty"`
+	CodeHash       string             `json:"codeHash"`
+	ExitCode       int                `json:"exitCode"`
+	Outcome        string             `json:"outcome"`
+	DurationMillis int64              `json:"durationMillis"`
+	Log            string             `json:"log"`
+	LogHash        string             `json:"logHash"`
 }
 
 type HistorySummary struct {
@@ -172,7 +174,11 @@ func (e Engine) Summary(id string) (RunSummary, error) {
 	}
 	summary = RunSummary{ID: r.ID, Status: r.Status, Phase: r.Phase, PendingOperation: r.Pending != nil, Reason: r.Reason, Stale: r.Stale, CurrentValidation: r.CurrentValidation, CodeHash: r.CodeHash, CurrentCodeHash: r.CurrentCodeHash, TaskHash: r.TaskHash, Findings: r.Findings, History: history, Checks: []CheckSummary{}}
 	for _, p := range latestCheckEvidence(r) {
-		summary.Checks = append(summary.Checks, CheckSummary{Operation: p.Operation, CheckIndex: p.CheckIndex, CodeHash: p.CodeHash, ExitCode: p.ExitCode, Outcome: p.Outcome, DurationMillis: p.DurationMillis, Log: filepath.Join(e.Store.Directory, p.Log), LogHash: p.LogHash})
+		var artifacts *ArtifactReference
+		if ref := p.Artifacts; ref != nil {
+			artifacts = &ArtifactReference{Manifest: filepath.Join(e.Store.Directory, ref.Manifest), SHA256: ref.SHA256}
+		}
+		summary.Checks = append(summary.Checks, CheckSummary{ArtifactError: p.ArtifactError, Artifacts: artifacts, Operation: p.Operation, CheckIndex: p.CheckIndex, CodeHash: p.CodeHash, ExitCode: p.ExitCode, Outcome: p.Outcome, DurationMillis: p.DurationMillis, Log: filepath.Join(e.Store.Directory, p.Log), LogHash: p.LogHash})
 	}
 	return summary, nil
 }

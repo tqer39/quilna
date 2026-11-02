@@ -153,9 +153,37 @@ These are recorded cumulative request counters, not a single context-window size
 Model and command inputs carry the latest checks for the current source and a compact `history` summary;
 older raw evidence remains in the ledger and logs. Previous failures and repair counts are not concealed.
 Read the full log only when needed and verify its recorded SHA-256 before reusing it.
-Maintained product-profile generation, runtime artifact manifests, and representative live-model comparisons
-remain follow-up work. Unavailable native UI or physical devices must remain explicit external prerequisites,
+Maintained product-profile generation and representative live-model comparisons remain follow-up work. Unavailable native UI or physical devices must remain explicit external prerequisites,
 not repeated source-repair attempts.
+
+## Required check artifacts
+
+A trusted check can declare workspace-relative `artifacts` alongside its `command` and `timeoutSeconds`:
+
+```json
+{"command":["/absolute/path/trusted-build-check"],"timeoutSeconds":300,"artifacts":[".local-state/native/App.app"]}
+```
+
+After a successful command that leaves source unchanged, the engine records a private, exclusive-create
+`RUN/NNN.artifacts.json` manifest. It links the task hash, source hash, check index and operation to each artifact's
+complete directory tree, file modes, content SHA-256 hashes and internal symlink targets, including debug dylibs.
+This records what the trusted check observed; the check itself must establish that the output belongs to its build.
+The manifest is metadata, not an archived binary or proof of native UI behavior.
+
+Required artifacts must exist. Capture failure preserves the command's real exit code and log, records
+`artifact-capture-failed` with an `artifactError`, and blocks before review. Manifest references and hashes
+are included in `summary` and reviewer input. Historical manifests remain hash-verified after repair;
+current output checks use only the latest applicable successful check cycle. A new repair/build may supersede
+old output files but cannot rewrite historical manifests. Review may not alter these outputs, even when requesting repair.
+Status/resume refuse current evidence after files are added, removed, modified or mode/link targets change.
+
+Use disjoint output paths owned by one check each. Paths must be canonical relative paths below the workspace,
+without `..`, `.git` or overlap with harness state. Roots and parent directories cannot be symlinks.
+Internal, non-dangling symlinks are recorded without traversal; escaping links and special files are refused.
+Per check, limits are 16 roots, 8,192 entries, 1 GiB of regular-file data, 256 MiB per file and a 4 MiB manifest.
+Source files remain covered by the code hash; build outputs should stay ignored by Git so building does not modify source identity.
+Checks without `artifacts` retain their prior contract and do not establish binary identity.
+These are checkpoint comparisons, not a filesystem monitor or protection against changes reverted between observations.
 
 ## Stop, resume, and evidence
 
