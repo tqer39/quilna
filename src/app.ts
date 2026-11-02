@@ -1,5 +1,8 @@
 import "./style.css";
-if (
+if (new URLSearchParams(location.search).get("view") === "textbooks") {
+  const { sharedTextbookView } = await import("./shared-textbook-view");
+  await sharedTextbookView(document.querySelector<HTMLDivElement>("#app")!);
+} else if (
   new URLSearchParams(location.search).get("view") === "lesson" ||
   (location.hash &&
     new URLSearchParams(location.search).get("view") !== "feeds")

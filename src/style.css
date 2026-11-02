@@ -1430,3 +1430,55 @@ header {
     overflow-y: scroll;
   }
 }
+/* File-based learning stays separate from the primary article reader. */
+.shared-textbook-page {
+  max-width: 54rem;
+  margin: auto;
+  padding: 1.25rem;
+  overflow-wrap: anywhere;
+}
+.shared-textbook-page header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1rem;
+  justify-content: space-between;
+}
+.shared-textbook-page main > section {
+  margin-block: 2rem;
+  padding-block: 1rem;
+  border-top: 1px solid currentColor;
+}
+.shared-textbook-page nav {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-block: 1rem;
+}
+.shared-textbook-page fieldset label {
+  display: block;
+  margin-block: 0.75rem;
+}
+.shared-textbook-page blockquote {
+  white-space: pre-wrap;
+  margin-inline: 0.75rem;
+}
+.shared-textbook-page details {
+  margin-block: 1rem;
+}
+.shared-textbook-page button {
+  margin: 0.3rem;
+}
+.shared-textbook-row {
+  margin-block: 0.5rem;
+}
+
+.shared-textbook-page p {
+  white-space: pre-wrap;
+}
+.shared-textbook-page input[type="file"] {
+  max-width: 100%;
+}
+.shared-textbook-page fieldset {
+  min-inline-size: 0;
+}
