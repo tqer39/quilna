@@ -5,6 +5,7 @@ import ts from "typescript";
 
 // Treat origin-routing policy as part of the deployment contract. Checking only
 // the source URL cannot enforce Cloudflare's network boundary.
+/** Reject asset-authentication bypasses and unbound account-library deployments. */
 export function inspectWorkerConfig(
   config,
   { ownerOnly = config?.vars?.PRIVATE_DEV === "true" } = {},
@@ -18,6 +19,11 @@ export function inspectWorkerConfig(
       flags.includes("global_fetch_private_origin")
     )
       errors.push(`${label}: global fetch must use public Internet routing`);
+    if (value?.vars?.LIBRARY_ISOLATION_ENABLED === "true" &&
+      (value.assets?.run_worker_first !== true || value.preview_urls !== false ||
+       typeof value?.vars?.LIBRARY_LEGACY_OWNER_HASH !== "string" ||
+       !/^[a-f0-9]{64}$/.test(value.vars.LIBRARY_LEGACY_OWNER_HASH)))
+      errors.push(`${label}: account libraries require authentication for every asset, disabled preview URLs, and an explicit legacy owner hash`);
     if (
       (ownerOnly || value?.vars?.PRIVATE_DEV === "true") &&
       (value?.vars?.PRIVATE_DEV !== "true" ||

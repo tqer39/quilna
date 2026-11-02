@@ -62,7 +62,7 @@ Capacity, transaction failure, damaged records and a newer database schema refus
 Unknown fields/versions, changed digests/endpoint bindings and malformed facts are rejected.
 Re-export retains the chosen observation's facts and capture time; imports never silently substitute a newer deposit.
 These files contain no article library, answers, notes, account identity or credentials and are separate from article backups and [textbook files](textbook-sharing.md).
-The library is shared within one browser profile, not isolated by login. Different people need separate profiles.
+By default the library is shared within one browser profile; different people need separate profiles. Opt-in [account libraries](source-document-catalog.md#account-bound-browser-libraries-opt-in) also scope retained paper records, without adding account identity to exports. The Crossref rate limit remains shared across accounts in that profile.
 There is no cloud synchronization, automatic deletion or snapshot-management UI.
 
 ## Verification scope

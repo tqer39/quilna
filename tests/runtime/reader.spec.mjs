@@ -72,10 +72,10 @@ async function subscribe(page, address = feedURL) {
     page.getByRole("button", { name: "Runtime article", exact: true }),
   ).toBeVisible();
 }
-async function storedArticles(page) {
-  return page.evaluate(async () => {
+async function storedArticles(page, database = "tsumiki.rss.v1") {
+  return page.evaluate(async (database) => {
     const db = await new Promise((resolve, reject) => {
-      const r = globalThis.indexedDB.open("tsumiki.rss.v1");
+      const r = globalThis.indexedDB.open(database);
       r.onsuccess = () => resolve(r.result);
       r.onerror = () => reject(r.error);
     });
@@ -89,7 +89,7 @@ async function storedArticles(page) {
     } finally {
       db.close();
     }
-  });
+  }, database);
 }
 
 // Compare the app's committed copy with an authenticated read of the exact
@@ -319,6 +319,8 @@ async function runReaderScenario(browser, info, aliasMode) {
     expect(readerPage.headers()["content-security-policy"]).not.toContain(
       "api.crossref.org",
     );
+    // Navigation load/CSP inspection does not guarantee the lazy reader is ready.
+    await expect(a.page.getByRole("button", { name: "設定", exact: true })).toBeVisible();
     await f.restart(a.account);
     const admin = a.page.locator(".rss-policy-settings");
     async function openAdmin() {
@@ -857,6 +859,166 @@ test("closed reader receives a durable RSS revision and retains the old body unt
     );
     expect(
       [...closed, ...disposed].filter((result) => result.status === "rejected"),
+    ).toEqual([]);
+  }
+});
+
+test("one browser profile switches real accounts without mixing retained articles or saved state", async ({
+  browser,
+}, info) => {
+  const cleanup = [],
+    unexpected = [],
+    errors = [];
+  const port = await freePort(),
+    origin = `https://127.0.0.1:${port}`;
+  let context,
+    owner = "a",
+    articleFetches = 0;
+  try {
+    const f = await authWorkerFixture(
+      { after: (fn) => cleanup.push(fn) },
+      {
+        entry: "tests/runtime/reader-entry.mjs",
+        origin,
+        missing: {
+          LIBRARY_ISOLATION_ENABLED: "true",
+          LIBRARY_LEGACY_OWNER_HASH: "f".repeat(64),
+          RSS_COLLECTION_ENABLED: "true",
+        },
+        server: { host: "127.0.0.1", port, https: true, logRequests: false },
+        assets: await assets(),
+        sourceResponses: {
+          [feedURL]: () =>
+            new Response(xml, {
+              headers: { "Content-Type": "application/rss+xml" },
+            }),
+          [articleURL]: () => {
+            articleFetches++;
+            return new Response(
+              "<article><h1>Account original</h1><p>" +
+                "Retained local evidence across real account changes. ".repeat(
+                  15,
+                ) +
+                "</p></article>",
+              { headers: { "Content-Type": "text/html" } },
+            );
+          },
+          ["https://publisher.example.org/favicon.ico"]: () =>
+            new Response("", { status: 404 }),
+        },
+      },
+    );
+    await f.ready();
+    context = await browser.newContext({
+      ignoreHTTPSErrors: true,
+      serviceWorkers: "block",
+      viewport: info.project.use.viewport,
+      isMobile: info.project.use.isMobile,
+      locale: "ja-JP",
+    });
+    await context.route("**/*", async (route) => {
+      const url = new URL(route.request().url());
+      if (url.origin === origin) return route.continue();
+      if (
+        url.origin === "https://accounts.google.com" &&
+        url.pathname === "/o/oauth2/v2/auth"
+      ) {
+        const authorization = f.rememberAuthorization(url.href);
+        return route.fulfill({
+          status: 302,
+          headers: { Location: origin + f.callback(authorization, owner) },
+          body: "",
+        });
+      }
+      unexpected.push(url.origin + url.pathname);
+      return route.abort();
+    });
+    const page = await context.newPage();
+    page.on("pageerror", (error) => errors.push(error.message));
+    async function login(account) {
+      owner = account;
+      await page.goto(origin);
+      await page
+        .getByRole("button", { name: "Googleでログイン", exact: true })
+        .click();
+      await page.waitForURL(origin + "/?auth=success");
+      await page.goto(origin + "/?view=feeds");
+      await expect(page.getByLabel("サイト・RSSのURL")).toBeVisible();
+      const response = await page.request.get(origin + "/api/library/status", {
+        headers: { Origin: origin },
+      });
+      expect(response.status()).toBe(200);
+      return (await response.json()).account;
+    }
+    async function logout() {
+      await page.getByRole("button", { name: "設定", exact: true }).click();
+      await page
+        .getByRole("button", { name: "ログアウト", exact: true })
+        .click();
+      await expect(
+        page.getByRole("button", { name: "Googleでログイン", exact: true }),
+      ).toBeVisible();
+    }
+    const a = await login("a"),
+      aDB = `tsumiki.rss.v1.account.${a}`;
+    await subscribe(page);
+    await page
+      .getByRole("button", { name: "Runtime article", exact: true })
+      .click();
+    await expect(page.locator(".rss-source-text")).toContainText(
+      "Retained local evidence",
+    );
+    await page.locator("#rss-save-article").click();
+    await expect(page.locator("#rss-save-article")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    const retained = await storedArticles(page, aDB);
+    expect(retained).toHaveLength(1);
+    expect(retained[0].saved).toBe(true);
+    expect(articleFetches).toBe(1);
+    await logout();
+    const b = await login("b"),
+      bDB = `tsumiki.rss.v1.account.${b}`;
+    expect(b).not.toBe(a);
+    expect(await storedArticles(page, bDB)).toEqual([]);
+    await expect(
+      page.getByRole("button", { name: "Account original", exact: true }),
+    ).toHaveCount(0);
+    await subscribe(page);
+    const separate = await storedArticles(page, bDB);
+    expect(separate).toHaveLength(1);
+    expect(separate[0].saved).toBe(false);
+    expect(separate[0].read).toBe(false);
+    await page
+      .getByRole("button", { name: "Runtime article", exact: true })
+      .click();
+    await expect(page.locator(".rss-source-text")).toContainText(
+      "Retained local evidence",
+    );
+    await expect(page.locator("#rss-save-article")).toHaveAttribute(
+      "aria-pressed",
+      "false",
+    );
+    expect(articleFetches).toBe(2);
+    await logout();
+    expect(await login("a")).toBe(a);
+    expect(await storedArticles(page, aDB)).toEqual(retained);
+    await f.restart();
+    await page.reload();
+    await expect(
+      page.getByRole("button", { name: "Account original", exact: true }),
+    ).toBeVisible();
+    expect(await storedArticles(page, aDB)).toEqual(retained);
+    expect(unexpected).toEqual([]);
+    expect(errors).toEqual([]);
+  } finally {
+    const closed = await Promise.allSettled(context ? [context.close()] : []);
+    const disposed = await Promise.allSettled(
+      cleanup.reverse().map((fn) => fn()),
+    );
+    expect(
+      [...closed, ...disposed].filter((r) => r.status === "rejected"),
     ).toEqual([]);
   }
 });

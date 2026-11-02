@@ -1,3 +1,4 @@
+import { libraryName } from "./library-context";
 import type { ArticleStructure } from "./article-structure";
 import { appendArticleText, type ArticleCodeRange } from "./article-code";
 import { articleURL } from "./feed-parser";
@@ -47,7 +48,7 @@ export class ArticleHighlightView {
   private readonly channel =
     typeof BroadcastChannel === "undefined"
       ? null
-      : new BroadcastChannel("quilna.highlights.v1");
+      : new BroadcastChannel(libraryName("quilna.highlights.v1"));
   private view?: ReadingView;
   private source?: HighlightSource;
   private body?: HTMLElement;

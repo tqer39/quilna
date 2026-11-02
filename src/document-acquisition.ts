@@ -1,3 +1,4 @@
+import { libraryName } from "./library-context";
 import { acquireDocument } from "./source-document-store";
 import { retainRemoteDocument } from "./remote-document-store";
 import { sourceURL } from "./feed-discovery";
@@ -8,7 +9,7 @@ import {
   documentUUID,
 } from "./source-document";
 
-export const documentPreferenceKey = "quilna.document-acquisition.v1";
+export const documentPreferenceKey = libraryName("quilna.document-acquisition.v1");
 export type DocumentPreference =
   { mode: "browser" } | { mode: "private" | "shared"; account: string };
 const accountHash = (v: unknown): v is string =>

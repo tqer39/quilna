@@ -1,5 +1,6 @@
+import { libraryName } from "./library-context";
 import type { Feed } from "./feed-parser";
-export const feedRefreshPreferencesKey = "quilna.feed.refresh.v1";
+export const feedRefreshPreferencesKey = libraryName("quilna.feed.refresh.v1");
 export const refreshIntervals = [0, 15, 30, 60] as const;
 export type FeedRefreshFailure = {
   failures: number;
@@ -40,8 +41,9 @@ const localFeeds = new Set<string>();
 export function feedLockSupported(): boolean {
   return typeof navigator !== "undefined" && !!navigator.locks;
 }
-// Two origin-wide slots and a per-feed lock cover both manual and automatic calls.
+// Two library-wide slots and a per-feed lock cover both manual and automatic calls.
 // Unsupported browsers keep manual refresh with an in-tab limit; automation is disabled.
+/** Share two refresh slots and a per-feed lock within the selected library. */
 export async function withFeedRefreshLock(
   address: string,
   job: () => Promise<void>,
@@ -60,12 +62,12 @@ export async function withFeedRefreshLock(
   }
   for (const slot of [0, 1]) {
     const result = await navigator.locks.request(
-      `quilna.rss.slot.${slot}`,
+      libraryName(`quilna.rss.slot.${slot}`),
       { ifAvailable: true },
       async (lock) => {
         if (!lock) return false;
         return navigator.locks.request(
-          `quilna.rss.feed.${address}`,
+          libraryName(`quilna.rss.feed.${address}`),
           { ifAvailable: true },
           async (feedLock) => {
             if (!feedLock) return false;

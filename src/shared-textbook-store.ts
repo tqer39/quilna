@@ -1,3 +1,4 @@
+import { libraryName, openLibraryDatabase } from "./library-context";
 import { z } from "zod";
 import {
   parseSharedTextbook,
@@ -5,7 +6,7 @@ import {
   type SharedTextbook,
 } from "./shared-textbook-format";
 
-export const sharedTextbookDatabase = "quilna.shared-textbooks.v1";
+export const sharedTextbookDatabase = libraryName("quilna.shared-textbooks.v1");
 /** Keep storage failure explicit while retaining earlier books and private answers. */
 const unavailable = () =>
   Error(
@@ -32,7 +33,7 @@ export type SharedAnswer = z.infer<typeof answerSchema>;
 /** Open the separate imported-book database without upgrading or resetting a future schema. */
 async function open() {
   return new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open(sharedTextbookDatabase, 1);
+    const request = openLibraryDatabase(sharedTextbookDatabase, 1);
     let settled = false;
     request.onupgradeneeded = () => {
       const db = request.result;

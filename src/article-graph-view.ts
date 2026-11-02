@@ -1,3 +1,4 @@
+import { libraryName } from "./library-context";
 import { articleReference, type ArticleReference } from "./article-connections";
 import type { ArticleHighlight } from "./article-highlights";
 import { articleURL, type FeedArticle } from "./feed-parser";
@@ -106,9 +107,9 @@ export class ArticleGraphView {
     });
     if (typeof BroadcastChannel !== "undefined")
       for (const name of [
-        "quilna.connections.v1",
-        "quilna.highlights.v1",
-        "quilna.quote-connections.v1",
+        libraryName("quilna.connections.v1"),
+        libraryName("quilna.highlights.v1"),
+        libraryName("quilna.quote-connections.v1"),
       ]) {
         const channel = new BroadcastChannel(name);
         channel.addEventListener("message", () => {

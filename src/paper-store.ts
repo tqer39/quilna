@@ -1,6 +1,7 @@
+import { libraryName, openLibraryDatabase } from "./library-context";
 import { parsePaper, type PaperSnapshot } from "./paper-format";
 
-export const paperDatabase = "quilna.papers.v1";
+export const paperDatabase = libraryName("quilna.papers.v1");
 const failed = () =>
   Error(
     "書誌情報を保存領域で確認できません。既存の記録は保持しています。再試行してください。",
@@ -9,7 +10,7 @@ const failed = () =>
 function open(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     let refused = false;
-    const r = indexedDB.open(paperDatabase, 1);
+    const r = openLibraryDatabase(paperDatabase, 1);
     r.onupgradeneeded = () => r.result.createObjectStore("snapshots");
     r.onblocked = r.onerror = () => {
       refused = true;

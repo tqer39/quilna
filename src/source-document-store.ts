@@ -1,3 +1,4 @@
+import { libraryName, openLibraryDatabase } from "./library-context";
 import { fetchArticle, type ArticleContent } from "./article-content";
 import { sourceURL } from "./feed-discovery";
 import {
@@ -18,11 +19,12 @@ import {
   type SourceDocument,
   type DocumentVersion,
 } from "./source-document";
-export const documentDatabase = "quilna.documents.v1";
+export const documentDatabase = libraryName("quilna.documents.v1");
+/** Open this library's source versions while preserving data during supported upgrades. */
 export async function openDocuments(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     let failed = false;
-    const request = indexedDB.open(documentDatabase, 3);
+    const request = openLibraryDatabase(documentDatabase, 3);
     request.onupgradeneeded = (event) => {
       if (event.oldVersion < 1) {
         const docs = request.result.createObjectStore("documents", {
@@ -386,6 +388,7 @@ export async function retainDocument(
   }
   return result;
 }
+/** Serialize one source's refresh within its library and retain earlier immutable versions. */
 export async function acquireDocument(
   url: string,
   options: { force?: boolean; scope?: string } = {},
@@ -398,7 +401,7 @@ export async function acquireDocument(
     );
   const before = await currentDocument(normalized, scope);
   return navigator.locks.request(
-    `quilna.document:${JSON.stringify([scope, normalized])}`,
+    libraryName(`quilna.document:${JSON.stringify([scope, normalized])}`),
     async () => {
       const current = await currentDocument(normalized, scope);
       const age = current

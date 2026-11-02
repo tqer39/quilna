@@ -1,3 +1,4 @@
+import { librarySignedOut } from "./library-context";
 import { z } from "zod";
 const statusSchema = z
   .object({
@@ -75,10 +76,12 @@ export class AuthClient {
     this.epoch++;
     return !!r;
   }
+  /** End the session before invalidating its local view; failed requests retain data. */
   async logout() {
     const r = await this.post("/api/auth/logout");
     this.epoch++;
     this.csrf = null;
+    if (r) librarySignedOut();
     return !!r;
   }
 }

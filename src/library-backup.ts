@@ -1,3 +1,4 @@
+import { libraryName, openLibraryDatabase } from "./library-context";
 import { openFeedLibrary, feedDatabase } from "./feed-store";
 import { openHighlights, highlightDatabase } from "./article-highlights";
 import { openConnections, connectionDatabase } from "./article-connections";
@@ -33,8 +34,8 @@ import {
   type BackupPreview,
 } from "./library-backup-format";
 
-export const backupStageDatabase = "quilna.backup-stage.v1";
-export const backupLock = "quilna.reader-backup.v1";
+export const backupStageDatabase = libraryName("quilna.backup-stage.v1");
+export const backupLock = libraryName("quilna.reader-backup.v1");
 type Progress = (message: string) => void;
 type Target = { db: IDBDatabase; store: string };
 type Targets = Record<BackupKind, Target>;
@@ -189,10 +190,11 @@ export async function exportLibrary(
     return { blob, header, counts: counter.counts };
   });
 }
+/** Open restore staging for this library without clearing damaged or future schemas. */
 async function openStage(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     let failed = false;
-    const request = indexedDB.open(backupStageDatabase, 1);
+    const request = openLibraryDatabase(backupStageDatabase, 1);
     request.onupgradeneeded = () => {
       request.result.createObjectStore("entries", { keyPath: ["kind", "key"] });
       request.result.createObjectStore("meta");

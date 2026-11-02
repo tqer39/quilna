@@ -1,3 +1,4 @@
+import { libraryName } from "./library-context";
 import type { FeedArticle } from "./feed-parser";
 import { validArticle } from "./feed-store";
 import { DocumentAcquisition } from "./document-acquisition";
@@ -184,7 +185,7 @@ export async function checkArticleUpdates(
   return commit(db, group, updates, originals, active);
 }
 
-const lastAttemptKey = "quilna.article.updates.last-attempt.v1";
+const lastAttemptKey = libraryName("quilna.article.updates.last-attempt.v1");
 export class ArticleAutoUpdate {
   private timer?: ReturnType<typeof setTimeout>;
   private running = false;
@@ -234,7 +235,7 @@ export class ArticleAutoUpdate {
     };
     try {
       await navigator.locks.request(
-        "quilna.article.updates",
+        libraryName("quilna.article.updates"),
         { ifAvailable: true },
         async (lock) => {
           if (!lock) return;

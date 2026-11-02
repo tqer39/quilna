@@ -1,3 +1,4 @@
+import { libraryName, openLibraryDatabase } from "./library-context";
 import { validHighlight, type ArticleHighlight } from "./article-highlights";
 import { connectionKey } from "./article-connections";
 
@@ -11,7 +12,7 @@ export type QuoteConnection = {
   createdAt: string;
   revision: number;
 };
-export const quoteConnectionDatabase = "quilna.quote-connections.v1";
+export const quoteConnectionDatabase = libraryName("quilna.quote-connections.v1");
 export const quoteConnectionLimit = 200;
 export function validQuoteConnection(value: unknown): value is QuoteConnection {
   if (!value || typeof value !== "object") return false;
@@ -36,11 +37,12 @@ export function validQuoteConnection(value: unknown): value is QuoteConnection {
   );
 }
 let connection: Promise<IDBDatabase> | undefined;
+/** Keep the selected library's retained quote relationships intact if opening fails. */
 export function openQuoteConnections(): Promise<IDBDatabase> {
   if (connection) return connection;
   let failed = false;
   const pending = new Promise<IDBDatabase>((resolve, reject) => {
-    const request = indexedDB.open(quoteConnectionDatabase, 1);
+    const request = openLibraryDatabase(quoteConnectionDatabase, 1);
     request.onupgradeneeded = () => {
       const store = request.result.createObjectStore("connections", {
         keyPath: "id",

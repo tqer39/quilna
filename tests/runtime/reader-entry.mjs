@@ -19,6 +19,8 @@ export default {
     if (!path.startsWith("/api/")) {
       const headers = new Headers(response.headers);
       headers.set("Content-Security-Policy", readerPolicyForURL(request.url));
+      if (env.LIBRARY_ISOLATION_ENABLED === "true" && headers.get("Content-Type")?.includes("text/html") && request.method !== "HEAD" && ![204, 205, 304].includes(response.status))
+        return new Response((await response.text()).replace("</head>", '<meta name="account-libraries" content="required"></head>'), { status: response.status, headers });
       return new Response(response.body, { status: response.status, headers });
     }
     return response;

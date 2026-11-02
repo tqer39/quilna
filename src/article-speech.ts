@@ -1,4 +1,5 @@
-const voicePreferencesKey = "quilna.reader.voices.v1";
+import { libraryName } from "./library-context";
+const voicePreferencesKey = libraryName("quilna.reader.voices.v1");
 export function voiceKey(voice: SpeechSynthesisVoice): string {
   return voice.voiceURI || `${voice.lang}:${voice.name || "default"}`;
 }

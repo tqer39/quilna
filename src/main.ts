@@ -1,3 +1,4 @@
+import { libraryName } from "./library-context";
 import { byokSettings } from "./byok-settings";
 import { accountSettings } from "./account-settings";
 import { feedbackMessage } from "./feedback";
@@ -24,9 +25,9 @@ import { button, el } from "./ui";
 import { learningPlan, blockMinutes } from "./learning-plan";
 import { renderBlock } from "./renderer";
 const storage = {
-  getItem: (key: string) => window.localStorage.getItem(key),
+  getItem: (key: string) => window.localStorage.getItem(libraryName(key)),
   setItem: (key: string, value: string) =>
-    window.localStorage.setItem(key, value),
+    window.localStorage.setItem(libraryName(key), value),
 };
 const loaded = readHistory(storage);
 const history = loaded.history;
@@ -158,6 +159,7 @@ window.addEventListener("beforeunload", (event) => {
     event.returnValue = "";
   }
 });
+/** Merge this library's retained history, holding conflicts and using Web Locks when available. */
 function save() {
   pendingSaves++;
   status.dataset.saving = "true";
@@ -223,7 +225,7 @@ function save() {
       );
   };
   if (navigator.locks)
-    void navigator.locks.request("fieldnotes.history.v1", persist).catch(() => {
+    void navigator.locks.request(libraryName("fieldnotes.history.v1"), persist).catch(() => {
       pendingSaves--;
       if (!pendingSaves) delete status.dataset.saving;
       status.replaceChildren(
@@ -237,12 +239,13 @@ function save() {
     });
   else persist();
 }
+/** Reread this library's current book under its lock before applying a reviewed proposal. */
 async function acceptProposal(proposal: Proposal): Promise<string | null> {
   if (!navigator.locks)
     return "このブラウザでは安全な排他制御を利用できません。反映は保留します。";
   proposalApplying = true;
   try {
-    return await navigator.locks.request("fieldnotes.history.v1", async () => {
+    return await navigator.locks.request(libraryName("fieldnotes.history.v1"), async () => {
       const latest = readHistory(storage);
       if (latest.error)
         return "保存領域を読み込めません。既存データの保護のため反映を止めました。";
