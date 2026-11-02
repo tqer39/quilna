@@ -43,8 +43,11 @@ async function records(page: Page) {
   });
 }
 /** Hold delivery of one real committed save without changing its data or transaction result. */
-async function holdPaperCompletion(page: Page) {
-  await page.evaluate(() => {
+async function holdPaperCompletion(
+  page: Page,
+  mode: "readonly" | "readwrite" = "readwrite",
+) {
+  await page.evaluate((mode) => {
     const original = IDBDatabase.prototype.transaction;
     const state = window as unknown as {
       heldPaperCompletion: boolean;
@@ -56,11 +59,7 @@ async function holdPaperCompletion(page: Page) {
     let first = true;
     IDBDatabase.prototype.transaction = function (...args) {
       const tx = original.apply(this, args);
-      if (
-        first &&
-        this.name === "quilna.papers.v1" &&
-        tx.mode === "readwrite"
-      ) {
+      if (first && this.name === "quilna.papers.v1" && tx.mode === mode) {
         first = false;
         const close = this.close;
         this.close = function () {
@@ -88,7 +87,7 @@ async function holdPaperCompletion(page: Page) {
       }
       return tx;
     };
-  });
+  }, mode);
 }
 /** Observe actual commit delivery being held before changing focus or the selected observation. */
 async function waitForPaperCompletion(page: Page) {
@@ -427,6 +426,156 @@ test("editing the DOI cancels late completion without replacing a newer preview 
     page.getByRole("region", { name: "書誌情報のプレビュー" }),
   ).toBeEmpty();
   expect((await records(page)).snapshots).toHaveLength(0);
+});
+test("a completed save preserves the focused library record and the current library page", async ({
+  page,
+}, info) => {
+  await page.goto("/?view=papers");
+  const metadata = crossrefMetadata(fixture, doi);
+  const snapshots = await Promise.all(
+    Array.from({ length: 21 }, (_, i) =>
+      paperSnapshot(
+        {
+          ...metadata,
+          doi: `10.5555/focus-${String(i).padStart(2, "0")}`,
+          titles: [`Focus observation ${String(i).padStart(2, "0")}`],
+        },
+        "2026-11-01T00:00:00.000Z",
+      ),
+    ),
+  );
+  await page.evaluate(async (snapshots) => {
+    const path = "/src/paper-store.ts",
+      api: typeof import("../../src/paper-store") = await import(path);
+    for (const p of snapshots) await api.savePaper(p);
+  }, snapshots);
+  await page.reload();
+  await expect(
+    page.getByRole("button", { name: "書誌情報を開く" }),
+  ).toHaveCount(20);
+  const path = info.outputPath("library-focus.json");
+  for (const [index, target] of [
+    [0, 1],
+    [20, 20],
+  ]) {
+    if (index === 20) {
+      await page.getByRole("button", { name: "次の20件" }).click();
+      await expect(
+        page.getByRole("button", { name: "書誌情報を開く" }),
+      ).toHaveCount(1);
+    }
+    await writeFile(
+      path,
+      new TextEncoder().encode(
+        JSON.stringify({
+          ...snapshots[index],
+          capturedAt: "2026-11-02T00:00:00.000Z",
+        }),
+      ),
+    );
+    await page.getByLabel("保存した書誌ファイルを確認").setInputFiles(path);
+    await expect(page.getByRole("status")).toContainText(
+      "書誌ファイルを確認しました",
+    );
+    await page.evaluate(() => {
+      const state = window as unknown as { paperLibraryUpdated: boolean };
+      state.paperLibraryUpdated = false;
+      const library = document.querySelector('[aria-label="保存した書誌情報"]');
+      if (!library) throw Error("missing library");
+      const observer = new MutationObserver(() => {
+        state.paperLibraryUpdated = true;
+        observer.disconnect();
+      });
+      observer.observe(library, { childList: true });
+    });
+    await holdPaperCompletion(page);
+    await page.getByRole("button", { name: "この書誌情報を保存" }).click();
+    await waitForPaperCompletion(page);
+    const focused = page
+      .locator(".paper-row")
+      .filter({
+        hasText: `Focus observation ${String(target).padStart(2, "0")}`,
+      })
+      .getByRole("button", { name: "書誌情報を開く" });
+    await focused.focus();
+    await releasePaperCompletion(page);
+    await expect
+      .poll(() =>
+        page.evaluate(
+          () =>
+            (window as unknown as { paperLibraryUpdated: boolean })
+              .paperLibraryUpdated,
+        ),
+      )
+      .toBe(true);
+    await expect(focused).toBeFocused();
+    if (index === 20) {
+      await expect(
+        page.getByRole("button", { name: "書誌情報を開く" }),
+      ).toHaveCount(1);
+      await expect(
+        page.getByRole("button", { name: "先頭の20件" }),
+      ).toBeVisible();
+    }
+  }
+  await page.getByRole("button", { name: "先頭の20件" }).click();
+  await expect(
+    page.getByRole("button", { name: "書誌情報を開く" }),
+  ).toHaveCount(20);
+  await expect(
+    page.getByRole("heading", { name: "保存した書誌情報", exact: true }),
+  ).toBeFocused();
+});
+test("an older held library page cannot replace a newer page request or its focus", async ({
+  page,
+}) => {
+  await page.goto("/?view=papers");
+  const metadata = crossrefMetadata(fixture, doi);
+  const snapshots = await Promise.all(
+    Array.from({ length: 41 }, (_, i) =>
+      paperSnapshot(
+        {
+          ...metadata,
+          doi: `10.5555/page-${String(i).padStart(2, "0")}`,
+          titles: [`Page race ${String(i).padStart(2, "0")}`],
+        },
+        "2026-11-01T00:00:00.000Z",
+      ),
+    ),
+  );
+  await page.evaluate(async (snapshots) => {
+    const path = "/src/paper-store.ts",
+      api: typeof import("../../src/paper-store") = await import(path);
+    for (const p of snapshots) await api.savePaper(p);
+  }, snapshots);
+  await page.reload();
+  await page.getByRole("button", { name: "次の20件" }).click();
+  await expect(
+    page.locator(".paper-row").filter({ hasText: "Page race 20" }),
+  ).toBeVisible();
+  await holdPaperCompletion(page, "readonly");
+  await page.getByRole("button", { name: "次の20件" }).click();
+  await waitForPaperCompletion(page);
+  await page.getByRole("button", { name: "先頭の20件" }).click();
+  await expect(
+    page.locator(".paper-row").filter({ hasText: "Page race 00" }),
+  ).toBeVisible();
+  const heading = page.getByRole("heading", {
+    name: "保存した書誌情報",
+    exact: true,
+  });
+  await expect(heading).toBeFocused();
+  await releasePaperCompletion(page);
+  await expect(heading).toBeFocused();
+  await expect(
+    page.locator(".paper-row").filter({ hasText: "Page race 00" }),
+  ).toBeVisible();
+  await expect(
+    page.locator(".paper-row").filter({ hasText: "Page race 40" }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", { name: "書誌情報を開く" }),
+  ).toHaveCount(20);
 });
 test("malformed JSON and UTF-8 use Japanese notices and same-file retries preserve saved records", async ({
   page,

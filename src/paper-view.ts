@@ -6,7 +6,7 @@ import {
   parsePaper,
   type PaperSnapshot,
 } from "./paper-format";
-import { listPapers, savePaper } from "./paper-store";
+import { listPapers, savePaper, paperKey } from "./paper-store";
 
 /** Render a date without adding a missing month/day or confusing it with full-text revision time. */
 function displayDate(value: PaperSnapshot["metadata"]["dates"]["published"]) {
@@ -57,7 +57,8 @@ export async function paperView(root: HTMLElement, client = new PaperClient()) {
   let revision = 0,
     listRevision = 0,
     controller = new AbortController(),
-    busy = false;
+    busy = false,
+    libraryAfter: string | undefined;
   const cancel = button("確認を中止", () => {
     revision++;
     controller.abort();
@@ -210,7 +211,7 @@ export async function paperView(root: HTMLElement, client = new PaperClient()) {
           state.textContent = result.reused
             ? "同じ書誌情報は保存済みです。最初の取得記録を保持しました。"
             : "書誌情報を保存しました。以前の記録は変更していません。";
-          await refresh();
+          await refresh(libraryAfter);
         } catch (error) {
           if (current === revision) {
             state.textContent = (error as Error).message;
@@ -248,15 +249,40 @@ export async function paperView(root: HTMLElement, client = new PaperClient()) {
     );
     heading.focus();
   }
+  /** Give each library action a stable focus identity independent of row order. */
+  function libraryButton(key: string, text: string, action: () => void) {
+    const control = button(text, action);
+    control.dataset.paperFocusKey = key;
+    return control;
+  }
+  /** Preserve focus as it exists at publication time, without moving focus from outside the library. */
+  function renderLibrary(...children: HTMLElement[]) {
+    const active = document.activeElement as HTMLElement | null,
+      key =
+        active && library.contains(active)
+          ? active.dataset.paperFocusKey
+          : undefined,
+      heading = children[0];
+    heading.tabIndex = -1;
+    heading.dataset.paperFocusKey = "heading";
+    library.replaceChildren(...children);
+    if (key) {
+      const target = Array.from(
+        library.querySelectorAll<HTMLElement>("[data-paper-focus-key]"),
+      ).find((node) => node.dataset.paperFocusKey === key);
+      (target ?? heading).focus({ preventScroll: true });
+    }
+  }
   /** Keep library paging independent of the selected preview and refuse stale page completions. */
   async function refresh(after?: string) {
     const current = ++listRevision;
+    libraryAfter = after;
     try {
       const page = await listPapers(after);
       if (current !== listRevision) return;
-      library.replaceChildren(el("h2", "保存した書誌情報"));
+      const content: HTMLElement[] = [el("h2", "保存した書誌情報")];
       if (!page.snapshots.length)
-        library.append(el("p", "保存した書誌情報はありません。"));
+        content.push(el("p", "保存した書誌情報はありません。"));
       for (const p of page.snapshots) {
         const row = el("div", undefined, "paper-row");
         row.append(
@@ -264,28 +290,29 @@ export async function paperView(root: HTMLElement, client = new PaperClient()) {
             "p",
             `${p.metadata.titles.join(" / ") || "題名不明"} · ${p.metadata.doi} · ${new Date(p.capturedAt).toLocaleString("ja-JP")}`,
           ),
-          button("書誌情報を開く", () => show(p, true)),
+          libraryButton(paperKey(p), "書誌情報を開く", () => show(p, true)),
         );
-        library.append(row);
+        content.push(row);
       }
       if (after)
-        library.append(
-          button("先頭の20件", () => {
+        content.push(
+          libraryButton("first", "先頭の20件", () => {
             void refresh();
           }),
         );
       if (page.next)
-        library.append(
-          button("次の20件", () => {
+        content.push(
+          libraryButton("next", "次の20件", () => {
             void refresh(page.next);
           }),
         );
+      renderLibrary(...content);
     } catch (error) {
       if (current === listRevision)
-        library.replaceChildren(
+        renderLibrary(
           el("h2", "保存した書誌情報"),
           el("p", (error as Error).message),
-          button("保存一覧を再試行", () => {
+          libraryButton("retry", "保存一覧を再試行", () => {
             void refresh(after);
           }),
         );
