@@ -31,7 +31,7 @@ async function seed(page: Page, design = "studio") {
       });
       for (let i = 0; i < 124; i++) {
         const id = String(i).padStart(3, "0"),
-          text = "Common original evidence. ".repeat(100);
+          text = "Common original evidence. ".repeat(100).trim();
         tx.objectStore("articles").put({
           id,
           feedUrl: feed,
@@ -402,3 +402,95 @@ for (const mode of ["inline", "dialog", "repeat", "draft", "error"])
     await expect(page.locator("#rss-current-title")).toBeFocused();
     await expect(dialog(page)).toBeHidden();
   });
+
+test("a delayed body refresh keeps a newer import error and URL draft", async ({
+  page,
+}) => {
+  await seed(page);
+  let finish: (() => void) | undefined;
+  await page.route("**/api/feeds/fetch", async (route) => {
+    if (route.request().postDataJSON().icon)
+      return route.fulfill({ status: 404, json: {} });
+    await new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    await route.fulfill({
+      json: {
+        url: "https://example.org/002",
+        html: `<html><title>Updated original</title><article><p>${"Common original evidence. ".repeat(100)}</p></article></html>`,
+      },
+    });
+  });
+  await page
+    .getByRole("button", { name: "Location article 002", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "コードの書式を取り直す", exact: true })
+    .click();
+  await expect.poll(() => !!finish).toBe(true);
+  await page.locator(".rss-destinations > summary").click();
+  await destinations(page)
+    .getByRole("link", { name: "サイト・記事の取り込み", exact: true })
+    .click();
+  const draft = "http://127.0.0.1/private";
+  await dialog(page).getByLabel("サイト・RSSのURL").fill(draft);
+  await dialog(page)
+    .getByRole("button", { name: "記事として取り込む", exact: true })
+    .click();
+  await expect(dialog(page).getByRole("alert")).toContainText(
+    "公開HTTPSの記事URLを入力",
+  );
+  finish!();
+  await expect(
+    page.locator(".rss-content-note").filter({ hasText: "取り込み中" }),
+  ).toHaveCount(0);
+  await expect(dialog(page).getByRole("alert")).toContainText(
+    "公開HTTPSの記事URLを入力",
+  );
+  await expect(dialog(page).getByLabel("サイト・RSSのURL")).toHaveValue(draft);
+});
+
+test("a delayed feed refresh keeps a newer import error", async ({ page }) => {
+  await seed(page);
+  let finish: (() => void) | undefined;
+  await page.route("**/api/feeds/fetch", async (route) => {
+    if (route.request().postDataJSON().icon)
+      return route.fulfill({ status: 404, json: {} });
+    await new Promise<void>((resolve) => {
+      finish = resolve;
+    });
+    await route.fulfill({
+      json: {
+        url: feed,
+        xml: "<rss version='2.0'><channel><title>Updated location source</title><item><guid>later</guid><title>Later refreshed article</title><description>Source evidence.</description></item></channel></rss>",
+      },
+    });
+  });
+  await page.getByRole("button", { name: "すべて更新", exact: true }).click();
+  await expect.poll(() => !!finish).toBe(true);
+  await destinations(page)
+    .getByRole("link", { name: "サイト・記事の取り込み", exact: true })
+    .click();
+  await dialog(page)
+    .getByLabel("サイト・RSSのURL")
+    .fill("http://127.0.0.1/private");
+  await dialog(page)
+    .getByRole("button", { name: "記事として取り込む", exact: true })
+    .click();
+  await expect(dialog(page).getByRole("alert")).toContainText(
+    "公開HTTPSの記事URLを入力",
+  );
+  finish!();
+  await expect(
+    page.getByRole("button", { name: "Later refreshed article", exact: true }),
+  ).toHaveCount(1);
+  await expect(dialog(page).getByRole("alert")).toContainText(
+    "公開HTTPSの記事URLを入力",
+  );
+  await expect(
+    dialog(page).getByRole("button", {
+      name: "記事として取り込む",
+      exact: true,
+    }),
+  ).toBeFocused();
+});
