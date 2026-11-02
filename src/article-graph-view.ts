@@ -57,6 +57,7 @@ export class ArticleGraphView {
   private generation = 0;
   private page?: GraphPage;
   private selected?: string;
+  private renderedSignature?: string;
   private readonly channels: BroadcastChannel[] = [];
   constructor(
     private readonly library: () => readonly FeedArticle[],
@@ -144,12 +145,15 @@ export class ArticleGraphView {
     this.root.scrollIntoView({ block: "center" });
     this.root.focus({ preventScroll: true });
   }
-  private stop() {
+  private stop(cancelReveal = true) {
     this.generation++;
+    this.root.setAttribute("aria-busy", "false");
     this.controller?.abort();
-    this.revealController?.abort();
+    if (cancelReveal) this.revealController?.abort();
   }
   private clear() {
+    this.revealController?.abort();
+    this.renderedSignature = undefined;
     this.page = undefined;
     this.selected = undefined;
     this.canvas.replaceChildren();
@@ -167,13 +171,14 @@ export class ArticleGraphView {
   }
   private async load(moveFocus = false) {
     if (!this.center || !this.article || !this.details.open) return;
-    this.stop();
+    this.stop(false);
     const generation = this.generation;
     const controller = (this.controller = new AbortController());
-    this.clear();
+    this.root.setAttribute("aria-busy", "true");
+    const oldPage = this.page;
     this.previous.disabled = this.next.disabled = true;
     this.back.disabled = !this.history.length;
-    this.status.textContent = "周辺の関係を読み込んでいます…";
+    if (!oldPage) this.status.textContent = "周辺の関係を読み込んでいます…";
     try {
       const page = await graphNeighborhood(
         this.center,
@@ -183,7 +188,58 @@ export class ArticleGraphView {
         controller.signal,
       );
       if (generation !== this.generation) return;
-      this.page = page;
+      const signature = JSON.stringify([
+        page,
+        page.edges.map((edge) =>
+          edge.sources.map((ref) => !!this.lookup(ref.id)),
+        ),
+      ]);
+      const oldSelection = oldPage?.edges.find(
+        (edge) => graphKey(edge.node) === this.selected,
+      );
+      const retained =
+        oldSelection &&
+        oldPage &&
+        JSON.stringify(oldPage.center) === JSON.stringify(page.center)
+          ? page.edges.find(
+              (edge) => JSON.stringify(edge) === JSON.stringify(oldSelection),
+            )
+          : undefined;
+      const active = document.activeElement;
+      const evidenceControl =
+        active instanceof HTMLElement && this.evidence.contains(active)
+          ? Array.from(this.evidence.querySelectorAll("button, a")).indexOf(
+              active,
+            )
+          : -1;
+      const activeInList = !!active && this.list.contains(active);
+      const activeKey =
+        active instanceof HTMLElement ? active.dataset.graphKey : undefined;
+      if (signature !== this.renderedSignature) {
+        this.clear();
+        this.page = page;
+        this.renderedSignature = signature;
+        this.render(page);
+        if (retained) this.select(retained, false);
+        if (evidenceControl >= 0 && retained)
+          (
+            this.evidence.querySelectorAll<HTMLElement>("button, a")[
+              evidenceControl
+            ] ?? this.evidence
+          ).focus({ preventScroll: true });
+        else if (activeKey) {
+          const area = activeInList ? this.list : this.canvas;
+          const control = Array.from(
+            area.querySelectorAll<HTMLElement>("button[data-graph-key]"),
+          ).find((item) => item.dataset.graphKey === activeKey);
+          (control ?? this.canvas).focus({ preventScroll: true });
+        } else if (
+          active instanceof HTMLElement &&
+          this.evidence === active &&
+          retained
+        )
+          this.evidence.focus({ preventScroll: true });
+      } else this.page = page;
       this.center = page.center;
       this.status.textContent = [
         page.edges.length
@@ -193,15 +249,19 @@ export class ArticleGraphView {
       ].join(" ");
       this.previous.disabled = this.offset === 0;
       this.next.disabled = !page.more;
-      this.render(page);
       if (moveFocus) {
         this.canvas.focus({ preventScroll: true });
         this.canvas.scrollIntoView({ block: "nearest" });
       }
     } catch {
-      if (generation === this.generation)
+      if (generation === this.generation) {
+        this.clear();
         this.status.textContent =
           "関係図を読み込めませんでした。再読み込みしてください。保存した記事・引用・関連は変更していません。";
+      }
+    } finally {
+      if (generation === this.generation)
+        this.root.setAttribute("aria-busy", "false");
     }
   }
   private render(page: GraphPage) {
@@ -254,12 +314,12 @@ export class ArticleGraphView {
       node.setAttribute("aria-pressed", "false");
       this.canvas.append(node);
       const item = el("li");
-      item.append(
-        button(
-          `${graphKind(edge.node)}：${graphLabel(edge.node)} — ${edgeLabel(edge)}`,
-          () => this.select(edge),
-        ),
+      const listButton = button(
+        `${graphKind(edge.node)}：${graphLabel(edge.node)} — ${edgeLabel(edge)}`,
+        () => this.select(edge),
       );
+      listButton.dataset.graphKey = graphKey(edge.node);
+      item.append(listButton);
       this.list.append(item);
     });
   }
@@ -285,11 +345,10 @@ export class ArticleGraphView {
     }
     return item;
   }
-  private select(edge: GraphEdge) {
+  private select(edge: GraphEdge, moveFocus = true) {
     if (!this.page) return;
     this.revealController?.abort();
-    const generation = this.generation,
-      key = (this.selected = graphKey(edge.node));
+    const key = (this.selected = graphKey(edge.node));
     for (const item of Array.from(
       this.canvas.querySelectorAll("[data-graph-key]"),
     )) {
@@ -331,19 +390,11 @@ export class ArticleGraphView {
         const controller = (this.revealController = new AbortController());
         void this.reveal(quote, controller.signal)
           .then((message) => {
-            if (
-              !controller.signal.aborted &&
-              generation === this.generation &&
-              key === this.selected
-            )
+            if (!controller.signal.aborted && key === this.selected)
               notice.textContent = message;
           })
           .catch(() => {
-            if (
-              !controller.signal.aborted &&
-              generation === this.generation &&
-              key === this.selected
-            )
+            if (!controller.signal.aborted && key === this.selected)
               notice.textContent =
                 "引用の位置を確認できませんでした。もう一度試してください。";
           });
@@ -358,7 +409,9 @@ export class ArticleGraphView {
     this.evidence.append(
       button("ここを起点に周辺を見る", () => this.focus(edge.node)),
     );
-    this.evidence.focus({ preventScroll: true });
-    this.evidence.scrollIntoView({ block: "nearest" });
+    if (moveFocus) {
+      this.evidence.focus({ preventScroll: true });
+      this.evidence.scrollIntoView({ block: "nearest" });
+    }
   }
 }
