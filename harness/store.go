@@ -42,6 +42,7 @@ type Pending struct {
 }
 
 type ModelMetadata struct {
+	ReadProfile         string         `json:"readProfile,omitempty"`
 	DeniedServerRequest string         `json:"deniedServerRequest,omitempty"`
 	TurnStatus          string         `json:"turnStatus,omitempty"`
 	CodexErrorInfo      string         `json:"codexErrorInfo,omitempty"`

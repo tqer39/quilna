@@ -6,19 +6,21 @@ import (
 	"errors"
 )
 
+// minimalThreadConfig disables inherited integrations and optionally adds a collision-free, thread-local read profile.
 // Read only config keys, never retain or log MCP/plugin definitions or credentials.
 // An empty table would not clear inherited MCP entries: each name is disabled.
-func minimalThreadConfig(s *appServer, workspace string) (map[string]any, error) {
+func minimalThreadConfig(s *appServer, workspace, readProfile string, readPaths []string) (map[string]any, error) {
 	data, err := s.call("config/read", map[string]any{"cwd": workspace, "includeLayers": false})
 	if err != nil {
 		return nil, errors.New("codex-config-unconfirmed")
 	}
 	var response struct {
 		Config *struct {
-			MCP     map[string]json.RawMessage `json:"mcp_servers"`
-			Plugins map[string]json.RawMessage `json:"plugins"`
-			Hooks   map[string]json.RawMessage `json:"hooks"`
-			Shell   struct {
+			MCP         map[string]json.RawMessage `json:"mcp_servers"`
+			Plugins     map[string]json.RawMessage `json:"plugins"`
+			Hooks       map[string]json.RawMessage `json:"hooks"`
+			Permissions map[string]json.RawMessage `json:"permissions"`
+			Shell       struct {
 				Set map[string]json.RawMessage `json:"set"`
 			} `json:"shell_environment_policy"`
 		} `json:"config"`
@@ -50,7 +52,19 @@ func minimalThreadConfig(s *appServer, workspace string) (map[string]any, error)
 	for name := range response.Config.Shell.Set {
 		set[name] = ""
 	}
-	return map[string]any{"mcp_servers": mcp, "plugins": plugins, "hooks": hooks, "notify": []string{}, "features": map[string]any{"hooks": false, "apps": false, "plugins": false, "multi_agent": false}, "web_search": "disabled", "service_tier": "default", "forced_login_method": "chatgpt", "shell_environment_policy": map[string]any{"inherit": "none", "set": set, "experimental_use_profile": false}}, nil
+	config := map[string]any{"mcp_servers": mcp, "plugins": plugins, "hooks": hooks, "notify": []string{}, "features": map[string]any{"hooks": false, "apps": false, "plugins": false, "multi_agent": false}, "web_search": "disabled", "service_tier": "default", "forced_login_method": "chatgpt", "shell_environment_policy": map[string]any{"inherit": "none", "set": set, "experimental_use_profile": false}}
+	if readProfile != "" {
+		if _, exists := response.Config.Permissions[readProfile]; exists {
+			return nil, errors.New("codex-read-profile-collision")
+		}
+		if err := validateReviewReadPaths(Reviewer{Kind: "codex", ReadPaths: readPaths}); err != nil {
+			return nil, err
+		}
+		config["permissions"] = map[string]any{readProfile: reviewPermissionProfile(readPaths)}
+		// Image loading is not a sandboxed shell read. This mode reviews source.
+		config["tools"] = map[string]any{"view_image": false}
+	}
+	return config, nil
 }
 
 type EditResult struct {
