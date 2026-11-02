@@ -38,9 +38,10 @@ test("trusted loader extracts text/code without executing scripts, loading resou
         return response(fixture.html);
       },
     });
-    const { content } = await loader(url);
+    const fixtureURL = fixture.url ?? url;
+    const { content } = await loader(fixtureURL);
     assert.equal(calls.length, 1);
-    assert.equal(calls[0][0], url);
+    assert.equal(calls[0][0], fixtureURL);
     assert.equal(calls[0][1].headers.Cookie, undefined);
     assert.equal(calls[0][1].headers.Authorization, undefined);
     assert.deepEqual(
@@ -50,7 +51,7 @@ test("trusted loader extracts text/code without executing scripts, loading resou
     );
     assert.doesNotMatch(content.text, /UNWANTED_|__articleScriptRan/);
     assert.ok(content.title);
-    assert.equal(content.url, url);
+    assert.equal(content.url, fixtureURL);
     assert.deepEqual(
       {
         document: globalThis.document,

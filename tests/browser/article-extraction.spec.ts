@@ -78,6 +78,22 @@ test("server and browser extraction preserve identical text, code ranges and doc
       expect(browser.sourceTags).toEqual(["WebAssembly", "Linux"]);
     if (["other site page data", "malformed Zenn data"].includes(fixture.name))
       expect(browser.sourceTags).toBeUndefined();
+    expect(browser.text, fixture.name).not.toMatch(/UNWANTED_/);
+    if (fixture.name.startsWith("Qiita calendar")) {
+      expect(browser.text).toContain(
+        "followers、RSS、Category、Share on X(Twitter)、Copy link",
+      );
+      expect(
+        browser.structure.headings.map(
+          (heading: { start: number; end: number }) =>
+            browser.text.slice(heading.start, heading.end),
+        ),
+      ).toContain("Reading evidence");
+      expect(
+        browser.structure.links.map((link: { href: string }) => link.href),
+      ).toContain("https://example.org/reference");
+      expect(browser.text).toContain("参加者の引用を保持します。");
+    }
     expect(
       browser.codeRanges.map((r: { start: number; end: number }) =>
         browser.text.slice(r.start, r.end),
