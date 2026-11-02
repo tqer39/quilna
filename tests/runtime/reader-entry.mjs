@@ -1,7 +1,7 @@
 // Offline browser fixture only; never imported by a production entry/configuration.
 import {
   createAuthBridge,
-  readerContentSecurityPolicy,
+  readerPolicyForURL,
 } from "../../workers/better-auth.mjs";
 import { loginPage } from "../../workers/login-page.mjs";
 export { AccountVault, SourceDocument } from "../../workers/index.mjs";
@@ -18,7 +18,7 @@ export default {
     const response = await bridge.fetch(request);
     if (!path.startsWith("/api/")) {
       const headers = new Headers(response.headers);
-      headers.set("Content-Security-Policy", readerContentSecurityPolicy);
+      headers.set("Content-Security-Policy", readerPolicyForURL(request.url));
       return new Response(response.body, { status: response.status, headers });
     }
     return response;

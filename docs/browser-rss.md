@@ -17,6 +17,8 @@ Reload to check the saved copy. **設定 → デモ教材 → デモ教材を開
 
 **設定 → 受け取った教材** opens the separate [textbook-file library](textbook-sharing.md) for explicit file preview/import, reading and re-export with private recipient answers. Collected-source generation remains unconnected.
 
+**設定 → 論文の出典** opens [DOI bibliographic preview and local snapshots](paper-sources.md), using explicit Crossref requests or portable metadata files. Abstracts that arrive in a response are excluded from storage/display/export; full-text retrieval and generation remain unconnected.
+
 Discovery reads the page's advertised RSS/Atom alternate links, including relative URLs and its HTML base URL.
 If an article page has no advertised feeds, it also checks the final site's home page, within the same 16-second client deadline.
 Up to 20 distinct candidates are shown. Changing the input cancels the search and discards stale results.

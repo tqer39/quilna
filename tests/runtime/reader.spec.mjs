@@ -277,6 +277,48 @@ async function runReaderScenario(browser, info, aliasMode) {
     const a = await login("a"),
       b = await login("b");
     expect(a.account).not.toBe(b.account);
+    // The actual built DOI page uses the same URL-scoped CSP as production.
+    // Provider data remains offline; this does not claim live Crossref CORS availability.
+    let paperRequests = 0;
+    const paperFixture = JSON.parse(
+      new TextDecoder().decode(
+        await readFile("tests/fixtures/crossref-work.json"),
+      ),
+    );
+    await a.page.route("https://api.crossref.org/**", async (route) => {
+      paperRequests++;
+      expect(route.request().headers().cookie).toBeUndefined();
+      expect(route.request().headers().referer).toBeUndefined();
+      await route.fulfill({
+        json: paperFixture,
+        headers: { "Access-Control-Allow-Origin": "*" },
+      });
+    });
+    const paperPage = await a.page.goto(origin + "/?view=papers");
+    expect(paperPage.headers()["content-security-policy"]).toContain(
+      "connect-src 'self' https://api.crossref.org;",
+    );
+    expect(paperRequests).toBe(0);
+    await a.page
+      .getByLabel("DOIまたは https://doi.org/ のURL")
+      .fill(paperFixture.message.DOI);
+    await a.page
+      .getByRole("button", { name: "DOIをCrossrefへ送って確認" })
+      .click();
+    await expect(
+      a.page.getByRole("heading", {
+        name: paperFixture.message.title[0],
+        exact: true,
+      }),
+    ).toBeVisible();
+    expect(paperRequests).toBe(1);
+    const readerPage = await a.page.goto(origin + "/?view=feeds");
+    expect(readerPage.headers()["content-security-policy"]).toContain(
+      "connect-src 'self';",
+    );
+    expect(readerPage.headers()["content-security-policy"]).not.toContain(
+      "api.crossref.org",
+    );
     await f.restart(a.account);
     const admin = a.page.locator(".rss-policy-settings");
     async function openAdmin() {
