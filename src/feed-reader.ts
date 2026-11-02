@@ -437,13 +437,13 @@ export async function feedReader(root: HTMLElement) {
   shared.append(sharedLink);
   settingsBody.append(shared);
   const papers = el("section"),
-    paperLink = el("a", "DOIから書誌情報を確認", "rss-text-link");
+    paperLink = el("a", "論文を検索・DOIから確認", "rss-text-link");
   paperLink.href = "/?view=papers";
   papers.append(
     el("h3", "論文の出典"),
     el(
       "p",
-      "DOIを指定してCrossrefの書誌情報を確認し、保存できます。応答に抄録が含まれる場合も保存・表示しません。本文やPDFは追加取得しません。",
+      "キーワードでCrossrefの書誌情報を検索し、選んだDOIの詳細を確認して保存できます。応答に抄録が含まれる場合も保存・表示しません。本文やPDFは追加取得しません。",
     ),
     paperLink,
   );

@@ -1,6 +1,7 @@
 import { hasAccountLibrary } from "./library-context";
 import { button, el } from "./ui";
 import { PaperClient } from "./paper-client";
+import { paperSearchView } from "./paper-search-view";
 import {
   paperDOI,
   paperFileLimit,
@@ -86,11 +87,17 @@ export async function paperView(root: HTMLElement, client = new PaperClient()) {
   );
   const imported = el("section");
   imported.append(el("h2", "書誌ファイルから確認"), fileLabel, file);
-  main.append(form, imported, notice, preview, library);
+  const search = paperSearchView(client, (doi) => {
+    input.value = doi;
+    changed();
+    form.requestSubmit();
+  }, changed);
+  main.append(search.root, form, imported, notice, preview, library);
   root.replaceChildren(header, main);
 
   /** Changing the pending input invalidates even a transport that ignores cancellation. */
   function changed() {
+    search.cancel();
     revision++;
     controller.abort();
     controller = new AbortController();
@@ -106,6 +113,7 @@ export async function paperView(root: HTMLElement, client = new PaperClient()) {
   window.addEventListener("pagehide", changed);
   /** Show selected facts as text, including explicit uncertainty and deposited relationship records. */
   function show(p: PaperSnapshot, saved = false) {
+    search.cancel();
     const current = ++revision;
     controller.abort();
     controller = new AbortController();
