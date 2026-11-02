@@ -107,3 +107,47 @@ test("repeated queries change after writes, preserve returned snapshots and disc
   expect([...index.search("before")]).toEqual([]);
   expect([...index.search("after")]).toEqual(["one"]);
 });
+
+test("broad cached results remain correct through writes, eviction and replacement", async () => {
+  const index = new ArticleSearch();
+  const corpus = Array.from({ length: 6000 }, (_, i) =>
+    article(String(i), "shared broad text"),
+  );
+  await index.prepare(corpus);
+  const snapshot = index.search("shared");
+  expect(snapshot.size).toBe(6000);
+  // Fourteen broad queries exceed the aggregate ID budget before the query
+  // count limit. Evicted queries must still return complete current results.
+  for (let i = 1; i <= 14; i++)
+    expect(index.search("shared ".repeat(i)).size).toBe(6000);
+  // More than sixteen distinct queries forces eviction. Subsequent searches
+  // must still include all matches and reflect changes on either side of it.
+  for (let i = 0; i < 18; i++) index.search(`missing-${i}`);
+  index.update(article("0", "changed"));
+  expect(index.search("shared").size).toBe(5999);
+  index.update(article("1", "changed"));
+  expect(index.search("shared").size).toBe(5998);
+  expect(snapshot.size).toBe(6000);
+  snapshot.clear();
+  expect(index.search("shared").has("2")).toBe(true);
+  await index.prepare([article("new", "shared")]);
+  expect([...index.search("shared")]).toEqual(["new"]);
+});
+
+test("writes crossing the aggregate cache budget keep every result current", async () => {
+  const index = new ArticleSearch();
+  await index.prepare([
+    ...Array.from({ length: 5000 }, (_, i) => article(String(i), "shared")),
+    article("changing", "other"),
+  ]);
+  const queries = Array.from({ length: 16 }, (_, i) => "shared ".repeat(i + 1));
+  for (const query of queries) expect(index.search(query).size).toBe(5000);
+  index.update(article("changing", "shared"));
+  for (const query of queries) {
+    const result = index.search(query);
+    expect(result.size).toBe(5001);
+    expect(result.has("changing")).toBe(true);
+  }
+  index.update(article("changing", "other"));
+  for (const query of queries) expect(index.search(query).size).toBe(5000);
+});

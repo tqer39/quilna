@@ -272,3 +272,41 @@ test("HTML discovery keeps the feed transport DNS, redirect, size and deadline r
     /feed-xml/,
   );
 });
+
+test("favicon requests retain DNS pinning and reject private redirects and incompatible modes", async () => {
+  const icon = "data:image/png;base64,iVBORw0KGgo=";
+  const result = await fetchPublicFeed("https://example.org/favicon.ico", {
+    allowIcon: true,
+    resolve: async () => [{ address: "1.1.1.1", family: 4 }],
+    send: async (_url, ip, _signal, html, validators, allowIcon) => {
+      assert.equal(ip.address, "1.1.1.1");
+      assert.equal(html, false);
+      assert.equal(validators, undefined);
+      assert.equal(allowIcon, true);
+      return { icon };
+    },
+  });
+  assert.equal(result.icon, icon);
+  await assert.rejects(
+    fetchPublicFeed("https://example.org/favicon.ico", {
+      allowIcon: true,
+      resolve: async (host) => [
+        {
+          address: host === "private.example.org" ? "127.0.0.1" : "1.1.1.1",
+          family: 4,
+        },
+      ],
+      send: async () => ({
+        redirect: "https://private.example.org/favicon.ico",
+      }),
+    }),
+    /feed-address/,
+  );
+  await assert.rejects(
+    fetchPublicFeed("https://example.org/favicon.ico", {
+      allowIcon: true,
+      allowHTML: true,
+    }),
+    /feed-validators/,
+  );
+});

@@ -4,6 +4,16 @@ export const tagRules = [
   {
     tag: "技術・開発",
     terms: [
+      "react",
+      "python",
+      "swift",
+      "flutter",
+      "webassembly",
+      "wasm",
+      "sre",
+      "コード",
+      "エンジニア",
+      "実装",
       "programming",
       "software",
       "developer",
@@ -22,6 +32,11 @@ export const tagRules = [
   {
     tag: "AI・機械学習",
     terms: [
+      "ai",
+      "claude code",
+      "codex",
+      "chatgpt",
+      "qwen",
       "artificial intelligence",
       "machine learning",
       "neural network",
@@ -123,7 +138,7 @@ export const tagRules = [
   },
 ] as const;
 export type ArticleTags = {
-  version: 1;
+  version: 1 | 2;
   state: "classified" | "unclassified" | "no-content";
   suggestions: { tag: string; evidence: string[] }[];
 };
@@ -144,16 +159,38 @@ export function normalizeManualTags(values: string[]): string[] {
     (tag) => tagRules.find((rule) => normalize(rule.tag) === tag)?.tag ?? tag,
   );
 }
+export function publisherTags(article: FeedArticle): string[] {
+  return [
+    ...new Set([
+      ...(article.sourceTags ?? []),
+      ...(article.content?.sourceTags ?? []),
+    ]),
+  ];
+}
 export function effectiveTags(article: FeedArticle): string[] {
-  return (
-    article.manualTags ??
-    article.tags?.suggestions.map((item) => item.tag) ??
-    []
-  );
+  return [
+    ...new Set([
+      ...publisherTags(article),
+      ...(article.tags?.suggestions.map((item) => item.tag) ?? []),
+      ...(article.manualTags ?? []),
+    ]),
+  ];
+}
+export function needsTagClassification(article: FeedArticle) {
+  return !article.tags || article.tags.version !== 2;
+}
+export function tagSummary(article: FeedArticle): string {
+  const source = publisherTags(article);
+  const automatic = article.tags?.suggestions.map((item) => item.tag) ?? [];
+  return [
+    `配信元：${source.join("・") || "タグ情報なし"}`,
+    `Quilnaの自動判定：${automatic.join("・") || (!article.tags ? "未処理" : article.tags.state === "no-content" ? "手掛かりとなる本文なし" : "手掛かり不足")}${article.tags?.version === 1 ? "（分類更新待ち）" : ""}`,
+    `自分のタグ：${article.manualTags?.join("・") || "未設定"}`,
+  ].join("\n");
 }
 export function tagState(article: FeedArticle): string {
   if (article.manualTags !== undefined) return "手動設定";
-  if (!article.tags || article.tags.version !== 1) return "未処理";
+  if (!article.tags) return "未処理";
   return {
     classified: "自動判定",
     unclassified: "分類できず",
@@ -173,31 +210,38 @@ const patterns = tagRules.map((rule) => ({
 }));
 export function classifyArticle(article: FeedArticle): ArticleTags {
   const original = article.content?.text || article.body;
-  if (!original.trim() || /^Article URL:\s*https?:\/\//i.test(original.trim()))
-    return { version: 1, state: "no-content", suggestions: [] };
+  const hasContent =
+    !!original.trim() && !/^Article URL:\s*https?:\/\//i.test(original.trim());
   const title = normalize(article.content?.title || article.title);
   const translation =
     article.translation?.sourceText === original
       ? article.translation.text
       : "";
-  const body = normalize(`${original}\n${translation}`);
+  const body = hasContent ? normalize(`${original}\n${translation}`) : "";
+  const source = publisherTags(article).map(normalize);
   const suggestions: ArticleTags["suggestions"] = [];
   for (const rule of patterns) {
     const evidence: string[] = [];
     let score = 0;
     for (const { term, pattern } of rule.terms) {
       const inTitle = pattern.test(title);
-      if (inTitle || pattern.test(body)) {
-        evidence.push(term);
-        score += inTitle ? 2 : 1;
+      const inSource = source.some((tag) => pattern.test(tag));
+      if (inTitle || inSource || pattern.test(body)) {
+        if (evidence.length < 20)
+          evidence.push(inSource && !inTitle ? `配信元:${term}` : term);
+        score += inTitle || inSource ? 2 : 1;
       }
     }
     // A title clue or two distinct body clues; repetition alone does not count.
     if (score >= 2) suggestions.push({ tag: rule.tag, evidence });
   }
   return {
-    version: 1,
-    state: suggestions.length ? "classified" : "unclassified",
+    version: 2,
+    state: suggestions.length
+      ? "classified"
+      : hasContent
+        ? "unclassified"
+        : "no-content",
     suggestions,
   };
 }
@@ -214,7 +258,7 @@ export function validArticleTags(value: unknown): value is ArticleTags {
   if (!value || typeof value !== "object") return false;
   const tags = value as ArticleTags;
   return (
-    tags.version === 1 &&
+    (tags.version === 1 || tags.version === 2) &&
     ["classified", "unclassified", "no-content"].includes(tags.state) &&
     Array.isArray(tags.suggestions) &&
     tags.suggestions.length <= tagRules.length &&

@@ -8,6 +8,18 @@ function matches(text: string, terms: string[]) {
 }
 export class ArticleSearch {
   private queries = new Map<string, { terms: string[]; ids: Set<string> }>();
+  // Preserve the former aggregate bound (16 queries × 5,000 IDs), while
+  // allowing a broad result to share that budget instead of always rescanning.
+  private static readonly cachedIdsLimit = 80_000;
+  private trimQueries() {
+    let ids = 0;
+    for (const cached of this.queries.values()) ids += cached.ids.size;
+    while (this.queries.size > 16 || ids > ArticleSearch.cachedIdsLimit) {
+      const oldest = this.queries.keys().next().value!;
+      ids -= this.queries.get(oldest)!.ids.size;
+      this.queries.delete(oldest);
+    }
+  }
   private documents = new Map<
     string,
     { original: string[]; normalized: string }
@@ -73,11 +85,11 @@ export class ArticleSearch {
       original,
       normalized,
     });
-    for (const [query, cached] of this.queries) {
+    for (const cached of this.queries.values()) {
       if (matches(normalized, cached.terms)) cached.ids.add(a.id);
       else cached.ids.delete(a.id);
-      if (cached.ids.size > 5000) this.queries.delete(query);
     }
+    this.trimQueries();
   }
   search(query: string): Set<string> {
     if (!this.ready) throw Error("検索の準備が終わっていません。");
@@ -94,10 +106,9 @@ export class ArticleSearch {
       if (matches(document.normalized, terms)) found.add(id);
     // Bound memory even for queries matching the entire library. Incremental
     // writes repair cached matches above instead of rescanning every document.
-    if (terms.length && found.size <= 5000) {
-      if (this.queries.size >= 16)
-        this.queries.delete(this.queries.keys().next().value!);
+    if (terms.length && found.size <= ArticleSearch.cachedIdsLimit) {
       this.queries.set(key, { terms, ids: new Set(found) });
+      this.trimQueries();
     }
     return found;
   }

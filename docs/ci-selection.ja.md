@@ -16,7 +16,7 @@ checkoutで全履歴を取得します。Gitの失敗やコミット識別子の
 | 変更ファイル | 選択する製品検査 |
 | --- | --- |
 | `docs/`内のMarkdown、ルートREADME、Apple/harnessのREADME英日ペア | 製品検査なし。既定のセキュリティ・lint・選択回帰は実行 |
-| `src/`、`server/`、`workers/`、`public/`、`tests/`、Webのビルド・テスト設定 | 型検査、単体/server、ビルド、Worker・ブラウザ検査、200ms検索ゲート |
+| `src/`、`server/`、`workers/`、`public/`、`tests/`、Webのビルド・テスト設定 | 型検査、単体/server、ビルド、Worker・ブラウザ・実行環境接続検査、200ms検索ゲート |
 | READMEペアを除く`apple/` | Swiftテスト・ビルド、iOS simulatorビルド |
 | READMEペアとGo依存を除く`harness/` | Linux/macOSのGoハーネス検査 |
 | 依存、実行環境の固定値、script、workflow、skill、AGENTS、選択テスト、未分類のパス | 全プラットフォーム |
@@ -43,7 +43,7 @@ mise exec -- npm test
 選択回帰は文書だけのCIでも実行し、製品ビルドを必要としません。workflowの契約回帰で機能・検索検査と失敗時の証跡アップロードを必須にしています。統合前の設定では検索stepがなく、この回帰が失敗します。
 選択scriptやworkflow自体の変更では製品検査をすべて実行します。全体検証のPRが成功しても、その後の文書だけの実行のジョブ数・所要時間を証明しません。
 マージ後、実際の文書だけの実行とブラウザだけの実行を旧workflowと比較してから、実測の時間短縮を主張します。
-PR #64は検証済みPR #63のブランチ（`codex/browser-reading-workflow`）に依存する形とし、製品側の検索ゲートと証跡保存を維持したCI差分にします。アプリのソースはPR #63と同じです。この準備ではどちらのPRもmainへマージしません。#63の統合後は#64のbaseをmainへ変更し、正確な差分と必須判定を再確認してから統合します。
+PR #63はmainへ統合済みです。PR #64はmainを対象とし、現在のブラウザ・実行環境接続テスト、検索ゲート、失敗時の診断と証跡保存を維持します。このCI更新でアプリのソースは変更しません。
 
 - [GitHubの必須チェックの説明](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/collaborating-on-repositories-with-code-quality-features/troubleshooting-required-status-checks)
 - [GitHubのworkflow構文](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax)

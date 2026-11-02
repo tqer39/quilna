@@ -48,9 +48,9 @@ test("classifies Japanese and English clues with visible reasons and avoids subs
         "Article URL: https://example.org/a\nComments URL: https://news.example.org",
       ),
     ).state,
-  ).toBe("no-content");
+  ).toBe("classified");
 });
-test("classifies only a translation matching the current source; user corrections stay authoritative", () => {
+test("classifies only a translation matching the current source; personal tags remain independent", () => {
   const a = article("A story", "A personal recollection.");
   a.translation = {
     text: "機械学習と人工知能",
@@ -64,9 +64,18 @@ test("classifies only a translation matching the current source; user correction
   expect(effectiveTags(a)).toEqual(["AI・機械学習"]);
   a.manualTags = ["仕事"];
   a.tags = classifyArticle({ ...a, title: "SQLite tutorial" });
-  expect(effectiveTags(a)).toEqual(["仕事"]);
+  expect(effectiveTags(a)).toEqual([
+    "技術・開発",
+    "AI・機械学習",
+    "手順・解説",
+    "仕事",
+  ]);
   a.manualTags = [];
-  expect(effectiveTags(a)).toEqual([]);
+  expect(effectiveTags(a)).toEqual([
+    "技術・開発",
+    "AI・機械学習",
+    "手順・解説",
+  ]);
 });
 test("normalizes user tags, rejects excessive input, and keeps search aligned with effective tags", async () => {
   expect(normalizeManualTags([" ＳＱＬ ", "sql", " AI・機械学習 "])).toEqual([

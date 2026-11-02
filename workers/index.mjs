@@ -3,6 +3,8 @@ import { AccountVaultCore } from "./vault.mjs";
 import { handleAccount } from "./http.mjs";
 import { productionFetch } from "./better-auth.mjs";
 import { FeedCollector } from "./feed-collector.mjs";
+import { DocumentGateway } from "./document-gateway.mjs";
+export { SourceDocument } from "./document-object.mjs";
 export class AccountVault extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
@@ -13,9 +15,10 @@ export class AccountVault extends DurableObject {
       enabled: env.RSS_COLLECTION_ENABLED === "true",
       blockedHosts: env.APP_ORIGIN ? [new URL(env.APP_ORIGIN).hostname] : [],
     });
+    this.documents = new DocumentGateway(ctx.storage, env);
   }
   async fetch(request) {
-    return handleAccount(this.core, request, this.collector);
+    return handleAccount(this.core, request, this.collector, this.documents);
   }
   async alarm() {
     await this.collector.alarm();

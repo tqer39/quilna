@@ -1,0 +1,57 @@
+name: Sync cloud authentication from 1Password
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_worker:
+        description: "Type quilna-private to apply its three authentication credentials"
+        required: true
+        type: string
+permissions:
+  contents: read
+concurrency:
+  group: quilna-private-auth
+  cancel-in-progress: false
+jobs:
+  sync:
+    if: github.repository == 'tqer39/quilna' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: quilna-private
+    env:
+      CONFIRM_WORKER: ${{ inputs.confirm_worker }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      QUILNA_APP_ORIGIN: ${{ vars.QUILNA_APP_ORIGIN }}
+      QUILNA_OWNER_EMAIL: ${{ vars.QUILNA_OWNER_EMAIL }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 26.12.1
+      - name: Check configuration before loading credentials
+        run: node scripts/sync-cloud-auth.mjs --check-configuration
+        env:
+          OP_REF_GOOGLE_CLIENT_ID: ${{ vars.OP_REF_GOOGLE_CLIENT_ID }}
+          OP_REF_GOOGLE_CLIENT_SECRET: ${{ vars.OP_REF_GOOGLE_CLIENT_SECRET }}
+          OP_REF_BETTER_AUTH_SECRET: ${{ vars.OP_REF_BETTER_AUTH_SECRET }}
+          OP_REF_CLOUDFLARE_API_TOKEN: ${{ vars.OP_REF_CLOUDFLARE_API_TOKEN }}
+      - name: Load only the approved credentials
+        id: onepassword
+        uses: 1password/load-secrets-action@eb2efd0703da22a93c467f2d1ffbb6826c11e19c # v4.1.1
+        with:
+          export-env: false
+          version: 2.41.1
+        env:
+          OP_SERVICE_ACCOUNT_TOKEN: ${{ secrets.OP_SERVICE_ACCOUNT_TOKEN }}
+          GOOGLE_CLIENT_ID: ${{ vars.OP_REF_GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ vars.OP_REF_GOOGLE_CLIENT_SECRET }}
+          BETTER_AUTH_SECRET: ${{ vars.OP_REF_BETTER_AUTH_SECRET }}
+          CLOUDFLARE_API_TOKEN: ${{ vars.OP_REF_CLOUDFLARE_API_TOKEN }}
+      - name: Apply credentials to the existing owner-only Worker
+        run: node scripts/sync-cloud-auth.mjs --apply
+        env:
+          GOOGLE_CLIENT_ID: ${{ steps.onepassword.outputs.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ steps.onepassword.outputs.GOOGLE_CLIENT_SECRET }}
+          BETTER_AUTH_SECRET: ${{ steps.onepassword.outputs.BETTER_AUTH_SECRET }}
+          CLOUDFLARE_API_TOKEN: ${{ steps.onepassword.outputs.CLOUDFLARE_API_TOKEN }}

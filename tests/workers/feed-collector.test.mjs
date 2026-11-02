@@ -110,6 +110,37 @@ test("pause during a fetch discards its late result; configuration uses optimist
   );
 });
 
+test("removing one subscription retains undelivered snapshots and the other schedule across restart", async () => {
+  const other = "https://blog.cloudflare.com/rss/";
+  const f = fixture();
+  await f.collector.configure({
+    expectedRevision: 0,
+    interval: 15,
+    urls: [url, other],
+  });
+  await f.collector.alarm();
+  const before = await f.collector.status();
+  assert.equal(before.pending.length, 2);
+  const after = await f.collector.configure({
+    expectedRevision: 1,
+    interval: 15,
+    urls: [other],
+  });
+  assert.deepEqual(after.pending, before.pending);
+  assert.deepEqual(
+    after.feeds,
+    before.feeds.filter((feed) => feed.url === other),
+  );
+  assert.equal(after.interval, 15);
+  const resumed = f.restart();
+  assert.deepEqual((await resumed.status()).pending, before.pending);
+  for (const snapshot of before.pending)
+    assert.equal((await resumed.snapshot(snapshot.id)).xml, xml);
+  f.advance(16 * 60000);
+  await resumed.alarm();
+  assert.equal(f.calls(), 3); // Two initial sources, then only the retained source.
+});
+
 test("failures back off across restart, keep earlier snapshots and recover", async () => {
   let fail = false;
   const f = fixture({
@@ -308,5 +339,50 @@ test("cloud fetch bounds responses and deadlines and rejects HTML and XML entiti
         }),
     }),
     { url, xml },
+  );
+});
+
+test("favicon transport only returns bounded raster data and retains public redirect guards", async () => {
+  const png = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]);
+  const result = await fetchCloudFeed("https://example.org/favicon.ico", {
+    allowIcon: true,
+    send: async (_url, init) => {
+      assert.equal(init.headers.Cookie, undefined);
+      assert.match(init.headers.Accept, /image\/png/);
+      return new Response(png, { headers: { "Content-Type": "image/png" } });
+    },
+  });
+  assert.equal(result.icon, "data:image/png;base64,iVBORw0KGgo=");
+  for (const payload of [
+    "<svg></svg>",
+    "<!doctype html>",
+    new Uint8Array(65537),
+  ]) {
+    await assert.rejects(
+      fetchCloudFeed("https://example.org/favicon.ico", {
+        allowIcon: true,
+        send: async () => new Response(payload),
+      }),
+      /icon-/,
+    );
+  }
+  let requests = 0;
+  await assert.rejects(
+    fetchCloudFeed("https://example.org/favicon.ico", {
+      allowIcon: true,
+      send: async () => {
+        requests++;
+        return new Response(null, {
+          status: 302,
+          headers: { Location: "https://127.0.0.1/secret" },
+        });
+      },
+    }),
+    /feed-host-unsupported/,
+  );
+  assert.equal(requests, 1);
+  await assert.rejects(
+    fetchCloudFeed(url, { allowIcon: true, allowHTML: true }),
+    /feed-validators/,
   );
 });

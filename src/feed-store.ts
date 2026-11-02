@@ -1,3 +1,16 @@
+import { validArticleUpdate } from "./article-update";
+import {
+  feedFingerprint,
+  feedRepresentation,
+  validFeedRevision,
+} from "./feed-revision";
+import {
+  validReadingPositions,
+  type ReadingPosition,
+  type ReadingPositions,
+} from "./reading-position";
+import { validArticleStructure, validArticleInfo } from "./article-structure";
+import { validSourceTags } from "./source-tags";
 import { feedFailure } from "./feed-auto-refresh";
 import {
   classifyArticle,
@@ -7,13 +20,15 @@ import {
 } from "./article-tags";
 import type { Feed, FeedArticle } from "./feed-parser";
 import { articleTextLimit } from "./article-content";
+import { legacyArticleText, validCodeRanges } from "./article-code";
 import type { ArticleContent, ArticleTranslation } from "./article-content";
 import { articleURL } from "./feed-parser";
+import { validDocumentReference, sourceContent } from "./source-document";
 const text = (value: unknown) =>
   typeof value === "string" && value.length <= 40000;
 const timestamp = (value: unknown) =>
   text(value) && Number.isFinite(Date.parse(value as string));
-function validArticle(a: FeedArticle) {
+export function validArticle(a: FeedArticle) {
   return (
     a &&
     [a.id, a.feedUrl, a.title, a.url, a.body, a.fetchedAt].every(text) &&
@@ -25,10 +40,22 @@ function validArticle(a: FeedArticle) {
     (a.contentError === undefined || text(a.contentError)) &&
     (a.tags === undefined || validArticleTags(a.tags)) &&
     (a.manualTags === undefined || validManualTags(a.manualTags)) &&
+    validReadingPositions(a.readingPositions) &&
+    validFeedRevision(a.feedRevision) &&
+    validArticleUpdate(a.bodyUpdate) &&
+    (a.sourceUpdated === undefined || timestamp(a.sourceUpdated)) &&
+    (a.sourceTags === undefined || validSourceTags(a.sourceTags)) &&
     (a.content === undefined ||
       (a.content &&
         typeof a.content.text === "string" &&
         a.content.text.length <= articleTextLimit &&
+        validCodeRanges(a.content.text, a.content.codeRanges) &&
+        validArticleStructure(a.content.text, a.content.structure) &&
+        validArticleInfo(a.content.info) &&
+        (a.content.sourceTags === undefined ||
+          validSourceTags(a.content.sourceTags)) &&
+        (a.content.document === undefined ||
+          validDocumentReference(a.content.document)) &&
         text(a.content.url) &&
         articleURL(a.content.url, a.url) === a.content.url &&
         text(a.content.title) &&
@@ -38,6 +65,7 @@ function validArticle(a: FeedArticle) {
       (a.translation &&
         typeof a.translation.text === "string" &&
         a.translation.text.length <= articleTextLimit * 2 &&
+        validCodeRanges(a.translation.text, a.translation.codeRanges) &&
         typeof a.translation.sourceText === "string" &&
         a.translation.sourceText.length <= articleTextLimit &&
         text(a.translation.sourceLanguage) &&
@@ -88,12 +116,20 @@ export function openFeedLibrary(): Promise<IDBDatabase> {
     };
   });
 }
-function validFeed(feed: Feed) {
+export function validFeed(feed: Feed) {
   return (
     feed &&
     text(feed.url) &&
     text(feed.title) &&
     timestamp(feed.fetchedAt) &&
+    (feed.unsubscribed === undefined ||
+      typeof feed.unsubscribed === "boolean") &&
+    (feed.cloudUnsubscribePending === undefined ||
+      (typeof feed.cloudUnsubscribePending === "boolean" &&
+        (!feed.cloudUnsubscribePending || feed.unsubscribed === true))) &&
+    (feed.subscriptionRevision === undefined ||
+      (Number.isSafeInteger(feed.subscriptionRevision) &&
+        feed.subscriptionRevision >= 0)) &&
     (feed.refreshFailure === undefined ||
       (feed.refreshFailure &&
         Number.isInteger(feed.refreshFailure.failures) &&
@@ -118,6 +154,65 @@ export function readFeed(
         : reject(Error("配信元の保存形式を確認できません。"));
     tx.onerror = tx.onabort = () =>
       reject(Error("配信元を読み込めませんでした。"));
+  });
+}
+export function readSubscriptions(db: IDBDatabase): Promise<Feed[]> {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("feeds", "readonly");
+    const request = tx.objectStore("feeds").getAll();
+    tx.oncomplete = () =>
+      request.result.every(validFeed)
+        ? resolve(request.result)
+        : reject(Error("配信元の保存形式を確認できません。"));
+    tx.onerror = tx.onabort = () =>
+      reject(Error("購読設定を読み込めませんでした。"));
+  });
+}
+
+// Do not touch articles. A revision protects a later resume from a delayed
+// cloud acknowledgement, including in browsers without cross-tab Web Locks.
+export function setFeedSubscription(
+  db: IDBDatabase,
+  address: string,
+  subscribed: boolean,
+  confirmedRevision?: number,
+): Promise<number | null> {
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("feeds", "readwrite");
+    const store = tx.objectStore("feeds");
+    const request = store.get(address);
+    let revision: number | null = null;
+    request.onsuccess = () => {
+      const feed: Feed = request.result;
+      if (!validFeed(feed)) {
+        tx.abort();
+        return;
+      }
+      if (
+        confirmedRevision !== undefined &&
+        (feed.subscriptionRevision !== confirmedRevision || !feed.unsubscribed)
+      )
+        return;
+      revision = (feed.subscriptionRevision ?? 0) + 1;
+      if (!Number.isSafeInteger(revision)) {
+        tx.abort();
+        return;
+      }
+      try {
+        store.put({
+          ...feed,
+          unsubscribed: !subscribed,
+          cloudUnsubscribePending:
+            !subscribed && confirmedRevision === undefined,
+          subscriptionRevision: revision,
+        });
+      } catch {
+        tx.abort();
+      }
+    };
+    tx.oncomplete = () => resolve(revision);
+    tx.onerror = tx.onabort = () =>
+      reject(Error("購読設定を保存できませんでした。記事は保持しています。"));
   });
 }
 export function recordFeedFailure(
@@ -155,11 +250,33 @@ export function readFeedLibrary(
   return new Promise((resolve, reject) => {
     const tx = db.transaction(["feeds", "articles"], "readonly");
     const feeds = tx.objectStore("feeds").getAll();
-    const articles = tx.objectStore("articles").getAll();
+    const store = tx.objectStore("articles");
+    const articles: FeedArticle[] = [];
+    let invalidArticles = false;
+    // Bound each native IDB result as well as JS callback work. One huge
+    // getAll result can leave a large native value array for later cleanup.
+    // Enqueue the next batch synchronously in onsuccess: every batch remains
+    // in this one readonly transaction/snapshot, with no partial publication.
+    const readBatch = (after?: string) => {
+      const request = store.getAll(
+        after === undefined ? null : IDBKeyRange.lowerBound(after, true),
+        500,
+      );
+      request.onsuccess = () => {
+        const batch = request.result as FeedArticle[];
+        if (!batch.every(validArticle)) {
+          invalidArticles = true;
+          tx.abort();
+          return;
+        }
+        articles.push(...batch);
+        if (batch.length === 500) readBatch(batch[batch.length - 1].id);
+      };
+    };
+    readBatch();
     tx.oncomplete = () => {
       const validFeeds = feeds.result.every(validFeed);
-      const validArticles = articles.result.every(validArticle);
-      if (!validFeeds || !validArticles) {
+      if (!validFeeds) {
         reject(
           Error(
             "保存データの形式を確認できませんでした。データは削除していません。",
@@ -167,17 +284,26 @@ export function readFeedLibrary(
         );
         return;
       }
-      resolve({ feeds: feeds.result, articles: articles.result });
+      resolve({ feeds: feeds.result, articles });
     };
     tx.onabort = tx.onerror = () =>
-      reject(Error("保存した記事を読み込めませんでした。"));
+      reject(
+        Error(
+          invalidArticles
+            ? "保存データの形式を確認できませんでした。データは削除していません。"
+            : "保存した記事を読み込めませんでした。",
+        ),
+      );
   });
 }
-export function mergeFeed(
+export async function mergeFeed(
   db: IDBDatabase,
   feed: Feed,
   articles: FeedArticle[],
 ): Promise<void> {
+  // Hash before opening IndexedDB's transaction; awaiting crypto inside a
+  // success callback would allow the transaction to commit prematurely.
+  const fingerprints = await Promise.all(articles.map(feedFingerprint));
   return new Promise((resolve, reject) => {
     const tx = db.transaction(["feeds", "articles"], "readwrite");
     const feedStore = tx.objectStore("feeds");
@@ -194,29 +320,62 @@ export function mergeFeed(
           !existing.result ||
           Date.parse(existing.result.fetchedAt) <= Date.parse(feed.fetchedAt)
         )
-          feedStore.put(feed);
+          feedStore.put({
+            ...feed,
+            ...(existing.result?.unsubscribed !== undefined
+              ? {
+                  unsubscribed: existing.result.unsubscribed,
+                  cloudUnsubscribePending:
+                    existing.result.cloudUnsubscribePending,
+                  subscriptionRevision: existing.result.subscriptionRevision,
+                }
+              : {}),
+          });
       };
     };
     const store = tx.objectStore("articles");
-    for (const article of articles) {
+    for (const [index, article] of articles.entries()) {
       const request = store.get(article.id);
       request.onsuccess = () => {
-        const old = request.result as FeedArticle | undefined;
-        // A saved article is a stable local copy, even when its feed changes.
-        const next =
-          old &&
-          (old.saved ||
-            Date.parse(old.fetchedAt) > Date.parse(article.fetchedAt))
-            ? old
-            : {
-                ...article,
-                read: old?.read ?? false,
-                content: old?.content,
-                contentError: old?.contentError,
-                translation: old?.translation,
-                manualTags: old?.manualTags,
-              };
-        store.put({ ...next, tags: classifyArticle(next) });
+        try {
+          const old = request.result as FeedArticle | undefined;
+          const stale =
+            old &&
+            Date.parse(old.feedRevision?.observedAt ?? old.fetchedAt) >
+              Date.parse(article.fetchedAt);
+          // Keep saved text intact, but still observe later feed revisions.
+          const next =
+            old && (old.saved || stale)
+              ? { ...old }
+              : {
+                  ...article,
+                  read: old?.read ?? false,
+                  content: old?.content,
+                  contentError: old?.contentError,
+                  translation: old?.translation,
+                  manualTags: old?.manualTags,
+                  readingPositions: old?.readingPositions,
+                  bodyUpdate: old?.bodyUpdate,
+                };
+          if (!stale) {
+            const same =
+              old &&
+              (old.feedRevision
+                ? old.feedRevision.fingerprint === fingerprints[index]
+                : feedRepresentation(old) === feedRepresentation(article));
+            next.feedRevision = {
+              fingerprint: fingerprints[index],
+              changedAt: same
+                ? (old.feedRevision?.changedAt ?? old.fetchedAt)
+                : article.fetchedAt,
+              observedAt: article.fetchedAt,
+              url: article.url,
+            };
+          }
+          store.put({ ...next, tags: classifyArticle(next) });
+        } catch {
+          tx.abort();
+        }
       };
     }
     tx.oncomplete = () => resolve();
@@ -257,6 +416,9 @@ export function updateArticleContent(
   },
   insert = false,
   signal?: AbortSignal,
+  restoreCode = false,
+  contentMode: "preserve" | "metadata" | "replace" = "preserve",
+  sourceCheckedAt?: number,
 ): Promise<void> {
   return new Promise((resolve, reject) => {
     signal?.throwIfAborted();
@@ -279,11 +441,45 @@ export function updateArticleContent(
         return;
       }
       // A slower import in another tab must not replace an already saved original.
-      if (patch.content && old?.content) return;
+      if (patch.content && old?.content) {
+        if (contentMode !== "preserve") {
+          if (
+            JSON.stringify(old.content) !== JSON.stringify(article.content) ||
+            (contentMode === "metadata" &&
+              JSON.stringify(sourceContent(old.content)) !==
+                JSON.stringify(sourceContent(patch.content)))
+          ) {
+            tx.abort();
+            return;
+          }
+        } else {
+          if (!restoreCode) return;
+          // Only enrich the exact old snapshot with formatting; never replace a
+          // changed source or another tab's successful upgrade.
+          if (
+            old.content.codeRanges !== undefined &&
+            old.content.structure !== undefined
+          )
+            return;
+          if (
+            JSON.stringify(old.content) !== JSON.stringify(article.content) ||
+            (old.content.codeRanges === undefined
+              ? legacyArticleText(patch.content.text) !== old.content.text
+              : patch.content.text !== old.content.text ||
+                JSON.stringify(old.content.codeRanges) !==
+                  JSON.stringify(patch.content.codeRanges))
+          ) {
+            tx.abort();
+            return;
+          }
+        }
+      }
       // Do not attach a translation to a newer original from another tab.
       if (
         patch.translation &&
-        patch.translation.sourceText !== (old?.content?.text || old?.body)
+        (patch.translation.sourceText !== (old?.content?.text || old?.body) ||
+          JSON.stringify(article.content?.codeRanges ?? []) !==
+            JSON.stringify(old?.content?.codeRanges ?? []))
       ) {
         tx.abort();
         return;
@@ -293,7 +489,47 @@ export function updateArticleContent(
           ...(old ?? article),
           ...patch,
           ...(patch.content
-            ? { translation: undefined, contentError: undefined }
+            ? {
+                ...(contentMode === "metadata" ||
+                (restoreCode &&
+                  old?.content?.text === patch.content.text &&
+                  JSON.stringify(old.content.codeRanges) ===
+                    JSON.stringify(patch.content.codeRanges)) ||
+                (old?.content &&
+                  JSON.stringify({
+                    ...sourceContent(old.content),
+                    fetchedAt: "",
+                  }) ===
+                    JSON.stringify({
+                      ...sourceContent(patch.content),
+                      fetchedAt: "",
+                    }))
+                  ? {}
+                  : { translation: undefined }),
+                contentError: patch.contentError,
+                ...(sourceCheckedAt &&
+                patch.content.document &&
+                (!old?.bodyUpdate ||
+                  old.bodyUpdate.checkedAt < sourceCheckedAt ||
+                  (old.bodyUpdate.checkedAt === sourceCheckedAt &&
+                    JSON.stringify(old.bodyUpdate) ===
+                      JSON.stringify(article.bodyUpdate)))
+                  ? {
+                      bodyUpdate: {
+                        checkedAt: sourceCheckedAt,
+                        fingerprint:
+                          article.feedRevision &&
+                          sourceCheckedAt >=
+                            Date.parse(article.feedRevision.changedAt)
+                            ? article.feedRevision.fingerprint
+                            : undefined,
+                        failures: 0,
+                        retryAt: 0,
+                        latest: patch.content.document,
+                      },
+                    }
+                  : {}),
+              }
             : {}),
         };
         store.put({ ...next, tags: classifyArticle(next) });
@@ -352,5 +588,60 @@ export function setArticleTags(
           "タグを保存できませんでした。以前のタグは保持しています。再試行してください。",
         ),
       );
+  });
+}
+
+export function saveReadingPosition(
+  db: IDBDatabase,
+  id: string,
+  view: "original" | "translation",
+  text: string,
+  position: ReadingPosition,
+): Promise<ReadingPositions> {
+  if (
+    !validReadingPositions({ [view]: position }) ||
+    position.furthest > text.length
+  )
+    return Promise.reject(Error("読書位置の形式を確認できませんでした。"));
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction("articles", "readwrite"),
+      store = tx.objectStore("articles"),
+      get = store.get(id);
+    let positions: ReadingPositions = {};
+    get.onsuccess = () => {
+      try {
+        const current = get.result as FeedArticle | undefined;
+        const original = current?.content?.text || current?.body;
+        const currentText =
+          view === "original"
+            ? original
+            : current?.translation?.sourceText === original
+              ? current?.translation?.text
+              : undefined;
+        if (!current || currentText !== text) {
+          tx.abort();
+          return;
+        }
+        positions = { ...current.readingPositions };
+        const previous = positions[view];
+        if (!previous || previous.updatedAt <= position.updatedAt) {
+          positions[view] = {
+            ...position,
+            furthest: Math.max(
+              position.furthest,
+              previous?.fingerprint === position.fingerprint
+                ? previous.furthest
+                : 0,
+            ),
+          };
+          store.put({ ...current, readingPositions: positions });
+        }
+      } catch {
+        tx.abort();
+      }
+    };
+    tx.oncomplete = () => resolve(positions);
+    tx.onabort = tx.onerror = () =>
+      reject(Error("読書位置を保存できませんでした。本文は保持しています。"));
   });
 }

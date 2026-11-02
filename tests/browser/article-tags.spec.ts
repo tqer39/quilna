@@ -9,7 +9,7 @@ async function importArticle(page: Page) {
     route.fulfill({
       json: {
         url,
-        html: `<html lang="en"><title>SQLite tutorial</title><article><h1>SQLite tutorial</h1><p>${body}</p></article></html>`,
+        html: `<html lang="en"><title>SQLite tutorial</title><meta property="article:tag" content="Databases"><meta name="keywords" content="SQLite, Databases"><article><h1>SQLite tutorial</h1><p>${body}</p></article></html>`,
       },
     }),
   );
@@ -25,7 +25,7 @@ async function importArticle(page: Page) {
 async function edit(page: Page, tags: string) {
   await page.getByText("タグを編集・根拠を確認", { exact: true }).click();
   await page
-    .getByLabel("タグを編集（カンマ区切り）", { exact: true })
+    .getByLabel("自分のタグを編集（カンマ区切り）", { exact: true })
     .fill(tags);
   await page.getByRole("button", { name: "タグを保存", exact: true }).click();
 }
@@ -75,9 +75,12 @@ test("imported articles get explained tags; corrections persist, filter and sear
   await expect(page.getByRole("region", { name: "記事のタグ" })).toContainText(
     "自動判定：技術・開発・手順・解説",
   );
+  await expect(page.locator(".rss-tag-summary")).toContainText(
+    "配信元：Databases・SQLite",
+  );
   await edit(page, "仕事, あとで読む");
   await expect(page.locator(".rss-tag-summary")).toContainText(
-    "手動設定：仕事・あとで読む",
+    "自分のタグ：仕事・あとで読む",
   );
   await page.reload();
   await page.getByLabel("保存領域の記事を検索").fill("仕事");
@@ -96,10 +99,13 @@ test("imported articles get explained tags; corrections persist, filter and sear
     fullPage: true,
   });
   await page
-    .getByRole("button", { name: "自動判定に戻す", exact: true })
+    .getByRole("button", { name: "自分のタグを解除", exact: true })
     .click();
   await expect(page.locator(".rss-tag-summary")).toContainText(
     "自動判定：技術・開発",
+  );
+  await expect(page.locator(".rss-tag-summary")).toContainText(
+    "配信元：Databases・SQLite",
   );
   await page.getByRole("button", { name: "← 記事一覧へ", exact: true }).click();
   await page.getByLabel("タグで絞り込み").selectOption("");
@@ -237,7 +243,7 @@ test("failed tag persistence keeps original tags and preserves a retryable draft
     "自動判定：技術・開発",
   );
   await expect(
-    page.getByLabel("タグを編集（カンマ区切り）", { exact: true }),
+    page.getByLabel("自分のタグを編集（カンマ区切り）", { exact: true }),
   ).toHaveValue("失敗");
   await page.evaluate(() =>
     (window as unknown as { restorePut: () => void }).restorePut(),
@@ -247,7 +253,7 @@ test("failed tag persistence keeps original tags and preserves a retryable draft
     .getByRole("button", { name: "再試行", exact: true })
     .click();
   await expect(page.locator(".rss-tag-summary")).toContainText(
-    "手動設定：失敗",
+    "自分のタグ：失敗",
   );
 });
 

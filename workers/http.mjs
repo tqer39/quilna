@@ -16,7 +16,7 @@ export function json(status, value) {
     },
   });
 }
-export async function readBody(request) {
+export async function readBody(request, limit = 32768) {
   if (
     request.headers.get("Content-Type") !== "application/json" ||
     !request.body
@@ -31,7 +31,7 @@ export async function readBody(request) {
       const { value, done } = await reader.read();
       if (done) break;
       size += value.byteLength;
-      if (size > 32768) throw Error("body-limit");
+      if (size > limit) throw Error("body-limit");
       text += decoder.decode(value, { stream: true });
     }
     text += decoder.decode();
@@ -41,7 +41,12 @@ export async function readBody(request) {
     reader.releaseLock();
   }
 }
-/** Production entry supplies no authenticator; only a separately bundled test entry injects a principal. */
+/**
+ * Build the API router with origin, principal and account-binding checks.
+ * Document admin POSTs recheck identity before dispatch and after processing;
+ * the account command enforces CSRF. Without an authenticator, API requests fail
+ * closed; the production auth wrapper and isolated test entries inject one.
+ */
 export function createHandler({
   authenticate = null,
   credentialsEnabled = false,
@@ -73,6 +78,68 @@ export function createHandler({
       if (!verified.success) return json(401, { status: "unauthenticated" });
       const owner = await hash(verified.data.subject);
       const stub = env.ACCOUNTS.get(env.ACCOUNTS.idFromName(owner));
+      if (url.pathname.startsWith("/api/documents/")) {
+        const action = url.pathname.slice("/api/documents/".length);
+        const admin = action.startsWith("admin-");
+        const status = ["status", "admin-status"].includes(action);
+        if (
+          !(status && request.method === "GET") &&
+          !(
+            request.method === "POST" &&
+            [
+              "acquire",
+              "read",
+              "history",
+              "admin-list",
+              "admin-read",
+              "admin-history",
+              "admin-revision",
+              "admin-create",
+              "admin-update",
+            ].includes(action)
+          )
+        )
+          return json(404, { status: "not-found" });
+        const expected = request.headers.get("X-Document-Account");
+        if (
+          admin && !status ? expected !== owner : expected && expected !== owner
+        )
+          return json(403, { status: "document-account-changed" });
+        const data = status
+          ? null
+          : await readBody(request, admin ? 262144 : 32768);
+        if (admin && !status) {
+          const before = principal.safeParse(await authenticate(request));
+          if (
+            !before.success ||
+            before.data.subject !== verified.data.subject ||
+            before.data.sessionId !== verified.data.sessionId
+          )
+            return json(401, { status: "unauthenticated" });
+        }
+        const result = await stub.fetch(
+          new Request("https://account.internal/command", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: `document-${action}`,
+              principal: verified.data,
+              csrf: request.headers.get("X-CSRF-Token"),
+              data,
+            }),
+          }),
+        );
+        const current = principal.safeParse(await authenticate(request));
+        if (
+          !current.success ||
+          current.data.subject !== verified.data.subject ||
+          current.data.sessionId !== verified.data.sessionId
+        ) {
+          await result.body?.cancel();
+          return json(401, { status: "unauthenticated" });
+        }
+        return result;
+      }
       if (url.pathname === "/api/feeds/fetch" && request.method === "POST") {
         const data = await readBody(request);
         return stub.fetch(
@@ -185,7 +252,7 @@ export function createHandler({
     }
   };
 }
-export async function handleAccount(core, request, collector) {
+export async function handleAccount(core, request, collector, documents) {
   try {
     const command = await readBody(request);
     // Internal binding only. No browser-selected owner or credential handles.
@@ -199,8 +266,18 @@ export async function handleAccount(core, request, collector) {
         "collection-status",
         "collection-snapshot",
         "feed-fetch",
+        "document-status",
+        "document-admin-status",
       ].includes(command.action),
     );
+    if (command.action?.startsWith("document-")) {
+      if (!documents) return json(503, { status: "document-unconfigured" });
+      return documents.handle(
+        owner,
+        command.action.slice("document-".length),
+        command.data,
+      );
+    }
     if (command.action === "feed-fetch") {
       if (!collector) throw Error("collection-unconfigured");
       return json(200, await collector.source(command.data));

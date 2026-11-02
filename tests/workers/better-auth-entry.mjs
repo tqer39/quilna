@@ -1,6 +1,6 @@
 // Test-only entry. Uses real Better Auth/Google verification with offline mock endpoints in Miniflare.
 import { createAuthBridge } from "../../workers/better-auth.mjs";
-export { AccountVault } from "../../workers/index.mjs";
+export { AccountVault, SourceDocument } from "../../workers/index.mjs";
 export default {
   fetch(request, env) {
     return createAuthBridge(env, {

@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { hash } from "./crypto.mjs";
 import { cloudFeedURL, fetchCloudFeed } from "./feed-fetch.mjs";
+import { validSourceValidators } from "../src/http-validators.mjs";
 
 const integer = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const feedSchema = z
@@ -128,21 +129,32 @@ export class FeedCollector {
   async source(input) {
     if (!this.enabled) throw Error("collection-unconfigured");
     const request = z
-      .object({ url: z.string().max(2048), discover: z.boolean().optional() })
+      .object({
+        url: z.string().max(2048),
+        discover: z.boolean().optional(),
+        icon: z.boolean().optional(),
+        validators: z.custom(validSourceValidators).optional(),
+      })
       .strict()
       .parse(input);
     cloudFeedURL(request.url, this.blockedHosts);
     await this.storage.transaction(async (tx) => {
-      const recent = ((await tx.get("rss:requests")) ?? []).filter(
+      const key = request.icon ? "rss:icon-requests" : "rss:requests";
+      const recent = ((await tx.get(key)) ?? []).filter(
         (time) => time > this.now() - 60_000,
       );
-      if (recent.length >= 20) throw Error("rate-limit");
-      await tx.put("rss:requests", [...recent, this.now()]);
+      if (recent.length >= (request.icon ? 8 : 20)) throw Error("rate-limit");
+      await tx.put(key, [...recent, this.now()]);
     });
-    return fetchCloudFeed(request.url, {
-      blockedHosts: this.blockedHosts,
-      allowHTML: request.discover === true,
-    });
+    return fetchCloudFeed(
+      request.icon ? new URL("/favicon.ico", request.url).href : request.url,
+      {
+        blockedHosts: this.blockedHosts,
+        allowHTML: request.discover === true,
+        allowIcon: request.icon === true,
+        validators: request.validators,
+      },
+    );
   }
   async configure(input) {
     if (!this.enabled) throw Error("collection-unconfigured");

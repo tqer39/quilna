@@ -171,6 +171,7 @@ test("the selected web job retains functional and 200ms search gates plus failur
   const steps = checks.split(/(?=^ {6}- )/m).slice(1);
   for (const command of [
     "npm run test:browser",
+    "npm run test:reader-runtime",
     "npm run test:search-performance",
   ]) {
     const matching = steps.filter((step) =>

@@ -17,6 +17,8 @@ export default ts.config(
       "tests/server/**/*.mjs",
       "workers/**/*.mjs",
       "tests/workers/**/*.mjs",
+      "tests/fixtures/**/*.mjs",
+      "tests/runtime/**/*.mjs",
       "scripts/**/*.mjs",
     ],
     languageOptions: {

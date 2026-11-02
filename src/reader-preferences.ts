@@ -8,6 +8,19 @@ export const readerLanguages = [
   ["es", "スペイン語"],
   ["pt", "ポルトガル語"],
 ] as const;
+export const readerLocales = [
+  ["ja-JP", "日本語（日本）"],
+  ["en-US", "英語（米国）"],
+  ["en-GB", "英語（英国）"],
+  ["zh-CN", "中国語（中国）"],
+  ["zh-TW", "中国語（台湾）"],
+  ["ko-KR", "韓国語（韓国）"],
+  ["fr-FR", "フランス語（フランス）"],
+  ["de-DE", "ドイツ語（ドイツ）"],
+  ["es-ES", "スペイン語（スペイン）"],
+  ["pt-BR", "ポルトガル語（ブラジル）"],
+  ["pt-PT", "ポルトガル語（ポルトガル）"],
+] as const;
 export const readerPreferencesKey = "quilna.reader.preferences.v1";
 export type ReaderPreferences = { targetLanguage: string; automatic: boolean };
 export function languageName(code: string): string {
@@ -18,7 +31,7 @@ export function articleLanguage(language: string | undefined): string {
   return readerLanguages.some(([code]) => code === base) ? base! : "";
 }
 export function readReaderPreferences(): ReaderPreferences {
-  const fallback = { targetLanguage: "ja", automatic: false };
+  const fallback = { targetLanguage: "browser", automatic: false };
   try {
     const saved = JSON.parse(
       localStorage.getItem(readerPreferencesKey) ?? "null",
@@ -26,7 +39,8 @@ export function readReaderPreferences(): ReaderPreferences {
     if (
       !saved ||
       (saved.targetLanguage !== "browser" &&
-        !readerLanguages.some(([code]) => code === saved.targetLanguage)) ||
+        !readerLanguages.some(([code]) => code === saved.targetLanguage) &&
+        !readerLocales.some(([code]) => code === saved.targetLanguage)) ||
       typeof saved.automatic !== "boolean"
     )
       return fallback;
@@ -38,10 +52,26 @@ export function readReaderPreferences(): ReaderPreferences {
 
 export function browserTargetLanguage(): string {
   // Respect the first browser preference; do not silently use a different language.
-  return articleLanguage(navigator.languages[0] || navigator.language);
+  return articleLanguage(browserLocale());
+}
+export function browserLocale(): string {
+  return navigator.languages?.[0] || navigator.language || "";
+}
+export function localeFor(preferences: ReaderPreferences): string {
+  return preferences.targetLanguage === "browser"
+    ? browserLocale()
+    : preferences.targetLanguage;
 }
 export function targetLanguageFor(preferences: ReaderPreferences): string {
-  return preferences.targetLanguage === "browser"
-    ? browserTargetLanguage()
-    : preferences.targetLanguage;
+  return articleLanguage(localeFor(preferences));
+}
+export function speechLocaleFor(
+  preferences: ReaderPreferences,
+  displayedLanguage: string,
+): string {
+  if (!displayedLanguage) return "";
+  const locale = localeFor(preferences);
+  return articleLanguage(locale) === displayedLanguage
+    ? locale
+    : displayedLanguage;
 }

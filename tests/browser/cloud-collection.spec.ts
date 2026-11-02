@@ -65,10 +65,67 @@ async function seed(page: Page, feedAddress = address) {
     { address: feedAddress, time },
   );
 }
+test("cloud success time advances without a new snapshot and survives a later fetch failure", async ({
+  page,
+}) => {
+  const state = initial();
+  state.interval = 15;
+  state.feeds = [
+    { url: address, nextAt: time, lastSuccess: null, failures: 0, error: "" },
+  ];
+  await page.route("**/api/collection", (route) =>
+    route.fulfill({ json: state }),
+  );
+  await seed(page);
+  await page.reload();
+  const source = page.locator(".rss-feed-state");
+  await expect(source).toContainText("クラウドの取得はまだ成功していません");
+  const localTime = await source
+    .getByText(/^ブラウザ内の最終取得 /)
+    .textContent();
+  await page.getByRole("button", { name: "設定", exact: true }).click();
+  state.feeds[0].lastSuccess = time + 15 * 60_000;
+  state.feeds[0].nextAt = time + 30 * 60_000;
+  await page
+    .getByRole("button", {
+      name: "クラウドの状態確認・記事を取り込む",
+      exact: true,
+    })
+    .click();
+  await page.getByRole("button", { name: "閉じる", exact: true }).click();
+  const success = source.locator("time");
+  await expect(success).toHaveAttribute(
+    "datetime",
+    new Date(time + 15 * 60_000).toISOString(),
+  );
+  await expect(source).toContainText(localTime!);
+  await expect(
+    page.getByRole("button", { name: "Newer local article", exact: true }),
+  ).toBeVisible();
+
+  state.feeds[0].error = "feed-fetch-failed";
+  state.feeds[0].failures = 1;
+  await page.getByRole("button", { name: "設定", exact: true }).click();
+  await page
+    .getByRole("button", {
+      name: "クラウドの状態確認・記事を取り込む",
+      exact: true,
+    })
+    .click();
+  await page.getByRole("button", { name: "閉じる", exact: true }).click();
+  await expect(source).toContainText("クラウドで取得できませんでした");
+  await expect(success).toHaveAttribute(
+    "datetime",
+    new Date(time + 15 * 60_000).toISOString(),
+  );
+});
 test("cloud results import after reopening, preserve newer local content and tolerate a lost acknowledgement", async ({
   page,
 }) => {
   const state = initial();
+  // Cloud collection is active during seeding too: the initial page may read
+  // the seeded, overdue feed before its asynchronous startup has completed.
+  state.interval = 15;
   let loseAck = true,
     acknowledgements = 0;
   let foregroundRequests = 0;
@@ -100,7 +157,6 @@ test("cloud results import after reopening, preserve newer local content and tol
     return route.fulfill({ json: state });
   });
   await seed(page);
-  state.interval = 15;
   state.pending = [
     {
       id: snapshotId,
@@ -335,6 +391,11 @@ test("a malformed snapshot stays recoverable without blocking healthy articles; 
     return route.fulfill({ json: state });
   });
   await seed(page);
+  // Finish the seed page's initial check before publishing pending fixtures.
+  // Otherwise its canceled request can be counted across the following reload.
+  await expect(page.locator("#rss-cloud-status")).toContainText(
+    "クラウド収集は停止中。未取り込みの取得結果：0件",
+  );
   state.interval = 30;
   state.pending = [snapshotId, goodId].map((id) => ({
     id,
@@ -447,6 +508,11 @@ test("five malformed snapshots do not starve the next batch, and a concurrently 
     return route.fulfill({ json: state });
   });
   await seed(page);
+  // The seed page must finish its empty check before we publish the next queue.
+  // CI observed its cancelled first read being counted again after reload.
+  await expect(page.locator("#rss-cloud-status")).toContainText(
+    "クラウド収集は停止中。未取り込みの取得結果：0件",
+  );
   state.interval = 30;
   state.pending = ids.map((id) => ({
     id,

@@ -1,8 +1,12 @@
 import { test, expect, type Page } from "@playwright/test";
+import type { FeedArticle } from "../../src/feed-parser";
 const url = "https://publisher.example.org/story";
 const paragraph =
   "This is the complete article about learning from original sources. It explains the research, its limitations, and why preserving evidence matters to a reader. ";
 const html = `<!doctype html><html lang="en"><head><title>Collected article</title></head><body><nav>Navigation junk</nav><article><h1>Collected article</h1><p>${paragraph.repeat(5)}</p><h2>Second section</h2><p>Final paragraph. ${paragraph.repeat(4)}</p></article><img src="https://tracker.example.org/pixel"><script>window.articleExecuted = true</script><iframe src="https://tracker.example.org/frame"></iframe></body></html>`;
+const codeExample =
+  'function deleteAlarm() {\n  const tag = "<img onerror=alert(1)>";\n\n\treturn tag;\n}';
+const codeHTML = `<!doctype html><html lang="en"><head><title>Collected article</title></head><body><article><h1>Collected article</h1><p>${paragraph.repeat(5)}</p><p>Call <code>deleteAlarm()</code> to cancel the scheduled work.</p><pre><code>${codeExample.replaceAll("<", "&lt;").replaceAll(">", "&gt;")}</code></pre><p>Final paragraph. ${paragraph.repeat(4)}</p></article></body></html>`;
 async function source(page: Page, fail = false) {
   await page.route("**/api/feeds/fetch", (route) =>
     route.fulfill(
@@ -88,6 +92,9 @@ test("failed extraction preserves a saved link and retry recovers without duplic
   await expect(page.locator(".rss-article-body")).toContainText(
     "Final paragraph.",
   );
+  await page
+    .getByRole("button", { name: "収集メニューを表示", exact: true })
+    .click();
   await expect(
     page.getByRole("button", { name: /保存した記事 · 1/ }),
   ).toBeVisible();
@@ -137,6 +144,100 @@ async function translator(page: Page, delayed = false) {
     { delayed },
   );
 }
+test("code survives import, translation and offline reopen without reaching the translator", async ({
+  page,
+  context,
+}) => {
+  await context.grantPermissions(["clipboard-read", "clipboard-write"]);
+  await translator(page);
+  await page.route("**/api/feeds/fetch", (route) =>
+    route.fulfill({ json: { url, html: codeHTML } }),
+  );
+  await add(page);
+  const code = page.locator(".rss-article-body pre code");
+  await expect(code.locator(".hljs-keyword").first()).toBeVisible();
+  await expect(code).toHaveText(codeExample, { useInnerText: false });
+  expect(await code.textContent()).toBe(codeExample);
+  await page.getByRole("button", { name: "コードをコピー" }).click();
+  await expect(page.locator(".rss-code-tools").getByRole("status")).toHaveText(
+    "コピーしました",
+  );
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    codeExample,
+  );
+  await expect(page.locator(".rss-article-body p code")).toHaveText(
+    "deleteAlarm()",
+  );
+  await expect(page.locator(".rss-article-body img")).toHaveCount(0);
+  await page.getByRole("button", { name: "日本語に翻訳", exact: true }).click();
+  await expect(
+    page.getByText(
+      "日本語訳を保存しました。機械翻訳のため原文も確認してください。",
+      { exact: true },
+    ),
+  ).toBeVisible();
+  expect(await code.textContent()).toBe(codeExample);
+  await page.getByRole("button", { name: "コードをコピー" }).click();
+  await expect(page.locator(".rss-code-tools").getByRole("status")).toHaveText(
+    "コピーしました",
+  );
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    codeExample,
+  );
+  await expect(page.locator(".rss-article-body p code")).toHaveText(
+    "deleteAlarm()",
+  );
+  expect(
+    await page.evaluate(() =>
+      (
+        window as unknown as { translationCalls: string[] }
+      ).translationCalls.join("\n"),
+    ),
+  ).not.toMatch(/deleteAlarm|onerror|return tag/);
+  await source(page, true);
+  await reopen(page);
+  expect(await code.textContent()).toBe(codeExample);
+  await page.getByRole("button", { name: "コードをコピー" }).click();
+  await expect(page.locator(".rss-code-tools").getByRole("status")).toHaveText(
+    "コピーしました",
+  );
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    codeExample,
+  );
+  await page
+    .getByRole("button", { name: "日本語訳を読む", exact: true })
+    .click();
+  expect(await code.textContent()).toBe(codeExample);
+  await page.getByRole("button", { name: "コードをコピー" }).click();
+  await expect(page.locator(".rss-code-tools").getByRole("status")).toHaveText(
+    "コピーしました",
+  );
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe(
+    codeExample,
+  );
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollWidth <= innerWidth,
+    ),
+  ).toBe(true);
+  await expect(code.locator(".hljs-keyword").first()).toBeVisible();
+});
+test("code HTML line breaks remain literal newlines including consecutive br elements", async ({
+  page,
+}) => {
+  const withBreaks = codeHTML.replaceAll("\n", "<br>");
+  await page.route("**/api/feeds/fetch", (route) =>
+    route.fulfill({ json: { url, html: withBreaks } }),
+  );
+  await add(page);
+  await expect(page.locator(".rss-article-body pre code")).toHaveText(
+    codeExample,
+    { useInnerText: false },
+  );
+  expect(await page.locator(".rss-article-body pre code").textContent()).toBe(
+    codeExample,
+  );
+});
 test("translation is explicit, persists separately and original is retained", async ({
   page,
 }) => {
@@ -168,6 +269,170 @@ test("translation is explicit, persists separately and original is retained", as
   await expect(page.locator(".rss-article-body")).toContainText(
     "原文から翻訳した日本語",
   );
+});
+
+for (const changed of [false, true]) {
+  test(`legacy code formatting upgrade ${changed ? "refuses changed source without losing saved values" : "preserves flags and survives reload"}`, async ({
+    page,
+  }) => {
+    await page.route("**/api/feeds/fetch", (route) =>
+      route.fulfill({ json: { url, html: codeHTML } }),
+    );
+    await add(page);
+    await expect(page.locator(".rss-article-body pre code")).toHaveText(
+      codeExample,
+    );
+    const before = await page.evaluate(async () => {
+      const db = await new Promise<IDBDatabase>((resolve) => {
+        const r = indexedDB.open("tsumiki.rss.v1");
+        r.onsuccess = () => resolve(r.result);
+      });
+      return await new Promise<string>((resolve, reject) => {
+        const tx = db.transaction("articles", "readwrite");
+        const store = tx.objectStore("articles");
+        const all = store.getAll();
+        let saved = "";
+        all.onsuccess = () => {
+          const article = all.result[0];
+          delete article.content.codeRanges;
+          article.content.text = article.content.text
+            .replace(/[^\S\n]+/g, " ")
+            .replace(/\n\s*\n/g, "\n\n")
+            .trim();
+          article.translation = {
+            text: "以前の保存訳",
+            sourceText: article.content.text,
+            sourceLanguage: "en",
+            targetLanguage: "ja",
+          };
+          store.put(article);
+          saved = JSON.stringify(article);
+        };
+        tx.oncomplete = () => {
+          db.close();
+          resolve(saved);
+        };
+        tx.onerror = () => reject(tx.error);
+      });
+    });
+    await reopen(page);
+    await expect(
+      page.getByRole("button", { name: "コードの書式を取り直す", exact: true }),
+    ).toBeVisible();
+    if (changed)
+      await page.route("**/api/feeds/fetch", (route) =>
+        route.fulfill({
+          json: {
+            url,
+            html: codeHTML.replace(
+              "Final paragraph.",
+              "Changed source paragraph.",
+            ),
+          },
+        }),
+      );
+    await page
+      .getByRole("button", { name: "コードの書式を取り直す", exact: true })
+      .click();
+    if (changed) {
+      await expect(page.locator(".rss-error")).toContainText(
+        "以前の内容は保持しています",
+      );
+      const after = await page.evaluate(async () => {
+        const db = await new Promise<IDBDatabase>((resolve) => {
+          const r = indexedDB.open("tsumiki.rss.v1");
+          r.onsuccess = () => resolve(r.result);
+        });
+        return await new Promise<string>((resolve) => {
+          const tx = db.transaction("articles", "readonly");
+          const r = tx.objectStore("articles").getAll();
+          tx.oncomplete = () => {
+            db.close();
+            resolve(JSON.stringify(r.result[0]));
+          };
+        });
+      });
+      expect(after).toBe(before);
+      await page
+        .getByRole("button", { name: "日本語訳を読む", exact: true })
+        .click();
+      await expect(page.locator(".rss-article-body")).toContainText(
+        "以前の保存訳",
+      );
+    } else {
+      await expect(page.locator(".rss-article-body pre code")).toHaveText(
+        codeExample,
+      );
+      expect(
+        await page.locator(".rss-article-body pre code").textContent(),
+      ).toBe(codeExample);
+      await expect(
+        page.getByRole("button", { name: "日本語訳を読む", exact: true }),
+      ).toHaveCount(0);
+      await source(page, true);
+      await reopen(page);
+      expect(
+        await page.locator(".rss-article-body pre code").textContent(),
+      ).toBe(codeExample);
+      await expect(page.locator("#rss-save-article")).toHaveAttribute(
+        "aria-pressed",
+        "true",
+      );
+    }
+  });
+}
+
+test("invalid saved code ranges report an error and retain the stored record", async ({
+  page,
+}) => {
+  await source(page);
+  await add(page);
+  await expect(page.locator(".rss-article-body")).toContainText(
+    "Final paragraph.",
+  );
+  await page.evaluate(async () => {
+    const db = await new Promise<IDBDatabase>((resolve) => {
+      const r = indexedDB.open("tsumiki.rss.v1");
+      r.onsuccess = () => resolve(r.result);
+    });
+    await new Promise<void>((resolve) => {
+      const tx = db.transaction("articles", "readwrite");
+      const store = tx.objectStore("articles");
+      const r = store.getAll();
+      r.onsuccess = () =>
+        store.put({
+          ...r.result[0],
+          content: {
+            ...r.result[0].content,
+            codeRanges: [{ start: -1, end: 2, block: true }],
+          },
+        });
+      tx.oncomplete = () => {
+        db.close();
+        resolve();
+      };
+    });
+  });
+  await page.reload();
+  await expect(page.locator(".rss-error")).toContainText(
+    "保存データの形式を確認できませんでした。データは削除していません",
+  );
+  expect(
+    await page.evaluate(async () => {
+      const db = await new Promise<IDBDatabase>((resolve) => {
+        const r = indexedDB.open("tsumiki.rss.v1");
+        r.onsuccess = () => resolve(r.result);
+      });
+      return await new Promise<number>((resolve) => {
+        const tx = db.transaction("articles", "readonly");
+        const r = tx.objectStore("articles").count();
+        tx.oncomplete = () => {
+          db.close();
+          resolve(r.result);
+        };
+      });
+    }),
+  ).toBe(1);
 });
 test("unsupported translation is disclosed without sending text externally", async ({
   page,
@@ -416,6 +681,8 @@ test("failed content persistence is visible and retry saves the full text", asyn
 }) => {
   let release: (() => void) | undefined;
   await page.route("**/api/feeds/fetch", async (route) => {
+    if (route.request().postDataJSON().icon === true)
+      return route.fulfill({ status: 404, json: {} });
     await new Promise<void>((resolve) => {
       release = resolve;
     });
@@ -558,8 +825,33 @@ test("late import preserves current article and concurrent saved flags", async (
     },
     { firstId },
   );
+  // Expire the reusable source so this test still exercises an in-flight network result.
+  await page.evaluate(async () => {
+    const path = "/src/source-document-store.ts",
+      api = await import(path);
+    const db = await api.openDocuments();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction("documents", "readwrite"),
+        store = tx.objectStore("documents"),
+        cursor = store.openCursor();
+      cursor.onsuccess = () => {
+        if (cursor.result) {
+          cursor.result.update({
+            ...cursor.result.value,
+            checkedAt: "2020-01-01T00:00:00Z",
+          });
+          cursor.result.continue();
+        }
+      };
+      tx.oncomplete = () => resolve();
+      tx.onabort = () => reject(tx.error);
+    });
+    db.close();
+  });
   let release: (() => void) | undefined;
   await page.route("**/api/feeds/fetch", async (route) => {
+    if (route.request().postDataJSON().icon === true)
+      return route.fulfill({ status: 404, json: {} });
     await new Promise<void>((resolve) => {
       release = resolve;
     });
@@ -591,6 +883,9 @@ test("late import preserves current article and concurrent saved flags", async (
     });
   }, firstId);
   release!();
+  await page
+    .getByRole("button", { name: "収集メニューを表示", exact: true })
+    .click();
   await expect(
     page.getByRole("button", { name: /保存した記事 · 1/ }),
   ).toBeVisible();
@@ -637,7 +932,9 @@ test("automatic translation saves the target preference and reuses a matching sa
     "Final paragraph.",
   );
   await page.getByRole("button", { name: "設定", exact: true }).click();
-  await page.getByLabel("翻訳先の言語", { exact: true }).selectOption("fr");
+  await page
+    .getByLabel("ロケール（翻訳・読み上げ）", { exact: true })
+    .selectOption("fr");
   await page.getByLabel("記事を開いたら自動翻訳").check();
   await page.getByRole("button", { name: "閉じる", exact: true }).click();
   await expect(page.locator(".rss-article-body")).toContainText(
@@ -659,10 +956,12 @@ test("automatic translation saves the target preference and reuses a matching sa
     "Final paragraph.",
   );
   await page.getByRole("button", { name: "設定", exact: true }).click();
-  await expect(page.getByLabel("翻訳先の言語", { exact: true })).toHaveValue(
-    "fr",
-  );
-  await page.getByLabel("翻訳先の言語", { exact: true }).selectOption("en");
+  await expect(
+    page.getByLabel("ロケール（翻訳・読み上げ）", { exact: true }),
+  ).toHaveValue("fr");
+  await page
+    .getByLabel("ロケール（翻訳・読み上げ）", { exact: true })
+    .selectOption("en");
   await page.getByRole("button", { name: "閉じる", exact: true }).click();
   await expect(page.locator(".rss-article-body")).toContainText(
     "Final paragraph.",
@@ -731,7 +1030,13 @@ test("automatic translation does not guess missing source language or send text 
   );
   const requests: string[] = [];
   page.on("request", (request) => {
-    if (request.method() === "POST")
+    if (
+      request.method() === "POST" &&
+      !(
+        request.url().endsWith("/api/feeds/fetch") &&
+        request.postDataJSON().icon === true
+      )
+    )
       requests.push(new URL(request.url()).pathname);
   });
   await add(page);
@@ -874,7 +1179,7 @@ test("browser target follows the local language and reacts to a language change 
   );
   await page.getByRole("button", { name: "設定", exact: true }).click();
   await page
-    .getByLabel("翻訳先の言語", { exact: true })
+    .getByLabel("ロケール（翻訳・読み上げ）", { exact: true })
     .selectOption("browser");
   await page.getByLabel("記事を開いたら自動翻訳").check();
   await page.getByRole("button", { name: "閉じる", exact: true }).click();
@@ -1061,6 +1366,8 @@ test("a losing cross-tab import cannot replace the language of the saved origina
   );
   let release: (() => void) | undefined;
   await page.route("**/api/feeds/fetch", async (route) => {
+    if (route.request().postDataJSON().icon === true)
+      return route.fulfill({ status: 404, json: {} });
     await new Promise<void>((resolve) => {
       release = resolve;
     });
@@ -1080,12 +1387,21 @@ test("a losing cross-tab import cannot replace the language of the saved origina
   const other = await context.newPage();
   await source(other);
   await other.goto("/?view=feeds");
-  await other.getByRole("button", { name: url, exact: true }).click();
-  await other
-    .getByRole("button", { name: "本文の取得を再試行", exact: true })
-    .click();
-  await expect(other.locator(".rss-content-note")).toContainText(
-    "元サイトから取り込んだ本文です",
+  // The catalog coalesces network requests. A separate committed write (for
+  // example a restore or another client) must still win over the late response.
+  await other.evaluate(
+    async ({ url, html }) => {
+      const storePath = "/src/feed-store.ts",
+        contentPath = "/src/article-content.ts";
+      const api = await import(storePath),
+        content = (await import(contentPath)).extractArticle(html, url),
+        db = await api.openFeedLibrary();
+      const id = JSON.stringify(["article", url]),
+        current = await api.readArticle(db, id);
+      await api.updateArticleContent(db, current, { content });
+      db.close();
+    },
+    { url, html },
   );
   release!();
   await expect(page.locator(".rss-content-note")).toContainText(
@@ -1101,4 +1417,194 @@ test("a losing cross-tab import cannot replace the language of the saved origina
     "en",
   );
   await other.close();
+});
+
+for (const design of ["Studio", "Editorial", "Focus"]) {
+  test(`${design} code syntax keeps contrast, exact selection and saved quote offsets`, async ({
+    page,
+  }, info) => {
+    await page.addInitScript((design) => {
+      localStorage.setItem("quilna.reader.design.v1", design.toLowerCase());
+      localStorage.setItem("quilna.feed.refresh.v1", "0");
+    }, design);
+    const sample =
+      "// Preserve 😀, whitespace and literal markup\n" +
+      codeExample +
+      "\nconst count = 42;\n";
+    const escaped = sample
+      .replaceAll("&", "&amp;")
+      .replaceAll("<", "&lt;")
+      .replaceAll(">", "&gt;");
+    await page.route("**/api/feeds/fetch", (route) =>
+      route.fulfill({
+        json: {
+          url,
+          html: codeHTML.replace(
+            /<pre>[\s\S]*?<\/pre>/,
+            `<pre><code>${escaped}</code></pre>`,
+          ),
+        },
+      }),
+    );
+    await add(page);
+    const code = page.locator(".rss-article-body pre code");
+    await expect(code.locator(".hljs-keyword").first()).toBeVisible();
+    expect(await code.textContent()).toBe(sample);
+    const colors = await code.evaluate((node) => {
+      const luminance = (color: string) => {
+        const channels = color
+          .match(/[\d.]+/g)!
+          .slice(0, 3)
+          .map(Number)
+          .map((v) => {
+            const s = v / 255;
+            return s <= 0.04045 ? s / 12.92 : ((s + 0.055) / 1.055) ** 2.4;
+          });
+        return (
+          channels[0] * 0.2126 + channels[1] * 0.7152 + channels[2] * 0.0722
+        );
+      };
+      return Array.from(node.querySelectorAll("span")).map((span) => {
+        const color = getComputedStyle(span).color;
+        const fg = luminance(color);
+        let parent: Element | null = span;
+        let background = "rgba(0, 0, 0, 0)";
+        while (parent && background === "rgba(0, 0, 0, 0)") {
+          background = getComputedStyle(parent).backgroundColor;
+          parent = parent.parentElement;
+        }
+        const bg = luminance(background);
+        return {
+          color,
+          contrast: (Math.max(bg, fg) + 0.05) / (Math.min(bg, fg) + 0.05),
+        };
+      });
+    });
+    expect(new Set(colors.map((c) => c.color)).size).toBeGreaterThanOrEqual(4);
+    for (const c of colors) expect(c.contrast).toBeGreaterThanOrEqual(4.5);
+    if (info.project.name === "mobile")
+      await page.setViewportSize({ width: 320, height: 844 });
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+    await code.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: info.outputPath(`syntax-${design}.png`) });
+    await expect(
+      page.getByRole("button", {
+        name: "引用の候補を探す",
+        exact: true,
+        includeHidden: true,
+      }),
+    ).toBeEnabled();
+    await reopen(page);
+    await expect(
+      page.getByRole("button", {
+        name: "引用の候補を探す",
+        exact: true,
+        includeHidden: true,
+      }),
+    ).toBeEnabled();
+    const selected = await code.evaluate((node) => {
+      const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+      const nodes: Text[] = [];
+      for (let n = walker.nextNode(); n; n = walker.nextNode())
+        nodes.push(n as Text);
+      const range = document.createRange();
+      range.setStart(nodes[0], 0);
+      range.setEnd(nodes.at(-1)!, nodes.at(-1)!.length);
+      const selection = getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+      document.dispatchEvent(new Event("selectionchange"));
+      return range.toString();
+    });
+    expect(selected).toBe(sample);
+    await page
+      .getByRole("button", { name: "選択範囲をハイライト", exact: true })
+      .click();
+    await page
+      .getByRole("button", { name: "ハイライトを保存", exact: true })
+      .click();
+    await expect(page.locator("#rss-highlights summary")).toHaveText(
+      "ハイライト・メモ（1）",
+    );
+    expect(await code.textContent()).toBe(sample);
+    expect(await code.locator("mark").allTextContents()).not.toHaveLength(0);
+    const saved = await page.evaluate(async () => {
+      const path = "/src/feed-store.ts";
+      const db = await (await import(path)).openFeedLibrary();
+      const articles = await new Promise<FeedArticle[]>((resolve, reject) => {
+        const req = db.transaction("articles").objectStore("articles").getAll();
+        req.onsuccess = () => resolve(req.result);
+        req.onerror = () => reject(req.error);
+      });
+      db.close();
+      const highlightsPath = "/src/article-highlights.ts";
+      const records = await (
+        await import(highlightsPath)
+      ).readHighlights(articles[0].id);
+      return { text: articles[0].content!.text, record: records[0] };
+    });
+    expect(saved.record.quote).toBe(sample);
+    expect(saved.text.slice(saved.record.start, saved.record.end)).toBe(sample);
+    await reopen(page);
+    expect(await code.textContent()).toBe(sample);
+    await expect(code.locator(".hljs-keyword").first()).toBeVisible();
+    expect((await code.locator("mark").allTextContents()).join("")).toBe(
+      sample,
+    );
+  });
+}
+
+test("syntax rendering preserves literal text and safely falls back for large and unknown blocks", async ({
+  page,
+}) => {
+  await page.goto("/?view=feeds");
+  const results = await page.evaluate(async () => {
+    const path = "/src/article-code.ts";
+    const { appendArticleText } = await import(path);
+    const samples = [
+      'def greet(name):\n    # 日本語😀\n    return "Hello " + name\n',
+      '{"enabled":true,"count":42,"label":"<script>alert(1)</script>"}',
+      '<div class="card">hello &amp; world</div>',
+      'echo "Hello"\nexport NAME="reader"\n',
+      "ただの文章です。色を付けなくても読めます。",
+      "const value = 123;\n".repeat(1000),
+      "<img src=x onerror=alert(1)>\u0000\r\n",
+    ];
+    return samples.map((text) => {
+      const parent = document.createElement("div");
+      const offsets: { text: string; start: number }[] = [];
+      appendArticleText(
+        parent,
+        text,
+        [{ start: 0, end: text.length, block: true }],
+        (value: string, start: number) => {
+          offsets.push({ text: value, start });
+          return document.createTextNode(value);
+        },
+      );
+      return {
+        exact: parent.textContent === text,
+        offsetsValid: offsets.every(
+          (x) => text.slice(x.start, x.start + x.text.length) === x.text,
+        ),
+        colored: !!parent.querySelector("span"),
+        unsafe: !!parent.querySelector("img,script,iframe,svg"),
+        markup: parent.querySelectorAll("[onerror],[onclick]").length,
+      };
+    });
+  });
+  for (const result of results)
+    expect(result).toMatchObject({
+      exact: true,
+      offsetsValid: true,
+      unsafe: false,
+      markup: 0,
+    });
+  for (const result of results.slice(0, 4)) expect(result.colored).toBe(true);
+  expect(results[4].colored).toBe(false);
+  expect(results[5].colored).toBe(false);
 });
