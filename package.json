@@ -16,24 +16,30 @@
     "workers:build": "node scripts/build-worker.mjs",
     "test:workers": "node --test tests/workers/*.test.mjs",
     "workers:local": "npm run build && node scripts/workers-local.mjs",
-    "security:check": "node scripts/check-security.mjs",
-    "security:audit": "npm run security:check && npm audit --include=dev --audit-level=low"
+    "security:check": "node scripts/check-security.mjs && node scripts/check-worker-config.mjs",
+    "security:audit": "npm run security:check && npm audit --include=dev --audit-level=low",
+    "test:search-performance": "playwright test --config playwright.search.config.ts",
+    "check:browser": "npm run lint && npm test && npm run build && npm run test:browser && npm run test:reader-runtime && npm run test:search-performance",
+    "test:reader-runtime": "npm run build && playwright test --config playwright.runtime.config.ts"
   },
   "dependencies": {
+    "@mozilla/readability": "^0.6.0",
     "better-auth": "1.7.7",
+    "highlight.js": "11.12.0",
     "jose": "^6.2.12",
+    "linkedom": "0.18.14",
     "zod": "^4.6.7"
   },
   "devDependencies": {
     "@eslint/js": "^9.0.0",
     "@playwright/test": "^1.55.0",
     "esbuild": "^0.28.2",
-    "eslint": "^9.0.0",
+    "eslint": "^10.14.0",
     "markdownlint-cli2": "^0.23.3",
     "miniflare": "^5.20261006.1-alpha",
     "prettier": "^3.9.9",
     "typescript": "^5.9.0",
-    "typescript-eslint": "^8.0.0",
+    "typescript-eslint": "^8.72.1",
     "vite": "^7.1.0",
     "vitest": "^5.0.3",
     "wrangler": "^4.149.0"
@@ -50,7 +56,8 @@
         }
       },
       "markdown-it": "15.0.3"
-    }
+    },
+    "minimatch@10": "11.0.3"
   },
   "engines": {
     "node": "^22.23.4 || ^24.22.1 || ^26.12.1"

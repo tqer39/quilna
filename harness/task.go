@@ -15,19 +15,20 @@ import (
 
 // Task is a trusted local specification, never a command supplied by a model.
 type Task struct {
-	Version         int      `json:"version"`
-	Name            string   `json:"name"`
-	Workspace       string   `json:"workspace"`
-	Goal            string   `json:"goal"`
-	Acceptance      []string `json:"acceptance"`
-	Implement       *Action  `json:"implement,omitempty"`
-	Checks          []Action `json:"checks"`
-	Review          Reviewer `json:"review"`
-	Repair          *Action  `json:"repair,omitempty"`
-	MaxRepairCycles int      `json:"maxRepairCycles"`
-	TimeoutSeconds  int      `json:"timeoutSeconds"`
-	LogLimitBytes   int      `json:"logLimitBytes"`
-	MaxOperations   int      `json:"maxOperations"`
+	ProtectedFiles  []FileSnapshot `json:"protectedFiles,omitempty"`
+	Version         int            `json:"version"`
+	Name            string         `json:"name"`
+	Workspace       string         `json:"workspace"`
+	Goal            string         `json:"goal"`
+	Acceptance      []string       `json:"acceptance"`
+	Implement       *Action        `json:"implement,omitempty"`
+	Checks          []Action       `json:"checks"`
+	Review          Reviewer       `json:"review"`
+	Repair          *Action        `json:"repair,omitempty"`
+	MaxRepairCycles int            `json:"maxRepairCycles"`
+	TimeoutSeconds  int            `json:"timeoutSeconds"`
+	LogLimitBytes   int            `json:"logLimitBytes"`
+	MaxOperations   int            `json:"maxOperations"`
 }
 
 type Action struct {
@@ -162,6 +163,9 @@ func validCommand(command []string) bool {
 }
 
 func (t Task) validate() error {
+	if err := validateSnapshots(t.ProtectedFiles); err != nil {
+		return err
+	}
 	if t.Version != 1 || !safeName.MatchString(t.Name) || !filepath.IsAbs(t.Workspace) || len(t.Goal) == 0 || len(t.Goal) > 8000 || len(t.Acceptance) == 0 || len(t.Acceptance) > 30 {
 		return errors.New("task-fields-invalid")
 	}

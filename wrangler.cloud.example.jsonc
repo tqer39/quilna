@@ -1,0 +1,32 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "quilna-private",
+  "account_id": "REPLACE_WITH_YOUR_ACCOUNT_ID",
+  "main": "workers/index.mjs",
+  "compatibility_date": "2026-10-11",
+  "compatibility_flags": ["global_fetch_strictly_public"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "assets": {
+    "directory": "dist",
+    "binding": "ASSETS",
+    "run_worker_first": true
+  },
+  "durable_objects": {
+    "bindings": [{ "name": "ACCOUNTS", "class_name": "AccountVault" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["AccountVault"] }],
+  "d1_databases": [{
+    "binding": "AUTH_DB",
+    "database_name": "quilna-private-auth",
+    "database_id": "00000000-0000-0000-0000-000000000000",
+    "migrations_dir": "migrations/auth"
+  }],
+  "vars": {
+    "APP_ORIGIN": "https://quilna-private.REPLACE_WITH_YOUR_SUBDOMAIN.workers.dev",
+    "GOOGLE_ALLOWED_EMAIL": "owner@example.invalid",
+    "PRIVATE_DEV": "true",
+    "RSS_COLLECTION_ENABLED": "true"
+  },
+  "observability": { "enabled": false }
+}

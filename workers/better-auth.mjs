@@ -1,3 +1,5 @@
+export const readerContentSecurityPolicy =
+  "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
 import { loginPage } from "./login-page.mjs";
 import { betterAuth } from "better-auth";
 import { verifyProviderIdToken } from "better-auth/oauth2";
@@ -425,10 +427,7 @@ export async function productionFetch(request, env) {
     headers.set("Cache-Control", "no-store");
     headers.set("Referrer-Policy", "no-referrer");
     headers.set("X-Content-Type-Options", "nosniff");
-    headers.set(
-      "Content-Security-Policy",
-      "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'",
-    );
+    headers.set("Content-Security-Policy", readerContentSecurityPolicy);
     if (
       headers.get("Content-Type")?.includes("text/html") &&
       request.method !== "HEAD" &&

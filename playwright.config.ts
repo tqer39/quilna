@@ -3,11 +3,16 @@ export default defineConfig({
   testDir: "tests/browser",
   workers: 2,
   outputDir: "test-results/chromium",
-  use: { baseURL: "http://127.0.0.1:5173", trace: "retain-on-failure" },
+  reporter: [["list"], ["json", { outputFile: "test-results/browser.json" }]],
+  use: {
+    baseURL: "http://127.0.0.1:5197",
+    locale: "ja-JP",
+    trace: "retain-on-failure",
+  },
   webServer: {
-    command: "npm run dev",
-    url: "http://127.0.0.1:5173",
-    reuseExistingServer: true,
+    command: "npm run dev -- --port 5197 --strictPort",
+    url: "http://127.0.0.1:5197",
+    reuseExistingServer: false,
   },
   projects: [
     { name: "desktop", use: { viewport: { width: 1440, height: 1000 } } },

@@ -122,10 +122,15 @@ test("feed fetch caps redirects, XML entities, output and total DNS/fetch durati
 
 test("local feed API is same-origin only, bounds JSON and never accepts arbitrary proxy options", async (t) => {
   const calls = [];
+  const discoveries = [];
   const middleware = feedMiddleware({
     fetchFeed: async (url) => {
       calls.push(url);
       return { xml: "<rss/>", url };
+    },
+    fetchSource: async (url) => {
+      discoveries.push(url);
+      return { html: "<!doctype html><title>A site</title>", url };
     },
   });
   const server = createServer((req, res) => {
@@ -175,4 +180,133 @@ test("local feed API is same-origin only, bounds JSON and never accepts arbitrar
     403,
   );
   assert.equal(calls.length, 1);
+  assert.equal(
+    (await post({ url: "https://publisher.example.org/", discover: true }))
+      .status,
+    200,
+  );
+  assert.deepEqual(discoveries, ["https://publisher.example.org/"]);
+  assert.equal(
+    (await post({ url: "https://127.0.0.1/private", discover: true })).status,
+    400,
+  );
+  assert.equal(
+    (
+      await post(
+        { url: "https://publisher.example.org/", discover: true },
+        { Origin: "https://evil.example.org" },
+      )
+    ).status,
+    403,
+  );
+  assert.equal(discoveries.length, 1);
+});
+
+test("HTML discovery keeps the feed transport DNS, redirect, size and deadline restrictions", async () => {
+  const resolve = async () => [{ address: "1.1.1.1", family: 4 }];
+  const html =
+    "<!DOCTYPE html><title>Blog</title><link rel='alternate' type='application/rss+xml' href='/feed/'>";
+  let count = 0;
+  const result = await fetchPublicFeed("https://publisher.example.org/story", {
+    allowHTML: true,
+    resolve,
+    send: async (url, address, signal, allowHTML) => {
+      assert.equal(allowHTML, true);
+      assert.equal(address.address, "1.1.1.1");
+      assert.equal(signal.aborted, false);
+      return ++count === 1 ? { redirect: "/blog/" } : { html };
+    },
+  });
+  assert.deepEqual(result, {
+    url: "https://publisher.example.org/blog/",
+    html,
+  });
+  await assert.rejects(
+    fetchPublicFeed("https://publisher.example.org/", {
+      resolve,
+      send: async () => ({ html }),
+    }),
+  );
+  await assert.rejects(
+    fetchPublicFeed("https://publisher.example.org/", {
+      allowHTML: true,
+      resolve,
+      send: async () => ({ html: "x".repeat(2_000_001) }),
+    }),
+    /feed-size/,
+  );
+  let sends = 0;
+  await assert.rejects(
+    fetchPublicFeed("https://publisher.example.org/", {
+      allowHTML: true,
+      resolve: async (host) => [
+        {
+          address: host === "private.example.org" ? "192.168.0.1" : "1.1.1.1",
+          family: 4,
+        },
+      ],
+      send: async () => {
+        sends++;
+        return { redirect: "https://private.example.org/" };
+      },
+    }),
+    /feed-address/,
+  );
+  assert.equal(sends, 1);
+  await assert.rejects(
+    fetchPublicFeed("https://publisher.example.org/", {
+      allowHTML: true,
+      resolve: () => new Promise(() => {}),
+      timeout: 20,
+    }),
+    /feed-timeout/,
+  );
+  await assert.rejects(
+    fetchPublicFeed("https://publisher.example.org/", {
+      allowHTML: true,
+      resolve,
+      send: async () => ({
+        xml: '<!DOCTYPE rss SYSTEM "https://example.org/entity"><rss/>',
+      }),
+    }),
+    /feed-xml/,
+  );
+});
+
+test("favicon requests retain DNS pinning and reject private redirects and incompatible modes", async () => {
+  const icon = "data:image/png;base64,iVBORw0KGgo=";
+  const result = await fetchPublicFeed("https://example.org/favicon.ico", {
+    allowIcon: true,
+    resolve: async () => [{ address: "1.1.1.1", family: 4 }],
+    send: async (_url, ip, _signal, html, validators, allowIcon) => {
+      assert.equal(ip.address, "1.1.1.1");
+      assert.equal(html, false);
+      assert.equal(validators, undefined);
+      assert.equal(allowIcon, true);
+      return { icon };
+    },
+  });
+  assert.equal(result.icon, icon);
+  await assert.rejects(
+    fetchPublicFeed("https://example.org/favicon.ico", {
+      allowIcon: true,
+      resolve: async (host) => [
+        {
+          address: host === "private.example.org" ? "127.0.0.1" : "1.1.1.1",
+          family: 4,
+        },
+      ],
+      send: async () => ({
+        redirect: "https://private.example.org/favicon.ico",
+      }),
+    }),
+    /feed-address/,
+  );
+  await assert.rejects(
+    fetchPublicFeed("https://example.org/favicon.ico", {
+      allowIcon: true,
+      allowHTML: true,
+    }),
+    /feed-validators/,
+  );
 });

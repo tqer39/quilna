@@ -1,4 +1,5 @@
 :root {
+  scrollbar-gutter: stable;
   font-family:
     system-ui,
     -apple-system,
@@ -1081,7 +1082,8 @@ header {
   padding-top: 24px;
   margin-bottom: 24px;
 }
-.rss-add input {
+.rss-add input,
+#rss-search {
   box-sizing: border-box;
   width: 100%;
   padding: 10px;
@@ -1092,9 +1094,48 @@ header {
   color: #20373c;
   font-size: 14px;
 }
+#rss-search {
+  display: block;
+  margin: 6px 0 16px;
+  font-size: 16px;
+}
 .rss-add button {
   width: 100%;
   margin-top: 10px;
+}
+.rss-add-hint {
+  color: #52666a;
+  font-size: 13px;
+  margin: 8px 0;
+}
+.rss-discovery {
+  padding: 24px;
+  margin-bottom: 32px;
+  border: 1px solid #849b96;
+  border-radius: 12px;
+  background: #fffefb;
+  overflow-wrap: anywhere;
+}
+.rss-discovery[hidden] {
+  display: none;
+}
+.rss-candidates {
+  list-style: none;
+  margin: 16px 0;
+  padding: 0;
+}
+.rss-candidates li {
+  border-top: 1px solid #d8ded8;
+  padding: 16px 0;
+}
+.rss-candidates h3 {
+  margin: 0;
+}
+.rss-candidates .muted {
+  font-size: 13px;
+}
+.rss-candidates button {
+  margin-top: 8px;
 }
 .rss-presets {
   margin-bottom: 24px;
@@ -1210,6 +1251,22 @@ header {
   white-space: pre-line;
   margin: 1.4em 0;
 }
+.rss-article-body code {
+  white-space: pre-wrap;
+  font-size: 0.9em;
+}
+.rss-article-body pre {
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 16px;
+  background: #eaf0eb;
+  border-radius: 6px;
+  line-height: 1.6;
+}
+.rss-article-body pre code {
+  white-space: pre;
+  overflow-wrap: normal;
+}
 .rss-content-note {
   font-size: 12px;
   color: #52666a;
@@ -1298,5 +1355,78 @@ header {
   .lesson-header {
     flex-wrap: wrap;
     gap: 8px;
+  }
+}
+
+.rss-reader-tools,
+.rss-translation-settings {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 1rem 0;
+  border-block: 1px solid var(--line, #d7ded9);
+  margin-block: 1rem;
+}
+.rss-reader-tools p,
+.rss-translation-settings p,
+.rss-translation-settings h3 {
+  flex-basis: 100%;
+  margin: 0;
+}
+.rss-reader-tools select,
+.rss-translation-settings select {
+  max-width: 100%;
+}
+.rss-article-body {
+  overflow-wrap: anywhere;
+}
+
+.rss-tag-editor {
+  border-top: 1px solid var(--line, #d7ded9);
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+}
+.rss-tag-editor h2 {
+  font-size: 1rem;
+  margin: 0;
+}
+.rss-tag-summary {
+  font-size: 0.85rem;
+  color: #365b59;
+  overflow-wrap: anywhere;
+}
+.rss-tag-editor summary {
+  cursor: pointer;
+  margin-block: 0.5rem;
+}
+.rss-tag-editor input {
+  width: 100%;
+  margin-block: 0.5rem;
+}
+.rss-tag-editor form {
+  margin-block: 1rem;
+}
+
+/* Keep the live region available, without empty reading chrome. */
+.save-status:empty {
+  padding: 0;
+  min-height: 0;
+}
+.reading-settings label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+}
+.reading-settings input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+}
+
+@supports not (scrollbar-gutter: stable) {
+  :root {
+    overflow-y: scroll;
   }
 }

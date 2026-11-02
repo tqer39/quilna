@@ -6,11 +6,14 @@ description: "Verify Quilna's article database and Japanese full-text search cor
 # Search Performance Validation
 
 Work from this checkout's Git root and follow [the repository instructions](../../../AGENTS.md).
-Read **The 100 ms database-read budget**, **The 100 ms full-text search gate**, and **Storage and search engine selection** in [the Apple guide](../../../apple/README.md).
-These sections and the executable benchmarks define the corpus, query cases, sample counts, contention, timing boundaries, and success criteria; do not create a second checklist with different values.
+For browser changes, read **Local article search** in [the browser reader guide](../../../docs/browser-rss.md) and [browser validation](../../../docs/browser-validation.md). Use `npm run test:search-performance` and [the browser benchmark](../../../tests/performance/search.spec.ts): the current browser target is 200 ms from input to painted correct results, with initial loading/preparation separate. Never substitute native database timings for this claim. Keep both the untagged baseline and the dense-tag variant defined in that benchmark; report their separate sample counts and measurements.
+
+Only when native work is authorized, read **The 100 ms database-read budget**, **The 100 ms full-text search gate**, and **Storage and search engine selection** in [the Apple guide](../../../apple/README.md).
+The selected guide and executable benchmark define the corpus, query cases, sample counts, contention, timing boundaries, and success criteria; do not create a second checklist with different values.
 
 ## Use the existing gates
 
+- Browser input-to-render search: [playwright.search.config.ts](../../../playwright.search.config.ts), backed by [search.spec.ts](../../../tests/performance/search.spec.ts).
 - Ordinary article reads: [benchmark-db.sh](../../../apple/scripts/benchmark-db.sh), backed by [DatabaseReads.swift](../../../apple/Benchmarks/DatabaseReads.swift).
 - Original/Japanese full-text search: [benchmark-search.sh](../../../apple/scripts/benchmark-search.sh), backed by [FullTextSearch.swift](../../../apple/Benchmarks/FullTextSearch.swift).
 - Search contract and persistence regressions: [ArticleSearchTypes.swift](../../../apple/Sources/TextbookCore/ArticleSearchTypes.swift), [search tests](../../../apple/Tests/TextbookCoreTests/FeedLibrarySearchTests.swift), and [independent shadow tests](../../../apple/Tests/TextbookCoreTests/SearchShadowIndependentRegressionTests.swift).

@@ -8,10 +8,12 @@ async function open(page: import("@playwright/test").Page) {
 }
 test("BYOK mock lifecycle isolates users/providers, hides keys, keeps storage unchanged and resets on reload", async ({
   page,
+  baseURL,
 }, info) => {
   const external: string[] = [];
   page.on("request", (r) => {
-    if (!r.url().startsWith("http://127.0.0.1:5173")) external.push(r.url());
+    if (new URL(r.url()).origin !== new URL(baseURL!).origin)
+      external.push(r.url());
   });
   const dialog = await open(page);
   const before = await page.evaluate(() => JSON.stringify(localStorage));
