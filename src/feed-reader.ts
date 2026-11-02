@@ -1,3 +1,4 @@
+import { ReaderLocation } from "./reader-location";
 import { ArticleOutline } from "./article-outline";
 import { ArticleAutoUpdate } from "./article-auto-update";
 import {
@@ -108,8 +109,12 @@ export async function feedReader(root: HTMLElement) {
   let db: IDBDatabase | null = null;
   let feeds: Feed[] = [],
     articles: FeedArticle[] = [];
+  const initialFilter = new URLSearchParams(location.search).get("filter");
   let selected: string | null = null,
-    filter = "all",
+    filter =
+      initialFilter === "saved" || initialFilter === "unread"
+        ? initialFilter
+        : "all",
     source = "",
     input = "";
   let problem = "",
@@ -397,6 +402,26 @@ export async function feedReader(root: HTMLElement) {
   settingsBody.append(demo);
   actions.append(skipToArticles, settingsOpen);
   rootHeader.append(brand, actions);
+  const locationNavigation = new ReaderLocation({
+    list: (next) => {
+      filter = next;
+      selected = null;
+      render();
+      listHeading.focus({ preventScroll: true });
+      main.scrollIntoView({ block: "start" });
+    },
+    import: () => openImport(),
+  });
+  const importDialog = el("dialog", undefined, "rss-import-dialog");
+  const importHeading = el("h2", "サイト・記事の取り込み");
+  importHeading.id = "rss-import-title";
+  importDialog.setAttribute("aria-labelledby", importHeading.id);
+  const importClose = button("元の画面へ戻る", () => importDialog.close());
+  const importHeader = el("div", undefined, "rss-settings-header");
+  const importBody = el("div", undefined, "rss-settings-body");
+  importHeader.append(importHeading, importClose);
+  importDialog.append(importHeader, importBody);
+  let importFinished = false;
   const layout = el("div", undefined, "rss-shell");
   const navigation = el("section", undefined, "rss-navigation");
   navigation.setAttribute("aria-label", "収集メニュー");
@@ -493,15 +518,16 @@ export async function feedReader(root: HTMLElement) {
     render();
   });
   focusToggle.id = "rss-focus-toggle";
-  const readerNavigation = el("nav", undefined, "rss-reader-navigation");
+  const readerNavigation = locationNavigation.reader;
   readerNavigation.setAttribute("aria-label", "記事の移動");
   new ResizeObserver(() => {
-    main.style.setProperty(
+    root.style.setProperty(
       "--rss-navigation-height",
-      `${readerNavigation.getBoundingClientRect().height + 16}px`,
+      `${locationNavigation.root.getBoundingClientRect().height + 16}px`,
     );
-  }).observe(readerNavigation);
-  const showOutline = button("目次・見出しマップ", () => outline.show());
+  }).observe(locationNavigation.root);
+  const showOutline = button("目次", () => outline.show());
+  showOutline.setAttribute("aria-label", "目次・見出しマップ");
   const returnToList = button("← 記事一覧へ", () => {
     readingProgress.detach();
     selected = null;
@@ -576,7 +602,58 @@ export async function feedReader(root: HTMLElement) {
   errors.setAttribute("role", "alert");
   errors.hidden = true;
   layout.append(navigation, main);
-  root.append(rootHeader, layout, errors, settings);
+  root.append(
+    rootHeader,
+    locationNavigation.root,
+    layout,
+    errors,
+    settings,
+    importDialog,
+  );
+  importDialog.addEventListener("close", () => {
+    collectionNavigation.restoreImport();
+    root.insertBefore(errors, settings);
+    render();
+    if (importFinished) {
+      (main.querySelector<HTMLElement>("h1") ?? main).focus({
+        preventScroll: true,
+      });
+      main.scrollIntoView({ block: "start" });
+    }
+    importFinished = false;
+  });
+  function openImport() {
+    if (importDialog.open) return;
+    importFinished = false;
+    importClose.textContent = selected ? "記事詳細へ戻る" : "記事一覧へ戻る";
+    collectionNavigation.presentImport(importBody);
+    importBody.append(discoveryPanel, errors);
+    importDialog.showModal();
+    importBody.querySelector<HTMLInputElement>("#feed-url")?.focus();
+    updateLocation();
+  }
+  function finishImport() {
+    if (importDialog.open) {
+      importFinished = true;
+      importDialog.close();
+    }
+  }
+  function updateLocation() {
+    const article = selected
+      ? articles[articlePositions.get(selected) ?? -1]
+      : undefined;
+    locationNavigation.update({
+      articleId: article?.id,
+      title: article?.content?.title || article?.title,
+      filter,
+      source: source
+        ? feeds.find((feed) => feed.url === source)?.title || "選択中の配信元"
+        : "",
+      importing: importDialog.open,
+    });
+  }
+  if (new URLSearchParams(location.search).get("screen") === "import")
+    openImport();
 
   function canCollect() {
     return (
@@ -1300,6 +1377,7 @@ export async function feedReader(root: HTMLElement) {
             filter = "all";
             selected = null;
             clearDiscovery();
+            finishImport();
             render();
           } else if (existing?.unsubscribed)
             void changeSubscription(candidate.url, true);
@@ -1396,6 +1474,7 @@ export async function feedReader(root: HTMLElement) {
             source = address;
             filter = "all";
             selected = null;
+            finishImport();
           }
         } catch (error) {
           const message = controller.signal.aborted
@@ -1865,6 +1944,7 @@ export async function feedReader(root: HTMLElement) {
     }
   }
   function showArticle(article: FeedArticle) {
+    finishImport();
     selected = article.id;
     render();
     main.querySelector<HTMLElement>("h1")?.focus({ preventScroll: true });
@@ -2019,15 +2099,19 @@ export async function feedReader(root: HTMLElement) {
       }),
     });
     renderDiscovery();
-    if (discoveryPanel.parentNode !== main) main.append(discoveryPanel);
+    const discoveryHost = importDialog.open ? importBody : main;
+    if (discoveryPanel.parentNode !== discoveryHost)
+      discoveryHost.append(discoveryPanel);
+    updateLocation();
     if (article) {
       main.classList.add("rss-reading");
       layout.classList.toggle("rss-focused", readerFocused);
-      focusToggle.textContent = readerFocused
-        ? "収集メニューを表示"
-        : "本文に集中";
+      focusToggle.textContent = readerFocused ? "配信元" : "本文に集中";
+      focusToggle.setAttribute(
+        "aria-label",
+        readerFocused ? "収集メニューを表示" : "本文に集中",
+      );
       focusToggle.setAttribute("aria-pressed", String(readerFocused));
-      main.append(readerNavigation);
       const articleNode = el("article", undefined, "rss-article");
       const title = el("h1", article.content?.title || article.title);
       title.id = "rss-current-title";
@@ -2480,7 +2564,7 @@ export async function feedReader(root: HTMLElement) {
           ),
           body,
         );
-        readerNavigation.append(
+        locationNavigation.progress.append(
           readingProgress.mount(
             article,
             text,
