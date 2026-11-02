@@ -251,9 +251,14 @@ export async function sharedTextbookView(root: HTMLElement) {
         : list.querySelector<HTMLElement>("button")
       )?.focus();
     };
+    const navigation = () => {
+      const actions = el("div", undefined, "shared-textbook-actions");
+      actions.append(button("教材一覧へ戻る", returnToLibrary));
+      return actions;
+    };
     reader.replaceChildren(
       el("h2", book.draft.title),
-      button("教材一覧へ戻る", returnToLibrary),
+      navigation(),
       el("p", "自分の回答を確認しています。"),
     );
     let answers: SharedAnswer[] = [];
@@ -266,7 +271,7 @@ export async function sharedTextbookView(root: HTMLElement) {
     if (epoch !== readEpoch) return;
     const heading = el("h2", book.draft.title);
     heading.tabIndex = -1;
-    reader.replaceChildren(heading, button("教材一覧へ戻る", returnToLibrary));
+    reader.replaceChildren(heading, navigation());
     if (answerError)
       reader.append(
         el("p", message(answerError)),
@@ -434,6 +439,7 @@ export async function sharedTextbookView(root: HTMLElement) {
       const submit = button("回答して保存", () => {
         if (!chosen || saving) return;
         const option = chosen;
+        const keepFocus = question.contains(document.activeElement);
         saving = true;
         pending++;
         question.disabled = true;
@@ -479,6 +485,13 @@ export async function sharedTextbookView(root: HTMLElement) {
             pending--;
             saving = false;
             question.disabled = false;
+            if (
+              keepFocus &&
+              epoch === readEpoch &&
+              submit.isConnected &&
+              document.activeElement === document.body
+            )
+              submit.focus({ preventScroll: true });
           });
       });
       submit.disabled = true;

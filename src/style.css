@@ -1482,3 +1482,10 @@ header {
 .shared-textbook-page fieldset {
   min-inline-size: 0;
 }
+.shared-textbook-actions {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  padding-block: 0.4rem;
+  background: #f7f6f1;
+}

@@ -2,6 +2,69 @@ import { test, expect, type Page } from "@playwright/test";
 import { readFile, writeFile } from "node:fs/promises";
 import { sharedTextbookDigest } from "../../src/shared-textbook-format";
 
+/** Delay delivery of a real committed IndexedDB result without changing its data or outcome. */
+async function holdAnswerCompletion(
+  page: Page,
+  mode: "readonly" | "readwrite",
+) {
+  await page.evaluate((mode) => {
+    const original = IDBDatabase.prototype.transaction;
+    const state = window as unknown as {
+      heldSharedCompletion: boolean;
+      releaseSharedCompletion: () => void;
+    };
+    state.heldSharedCompletion = false;
+    let first = true;
+    IDBDatabase.prototype.transaction = function (...args) {
+      const tx = original.apply(this, args);
+      if (
+        first &&
+        this.name === "quilna.shared-textbooks.v1" &&
+        tx.mode === mode &&
+        Array.from(tx.objectStoreNames).includes("answers")
+      ) {
+        first = false;
+        let completed:
+          ((this: IDBTransaction, event: Event) => unknown) | null = null;
+        Object.defineProperty(tx, "oncomplete", {
+          set(value) {
+            completed = value;
+          },
+          get() {
+            return completed;
+          },
+        });
+        tx.addEventListener("complete", (event) => {
+          state.heldSharedCompletion = true;
+          state.releaseSharedCompletion = () => {
+            completed?.call(tx, event);
+          };
+        });
+      }
+      return tx;
+    };
+  }, mode);
+}
+async function waitForHeldAnswer(page: Page) {
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as unknown as { heldSharedCompletion: boolean })
+            .heldSharedCompletion,
+      ),
+    )
+    .toBe(true);
+}
+async function releaseAnswerCompletion(page: Page) {
+  await page.evaluate(async () => {
+    (
+      window as unknown as { releaseSharedCompletion: () => void }
+    ).releaseSharedCompletion();
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  });
+}
+
 const fixturePath = "tests/fixtures/shared-textbook-v1.json";
 const fixture = new TextDecoder().decode(await readFile(fixturePath));
 const title = "合成教材：モデルと実行";
@@ -113,6 +176,12 @@ test("settings leads to the separate file library, preview/cancel keeps the exis
     page.getByLabel("教材JSONファイル（540,000バイト以下）"),
   ).toBeHidden();
   await page
+    .getByRole("heading", { name: "2. 保存の確認", exact: true })
+    .scrollIntoViewIfNeeded();
+  await expect(
+    page.getByRole("button", { name: "教材一覧へ戻る", exact: true }),
+  ).toBeInViewport();
+  await page
     .getByRole("button", { name: "教材一覧へ戻る", exact: true })
     .click();
   await expect(page).toHaveTitle("受け取った教材 | Quilna");
@@ -159,6 +228,9 @@ test("two disposable recipient profiles preserve the exact file and have separat
   await expect(
     page.getByText("正答です。回答を保存しました。", { exact: true }),
   ).toBeVisible();
+  await expect(
+    group.getByRole("button", { name: "回答して保存", exact: true }),
+  ).toBeFocused();
   const raw = await exported(page);
   expect(raw).toBe(fixture);
   const receiver = await browser.newContext({
@@ -772,60 +844,15 @@ test("returning to the library during an answer read prevents its late completio
 }) => {
   await page.goto("/?view=textbooks");
   await importBook(page);
-  await page.evaluate(() => {
-    const original = IDBDatabase.prototype.transaction;
-    const state = window as unknown as {
-      heldSharedRead: boolean;
-      releaseSharedRead: () => void;
-    };
-    let first = true;
-    IDBDatabase.prototype.transaction = function (...args) {
-      const tx = original.apply(this, args);
-      if (
-        first &&
-        args[1] === "readonly" &&
-        Array.from(tx.objectStoreNames).includes("answers")
-      ) {
-        first = false;
-        let completed:
-          ((this: IDBTransaction, event: Event) => unknown) | null = null;
-        Object.defineProperty(tx, "oncomplete", {
-          set(value) {
-            completed = value;
-          },
-          get() {
-            return completed;
-          },
-        });
-        tx.addEventListener("complete", (event) => {
-          state.heldSharedRead = true;
-          state.releaseSharedRead = () => {
-            completed?.call(tx, event);
-          };
-        });
-      }
-      return tx;
-    };
-  });
+  await holdAnswerCompletion(page, "readonly");
   await page
     .getByRole("button", { name: `${title} · 版 7を読む`, exact: true })
     .click();
-  await expect
-    .poll(() =>
-      page.evaluate(
-        () => (window as unknown as { heldSharedRead: boolean }).heldSharedRead,
-      ),
-    )
-    .toBe(true);
+  await waitForHeldAnswer(page);
   await page
     .getByRole("button", { name: "教材一覧へ戻る", exact: true })
     .click();
-  await page.evaluate(async () => {
-    (
-      window as unknown as { releaseSharedRead: () => void }
-    ).releaseSharedRead();
-    await new Promise<void>((resolve) => setTimeout(resolve, 0));
-  });
+  await releaseAnswerCompletion(page);
   await expect(
     page.getByLabel("教材JSONファイル（540,000バイト以下）"),
   ).toBeVisible();
@@ -836,4 +863,53 @@ test("returning to the library during an answer read prevents its late completio
   await expect(
     page.getByRole("button", { name: `${title} · 版 7を読む`, exact: true }),
   ).toBeFocused();
+});
+
+test("a delayed answer commit respects newer focus and navigation while retaining each submitted answer exactly once", async ({
+  page,
+}) => {
+  await page.goto("/?view=textbooks");
+  await importBook(page);
+  await openBook(page);
+  const group = page
+    .getByRole("group", {
+      name: "モデルの文章だけで確認できるのは？",
+      exact: true,
+    })
+    .first();
+  await holdAnswerCompletion(page, "readwrite");
+  await group.getByLabel("文章が出力された", { exact: true }).check();
+  await group
+    .getByRole("button", { name: "回答して保存", exact: true })
+    .click();
+  await waitForHeldAnswer(page);
+  await page.getByText("教材ファイルを書き出す", { exact: true }).click();
+  const confirmation = page.getByLabel(
+    "出典と引用を確認し、この教材ファイルを書き出す",
+    { exact: true },
+  );
+  await confirmation.check();
+  await releaseAnswerCompletion(page);
+  await expect(confirmation).toBeFocused();
+  await expect(
+    page.getByText("正答です。回答を保存しました。", { exact: true }),
+  ).toBeVisible();
+  await holdAnswerCompletion(page, "readwrite");
+  await group
+    .getByRole("button", { name: "回答して保存", exact: true })
+    .click();
+  await waitForHeldAnswer(page);
+  await page
+    .getByRole("button", { name: "教材一覧へ戻る", exact: true })
+    .click();
+  await releaseAnswerCompletion(page);
+  await expect(page).toHaveTitle("受け取った教材 | Quilna");
+  await expect(
+    page.getByRole("button", { name: `${title} · 版 7を読む`, exact: true }),
+  ).toBeFocused();
+  await expect(
+    page.getByRole("navigation", { name: "教材の目次", exact: true }),
+  ).toHaveCount(0);
+  await openBook(page);
+  await expect(page.getByText(/文章が出力された · 正答/)).toHaveCount(2);
 });
