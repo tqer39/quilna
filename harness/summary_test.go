@@ -153,3 +153,22 @@ func TestUsageIdentityDoesNotConfuseOpaqueIDsContainingSeparators(t *testing.T) 
 		t.Fatalf("opaque identity collision: %+v %v", s, err)
 	}
 }
+
+func TestReviewerReceivesCurrentChecksAndEarlierFailureHistory(t *testing.T) {
+	e, path, task := fixture(t)
+	task.Checks = []Action{action("check", "content")}
+	repair := action("repair", "fix")
+	task.Repair = &repair
+	task.MaxRepairCycles = 1
+	task.Review.Command = helper("review", "summary-context")
+	writeTask(t, path, task)
+	run := newRun(t, e, path)
+	run = executeRun(t, e, run)
+	if run.Status != "accepted" || len(run.Evidence) != 4 {
+		t.Fatalf("reviewer did not receive bounded current evidence and preserved history: %+v", run)
+	}
+	// The compact reviewer input never removes the original failed check.
+	if run.Evidence[0].ExitCode == 0 || run.Evidence[0].Phase != "checks" {
+		t.Fatal("the original failed check was not retained")
+	}
+}

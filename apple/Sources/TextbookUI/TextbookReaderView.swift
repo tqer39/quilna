@@ -119,7 +119,7 @@ public struct TextbookReaderView: View {
                         .accessibilityIdentifier("history-navigation")
                 }
             }
-            .navigationTitle("積み木テキスト")
+            .navigationTitle("Quilna")
         } detail: {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {

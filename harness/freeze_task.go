@@ -47,6 +47,10 @@ func FreezeTask(input, output string, files []string) (Task, error) {
 	if err := verifySnapshots(task.ProtectedFiles); err != nil {
 		return task, err
 	}
+	return writeNewTask(task, output)
+}
+
+func writeNewTask(task Task, output string) (Task, error) {
 	if !filepath.IsAbs(output) || filepath.Clean(output) != output {
 		return task, errors.New("output-must-be-canonical")
 	}

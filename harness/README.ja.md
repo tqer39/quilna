@@ -4,7 +4,7 @@
 
 Goで動く、信頼済みローカル仕様に限定した開発ループの最小実装です。
 製品の収集・教材生成・同期とは別のプロセス、状態、利用枠で管理します。
-Go 1.27.1、Git、`/usr/bin/sqlite3`を使います。追加Go依存はありません。
+Go 1.27.3、Git、`/usr/bin/sqlite3`を使います。追加Go依存はありません。
 初期対応はmacOS/Linuxです。Windowsには対応していません。
 
 ## 動作と合格条件
@@ -114,27 +114,32 @@ Codexのreviewには、範囲内で直せる指摘は`revise`、安全に達成�
 予備検査は合格証拠に含めず、ハーネス側の固定checksを別に実行します。
 macOSの開発ツールがsandbox外への一時書込を要求すると、担当内の予備検査は実行できません。
 
-## 検証用ファイルの固定と証拠の要約
+## 検査設定の固定
 
-実装・修正を担当へ渡す前に、信頼する検証スクリプトと回帰テストを固定します。
+実装・修正を割り当てる前に、信頼済みの検査スクリプト、テスト用データ、設定を固定します。
 
 ```bash
 /private/tmp/textbook-harness freeze-task \
   -task /absolute/path/task.json \
-  -file /absolute/path/fixed-regression.swift \
+  -file /absolute/path/fixed-regression.spec.ts \
   -file /absolute/path/trusted-test-runner \
   -output /absolute/path/task.frozen.json
 /private/tmp/textbook-harness run -task /absolute/path/task.frozen.json -state /absolute/path/state
-/private/tmp/textbook-harness summary -state /absolute/path/state -run RUN_ID
 ```
 
-`freeze-task`は指定された目標・checks・review設定・上限を保ち、canonicalな絶対パス、内容のSHA-256、ファイルモードを持つ
-`protectedFiles`を追加します。元ファイルを上書きせず、新しい非公開ファイルを作成し、変更済みの固定ファイルを暗黙に再固定しません。
-出力先の親ディレクトリは先に作成してください。固定ファイルは編集対象workspaceの外にも置けます。
-明示したファイルだけが対象です。この省略可能なフィールドを持たない既存タスクの動作は変わりません。
-通常ファイルを最大256個、各256MiBまで扱います。欠落・symlink・内容やモードの変更・FIFOなどの通常ファイル以外を拒否し、FIFOの書込側を待ちません。
-エンジンは各操作の前後、復旧時、既存証拠の確認時に照合します。
-これはcheckpointでの変更検出であり、OSによる書込禁止や、checkpoint間に元へ戻された一時変更の検出ではありません。
+`freeze-task`は目標・条件・コマンド・レビュー担当・上限を保持し、正規化した絶対パス、内容のSHA-256、ファイルモードを持つ任意の`protectedFiles`を追加します。
+新しい非公開ファイル（0600）を作成し、既存タスクの上書きや変更された設定の黙示的な再固定は行いません。出力先の親ディレクトリは事前に用意します。
+Git除外や作業ツリー外のラッパー、packageのスクリプト・ロックファイル、テスト設定・参照する補助ファイルを含め、固定するファイルを個別に列挙します。依存を自動追跡したりディレクトリ内すべてを保護したりはしません。このフィールドのないタスクは従来の動作を維持します。
+最大256個の通常ファイル、各最大256MiBに対応します。欠落、symlink、通常ファイル以外、内容・モードの変更を拒否します。FIFOの検査では書き手を待ちません。
+操作の前後、復旧時、既存証跡の確認時に照合します。作業ツリーのコードハッシュが同じでも外部の固定設定を変更すると`status`はstaleとなり、resumeは検査を再送せず拒否します。実行中の変更は記録し、書き換えられた検査で次の操作が受け入れる前に停止します。
+これはチェックポイントでの変更検出であり、OSによる書き込み禁止ではありません。照合の間に変更して元へ戻す操作は検出せず、ログ・レポート成果物もこのフィールドで暗黙に固定されません。
+ブラウザだけの検査選択とツールチェーンの準備は[ブラウザ検証](../docs/browser-validation.ja.md)を参照してください。
+
+## 証跡の要約
+
+```bash
+/private/tmp/textbook-harness summary -state /absolute/path/state -run RUN_ID
+```
 
 `summary`は記録されたソースハッシュに対する最新checks、終了コード、所要時間、ハッシュ付きログ参照と、
 過去の失敗数・修復回数・同一チェックの繰り返し・証拠に記録されたモデル利用量を返します。

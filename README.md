@@ -1,8 +1,15 @@
-# TsumikiText
+# Quilna
 
 [English](README.md) | [日本語](README.ja.md)
 
-The repository name is `adaptive-textbook`. The current app and sample lessons are in Japanese.
+Quilna (クイルナ) helps people select information, think, and compile their own textbooks.
+The repository name is `quilna`; the canonical domain is [quilna.page](https://quilna.page).
+Domain registration, DNS connection, and production publication are not part of this rename.
+The current app and sample lessons are in Japanese.
+See the [naming and domain decision](docs/branding.md) for the research scope and adoption judgment; [Issue #53](https://github.com/tqer39/quilna/issues/53) tracks domain registration, DNS connection, and Dev redeployment.
+
+Complete all agreed product features in the browser and obtain explicit owner usability acceptance before advancing to iOS/macOS, one platform at a time.
+Native feature development is on hold; see the [development sequence and acceptance gate](docs/product-development.md).
 
 The minimal SwiftUI apps for macOS and iOS are in `apple/`; the Go development harness is in `harness/`.
 The native app supports RSS/Atom feeds, bookmarks, Apple's on-device translation, and fixed Japanese lessons with comprehension questions and answer history.
@@ -10,9 +17,12 @@ Articles, Japanese translations, bookmarks, and answer history are stored in SQL
 See the [native app and harness guide](docs/native-harness.md) and [tool/SaaS evaluation](docs/harness-tools.md).
 The development harness has been verified with live Codex implementation, review, and repair using the existing Pro login.
 See the [live validation results and reproduction steps](docs/codex-live-validation.md). This connection is separate from the product's lesson generation.
-The existing web prototype remains available and is described below.
+The browser starts with site/article URL discovery, RSS/Atom registration, refresh, article reading and local saving.
+See [startup, storage scope and backend choices by interface](docs/browser-rss.md).
+The lesson features below remain available through **設定 → デモ教材 → デモ教材を開く**.
 
-An [owner-only development site](https://tsumiki-text.tqer39.workers.dev) has been published. Google authentication setup is pending.
+An owner-only development site was published under the previous name; Google authentication setup is pending.
+See the [existing deployment record](docs/dev-publication.md).
 Purchasing a production domain, publishing to production, and sending live LLM requests are outside this work.
 See the [minimum setup before publication](docs/workers-byok.md).
 
@@ -28,16 +38,21 @@ Use `npm run workers:local` to try Workers hosting with provider communication d
 
 ## Run locally
 
-Use Node.js 22.12 or later, or the 24/26 release lines, with npm.
+Use the patched Node.js 26.12.1 configured in `mise.toml`, with npm.
+`package.json` also declares security minimums for maintained 22/24 release lines; CI uses 26.12.1.
 The steps are the same on macOS, Windows, and Linux.
 
 ```bash
-npm ci
-npm run dev
+mise install node
+mise exec -- npm ci
+mise exec -- npm run dev
 ```
 
 Open <http://127.0.0.1:5173> in a browser.
-This does not connect to external DNS, cloud services, AI APIs, or real accounts.
+RSS refresh connects from the local acquisition process to the registered public HTTPS publisher.
+RSS articles and subscriptions use this browser's IndexedDB, without device synchronization.
+No AI API, real account connection or new cloud deployment is enabled.
+The following keyboard controls and answer history belong to the demo lesson in Settings.
 Press N for the next block and P for the previous block; uppercase also works. These shortcuts are inactive in inputs and term dialogs.
 The "N: next / P: previous" checkbox disables single-character shortcuts. If saving the setting fails, it applies only to the current tab.
 History is stored in this browser's localStorage.
@@ -68,6 +83,11 @@ tmux kill-session -t adaptive-textbook-caa
 ```
 
 ## Validation
+
+TypeScript remains the browser implementation language. An optional Rust compiler check is available with `mise run typecheck:tsrs`; see [the local trial and compatibility limits](docs/typescript-tools.md).
+
+The [security maintenance guide](docs/security-maintenance.md) covers Renovate, full dependency audits, runtime/certificate updates, and daily checks.
+Installation scripts are disabled by the project `.npmrc`; explicitly requested npm commands still run.
 
 ```bash
 npm run lint

@@ -4,7 +4,7 @@
 
 A minimal Go implementation of a development loop restricted to trusted local specifications.
 Its process, state, and usage allowance are separate from the product's collection, textbook-generation, and synchronization services.
-It uses Go 1.27.1, Git, and `/usr/bin/sqlite3`, with no additional Go dependencies.
+It uses Go 1.27.3, Git, and `/usr/bin/sqlite3`, with no additional Go dependencies.
 The initial supported platforms are macOS / Linux. Windows is not supported.
 
 ## Workflow and acceptance criteria
@@ -114,29 +114,32 @@ Implementation and repair owners may also run local preliminary checks when expl
 Preliminary checks are not acceptance evidence; the harness runs its fixed checks separately.
 Preliminary checks inside an owner's environment cannot run when macOS development tools require temporary writes outside the sandbox.
 
-## Fixed controls and concise evidence
+## Fixed check controls
 
-Freeze trusted check scripts and regression tests before assigning implementation or repair:
+Before assigning implementation or repair, freeze the trusted check scripts, test fixtures and configuration:
 
 ```bash
 /private/tmp/textbook-harness freeze-task \
   -task /absolute/path/task.json \
-  -file /absolute/path/fixed-regression.swift \
+  -file /absolute/path/fixed-regression.spec.ts \
   -file /absolute/path/trusted-test-runner \
   -output /absolute/path/task.frozen.json
 /private/tmp/textbook-harness run -task /absolute/path/task.frozen.json -state /absolute/path/state
-/private/tmp/textbook-harness summary -state /absolute/path/state -run RUN_ID
 ```
 
-`freeze-task` preserves the supplied goals, checks, review configuration, and limits, and adds
-`protectedFiles` entries containing canonical absolute paths, SHA-256 content hashes, and file modes.
-It creates a new private file without overwriting the original or silently refreezing changed controls.
-The parent directory must already exist. Controls may be outside the editable workspace.
-Only explicitly listed files are protected; tasks without this optional field retain their prior behavior.
-A maximum of 256 regular files, each at most 256 MiB, is supported. Missing files, symlinks,
-content/mode changes, and nonregular files such as FIFOs are refused without waiting for a FIFO writer.
-The engine verifies controls before and after operations, on recovery, and when checking existing evidence.
-This detects checkpoint changes; it is not an OS write prohibition or detection of transient changes reverted between checkpoints.
+`freeze-task` preserves the goal, criteria, commands, reviewer and limits, adding optional `protectedFiles` entries with canonical absolute paths, SHA-256 content hashes and file modes.
+It creates a new private file (0600); it never overwrites an existing task or silently refreezes controls that have changed. The output parent must already exist.
+List each control explicitly, including ignored or external wrappers, package scripts/lockfiles, test configuration and imported test helpers. The tool does not discover transitive dependencies or protect every file in a directory. Tasks without this field retain their prior behavior.
+Up to 256 regular files, each at most 256 MiB, are supported. Missing files, symlinks, nonregular files and content/mode changes are refused. FIFO validation does not wait for a writer.
+The engine checks controls before and after operations, during recovery and when inspecting existing evidence. A changed external control makes `status` stale even if the workspace code hash has not changed; resume refuses it without replaying checks. In-flight edits are recorded and blocked before the next operation can accept their changed test.
+This is checkpoint change detection, not an OS write prohibition; changes reverted between checks are not detected. Logs/report artifacts are not implicitly frozen by this field.
+See [browser validation](../docs/browser-validation.md) for the browser-only check selection and toolchain setup.
+
+## Concise evidence
+
+```bash
+/private/tmp/textbook-harness summary -state /absolute/path/state -run RUN_ID
+```
 
 `summary` reports the latest checks for the recorded source hash, exit codes, durations, and hash-linked log paths,
 plus historical failures, repair cycles, repeated check operations, and model usage from recorded evidence.

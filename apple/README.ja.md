@@ -1,4 +1,4 @@
-# 積み木テキストの Apple ネイティブ試作
+# Quilnaの Apple ネイティブ試作
 
 [English](README.md) | [日本語](README.ja.md)
 
@@ -66,13 +66,14 @@ Swift / Xcode の導入済み環境を使います。依存の追加取得はあ
 
 ```bash
 swift run --package-path apple \
-  --scratch-path /private/tmp/adaptive-textbook-swift-build \
-  --cache-path /private/tmp/adaptive-textbook-swift-cache \
-  TsumikiText --data-directory /private/tmp/tsumiki-native-qa
+  --scratch-path /private/tmp/quilna-swift-build \
+  --cache-path /private/tmp/quilna-swift-cache \
+  Quilna --data-directory /private/tmp/quilna-native-qa
 ```
 
 通常起動で保存先を指定しない場合は、アプリの Application Support 配下の
 `TsumikiText/answers.sqlite`と`TsumikiText/feed-library.sqlite`を使います。
+Quilnaへの改名後も既存データを利用できるよう、この保存先とBundle IDは維持します。
 フィード取得は購読先へ通信します。秘密情報やAPIキーは扱いません。
 試作には DB 暗号化・App Sandbox・署名・公証の配布設定はまだありません。
 Swift のメモリ安全性は、これらの OS の権限・配布設定の代替ではありません。
@@ -81,8 +82,8 @@ Swift のメモリ安全性は、これらの OS の権限・配布設定の代�
 
 ```bash
 sh apple/scripts/build-macos-app.sh
-open apple/.build/native/TsumikiText.app --args \
-  --data-directory /private/tmp/tsumiki-native-qa
+open apple/.build/native/Quilna.app --args \
+  --data-directory /private/tmp/quilna-native-qa
 ```
 
 成果物は `apple/.build/native/` です。
@@ -90,14 +91,14 @@ App Store 配布物や Developer ID 署名済みアプリではありません�
 
 ## iOS Simulator 用ビルド
 
-`apple/TsumikiText.xcodeproj` の共有 scheme `TsumikiText-iOS` が
+`apple/Quilna.xcodeproj` の共有 scheme `Quilna-iOS` が
 同じ `TextbookUI` と `TextbookCore` をローカル Swift Package として使用します。
 
 ```bash
-xcodebuild -project apple/TsumikiText.xcodeproj \
-  -scheme TsumikiText-iOS -configuration Debug \
+xcodebuild -project apple/Quilna.xcodeproj \
+  -scheme Quilna-iOS -configuration Debug \
   -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
-  -derivedDataPath /private/tmp/adaptive-textbook-ios-build \
+  -derivedDataPath /private/tmp/quilna-ios-build \
   CODE_SIGNING_ALLOWED=NO build
 ```
 
@@ -108,8 +109,8 @@ xcodebuild -project apple/TsumikiText.xcodeproj \
 
 ```bash
 swift test --package-path apple \
-  --scratch-path /private/tmp/adaptive-textbook-swift-build \
-  --cache-path /private/tmp/adaptive-textbook-swift-cache
+  --scratch-path /private/tmp/quilna-swift-build \
+  --cache-path /private/tmp/quilna-swift-cache
 ```
 
 回答の永続化、教材版の分離、同一回答の再保存、異なる内容による上書き拒否、
@@ -206,7 +207,7 @@ macOSと物理iPhoneで、オフライン動作、メモリ・保存容量、索
 
 - `Sources/TextbookCore`: フィード解析・HTTP取得、記事・訳文・回答モデル、SQLite保存。
 - `Sources/TextbookUI`: macOS / iOS共通の情報収集・教材画面、端末内翻訳、保存状態。
-- `Sources/TsumikiText`: macOS の起動点、試験用の保存先引数。
+- `Sources/Quilna`: macOS の起動点、試験用の保存先引数。
 - `iOS`: iOS の起動点。
 - `Tests`: Core と保存中の UI 状態遷移の回帰試験。
 

@@ -1,6 +1,6 @@
 ---
 name: independent-review
-description: "Independently review Tsumiki Text changes or reproduce a reported regression, including asynchronous races and non-destructive storage failure. Use for requested review or regression investigation, not to require a separate model call for every edit."
+description: "Independently review Quilna changes or reproduce a reported regression, including asynchronous races and non-destructive storage failure. Use for requested review or regression investigation, not to require a separate model call for every edit."
 ---
 
 # Independent Review

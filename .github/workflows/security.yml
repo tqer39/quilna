@@ -1,0 +1,61 @@
+name: Security maintenance
+on:
+  pull_request:
+  push:
+    branches: [main]
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  dependencies:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 26.12.1
+          cache: npm
+      - run: node scripts/check-security.mjs
+      - run: npm ci --ignore-scripts
+      - run: npm run security:audit
+      - run: npm audit signatures
+  dependency-review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: low
+          comment-summary-in-pr: never
+  go-vulnerabilities:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      MISE_VERSION: 2026.10.18
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: jdx/mise-action@c2a87611a18de5b3828c5652fe268e992400cb5c # v4
+        id: mise
+        with:
+          version: ${{ env.MISE_VERSION }}
+          install_args: node go go:golang.org/x/vuln/cmd/govulncheck
+          cache: false
+      - name: Diagnose failed mise download
+        if: ${{ failure() && steps.mise.outcome == 'failure' }}
+        run: bash scripts/diagnose-mise-download.sh "$MISE_VERSION"
+      - run: mise run security:go

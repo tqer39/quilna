@@ -8,9 +8,10 @@ GOOGLE_ALLOWED_EMAILは1件必須。未設定・不正値では認証を停止�
 既存sessionもverified emailと設定値を毎回照合します。client指定userId/email/検証済みフラグを信用しません。
 所有者は引き続きBetter Authのverified user.idで決め、メールをvaultのIDとして使いません。
 
-サービス表示は「積み木テキスト」、承認されたDev公開先は `https://tsumiki-text.tqer39.workers.dev` です。
-Devは公開済み。Google未設定のため準備中画面のみ配信します。個別の資格情報・権限追加は別途確認します。設定例を本物の許可メールへ置き換えて使います。
-本番domainの購入はこの準備に不要です。既存Kazokubiのdomain/認証/DBは変更しません。
+サービス名は「Quilna（クイルナ）」、正式ドメインは `https://quilna.page` です。
+ドメイン取得・DNS接続・公開環境の移行は未実施です。以下は移行後の設定例で、適用済みの値ではありません。
+既存Devの記録は[公開と設定](dev-publication.ja.md)を参照してください。設定例の許可メールは本人の値に置き換えます。
+今回の名称変更ではdomainの購入・設定は行いません。既存Kazokubiのdomain/認証/DBは変更しません。
 
 検証：本番entry経由のmock OAuthで本人許可、他アカウント/未検証email拒否、
 client指定ID無効、設定欠落停止、既存sessionの再照合を確認しました。Workers全28件が成功しています。
@@ -19,7 +20,7 @@ client指定ID無効、設定欠落停止、既存sessionの再照合を確認�
 
 Dev公開の承認とFreeの本人確認を受領し、専用資源の作成・公開は完了しました。安全な秘密入力を引き継ぎます。
 
-- 公開候補：`https://tsumiki-text.tqer39.workers.dev`。
+- 正式ドメイン（接続待ち）：`https://quilna.page`。
 - 閲覧とログインの初期対象：本人 `owner@example.invalid` のみ。
 - アプリの本人限定認証と必要なOAuth/D1/DO資源を準備すること。Access追加は行わない。
 - 公開前に他アカウントの拒否を確認すること。実キー入力・実AI送信は引き続き無効。
@@ -37,11 +38,11 @@ Dev公開の承認とFreeの本人確認を受領し、専用資源の作成・�
 | BETTER_AUTH_SECRET | 32文字以上の十分な乱数、認証cookie/state保護 | Worker Secret |
 | BYOK_ENCRYPTION_KEYRING | LLMキー保存のAES-256用keyring | Worker Secret |
 
-適用済みの公開設定：
+ドメイン接続後に適用する公開設定例：
 
 ```json
 {
-  "APP_ORIGIN": "https://tsumiki-text.tqer39.workers.dev",
+  "APP_ORIGIN": "https://quilna.page",
   "GOOGLE_ALLOWED_EMAIL": "owner@example.invalid"
 }
 ```
@@ -49,7 +50,7 @@ Dev公開の承認とFreeの本人確認を受領し、専用資源の作成・�
 Google Web OAuth clientのAuthorized redirect URIは、次の完全一致です。
 
 ```text
-https://tsumiki-text.tqer39.workers.dev/api/auth/callback/google
+https://quilna.page/api/auth/callback/google
 ```
 
 実装が要求するscopeはopenid emailだけ。profile/Drive/Gmailのscopeやoffline grantは要求しません。
