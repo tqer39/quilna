@@ -1,4 +1,5 @@
 :root {
+  scrollbar-gutter: stable;
   font-family:
     system-ui,
     -apple-system,
@@ -39,6 +40,15 @@ aside {
   position: sticky;
   top: 30px;
   align-self: start;
+}
+@media (min-width: 801px) {
+  aside {
+    max-height: calc(100vh - 60px);
+    max-height: calc(100dvh - 60px);
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    scrollbar-gutter: stable;
+  }
 }
 aside details summary {
   font-weight: 700;
@@ -1023,4 +1033,400 @@ header {
 }
 .account-settings button {
   margin: 0 8px 8px 0;
+}
+
+/* RSS collection: feed content is rendered as plain text, with no remote embeds. */
+.rss-header {
+  gap: 20px;
+}
+.rss-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+.rss-text-link {
+  color: #285e57;
+  font-size: 14px;
+  text-underline-offset: 4px;
+}
+.rss-shell {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 850px);
+  gap: 56px;
+  max-width: 1240px;
+  margin: 42px auto;
+  padding: 0 28px;
+}
+.rss-navigation {
+  min-width: 0;
+}
+.rss-navigation h2 {
+  margin-bottom: 16px;
+}
+.rss-filters {
+  margin: 0 0 28px;
+}
+.rss-filters button {
+  text-align: left;
+  background: transparent;
+  border: 1px solid transparent;
+  color: #354d4c;
+}
+.rss-filters [aria-current] {
+  background: #e9eee7;
+  border-color: #718983;
+  font-weight: 700;
+}
+.rss-add {
+  border-top: 1px solid #d8ded8;
+  padding-top: 24px;
+  margin-bottom: 24px;
+}
+.rss-add input,
+#rss-search {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 10px;
+  min-height: 44px;
+  border: 1px solid #718983;
+  border-radius: 6px;
+  background: #fffefb;
+  color: #20373c;
+  font-size: 14px;
+}
+#rss-search {
+  display: block;
+  margin: 6px 0 16px;
+  font-size: 16px;
+}
+.rss-add button {
+  width: 100%;
+  margin-top: 10px;
+}
+.rss-add-hint {
+  color: #52666a;
+  font-size: 13px;
+  margin: 8px 0;
+}
+.rss-discovery {
+  padding: 24px;
+  margin-bottom: 32px;
+  border: 1px solid #849b96;
+  border-radius: 12px;
+  background: #fffefb;
+  overflow-wrap: anywhere;
+}
+.rss-discovery[hidden] {
+  display: none;
+}
+.rss-candidates {
+  list-style: none;
+  margin: 16px 0;
+  padding: 0;
+}
+.rss-candidates li {
+  border-top: 1px solid #d8ded8;
+  padding: 16px 0;
+}
+.rss-candidates h3 {
+  margin: 0;
+}
+.rss-candidates .muted {
+  font-size: 13px;
+}
+.rss-candidates button {
+  margin-top: 8px;
+}
+.rss-presets {
+  margin-bottom: 24px;
+}
+.rss-presets button {
+  display: block;
+  width: 100%;
+  margin-bottom: 8px;
+}
+.rss-navigation > select {
+  width: 100%;
+  margin-bottom: 12px;
+}
+.rss-navigation > button {
+  width: 100%;
+}
+.rss-feed-state {
+  border-top: 1px solid #d8ded8;
+  margin-top: 18px;
+  padding-top: 14px;
+  overflow-wrap: anywhere;
+}
+.rss-feed-state strong,
+.rss-feed-state span {
+  display: block;
+}
+.rss-feed-state button {
+  font-size: 12px;
+  margin-top: 8px;
+}
+.rss-feed-state .muted {
+  font-size: 12px;
+}
+.rss-progress {
+  font-size: 13px;
+  color: #476966;
+}
+.rss-feed-error {
+  color: #861b26;
+  font-size: 13px;
+}
+.rss-main {
+  min-width: 0;
+}
+.rss-main h1 {
+  font-family: inherit;
+  font-size: clamp(26px, 3vw, 36px);
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+}
+.rss-lede {
+  color: #52666a;
+  margin-bottom: 28px;
+}
+.rss-article-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.rss-article-list li {
+  border-top: 1px solid #d8ded8;
+  padding: 22px 0;
+}
+.rss-article-meta {
+  font-size: 12px;
+  color: #52666a;
+  margin: 0 0 6px;
+  overflow-wrap: anywhere;
+}
+.rss-article-title {
+  display: block;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: #244e4c;
+  font-size: 20px;
+  font-weight: 700;
+  text-align: left;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+.rss-article-title:hover {
+  text-decoration: underline;
+  background: transparent;
+}
+.rss-excerpt {
+  font-size: 14px;
+  margin: 10px 0 0;
+  color: #52666a;
+  overflow-wrap: anywhere;
+}
+.rss-empty {
+  margin: 32px 0;
+  padding: 28px;
+  border: 1px dashed #849b96;
+  border-radius: 10px;
+  color: #52666a;
+}
+.rss-article {
+  padding: 32px;
+  margin-top: 20px;
+}
+.rss-article .rss-text-link {
+  display: inline-block;
+  margin: 12px;
+}
+.rss-article-body {
+  overflow-wrap: anywhere;
+  line-height: 2;
+}
+.rss-article-body p {
+  white-space: pre-line;
+  margin: 1.4em 0;
+}
+.rss-article-body code {
+  white-space: pre-wrap;
+  font-size: 0.9em;
+}
+.rss-article-body pre {
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 16px;
+  background: #eaf0eb;
+  border-radius: 6px;
+  line-height: 1.6;
+}
+.rss-article-body pre code {
+  white-space: pre;
+  overflow-wrap: normal;
+}
+.rss-content-note {
+  font-size: 12px;
+  color: #52666a;
+  padding: 14px 0;
+  border-bottom: 1px solid #d8ded8;
+}
+.rss-error {
+  position: sticky;
+  bottom: 16px;
+  margin: 16px auto;
+  max-width: 1100px;
+  padding: 16px 24px;
+  background: #fff0f1;
+  color: #861b26;
+  border: 2px solid #c52a3b;
+  border-radius: 8px;
+  z-index: 5;
+}
+.rss-error[hidden] {
+  display: none;
+}
+.rss-error button {
+  margin: 8px 12px;
+}
+.rss-settings {
+  max-width: 580px;
+  width: calc(100% - 32px);
+  max-height: 85dvh;
+  padding: 28px;
+  border: 1px solid #718983;
+  border-radius: 12px;
+  color: #20373c;
+  background: #fffefb;
+}
+.rss-settings::backdrop {
+  background: #20373c99;
+}
+@media (max-width: 800px) {
+  .rss-header {
+    align-items: flex-start;
+    gap: 12px;
+  }
+  .rss-header .brand {
+    font-size: 14px;
+    letter-spacing: 0.08em;
+  }
+  .rss-header-actions {
+    gap: 12px;
+  }
+  .rss-header-actions .rss-text-link {
+    font-size: 12px;
+  }
+  .rss-header-actions button {
+    font-size: 13px;
+    padding: 8px 12px;
+  }
+  .rss-shell {
+    display: block;
+    margin: 24px auto;
+    padding: 0 18px;
+  }
+  .rss-filters {
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 4px;
+  }
+  .rss-filters button {
+    font-size: 13px;
+    padding: 8px;
+  }
+  .rss-navigation {
+    margin-bottom: 32px;
+  }
+  .rss-main.rss-reading {
+    scroll-margin-top: 16px;
+  }
+  .rss-article {
+    padding: 22px 18px;
+  }
+  .rss-error {
+    margin: 12px;
+    padding: 12px;
+  }
+}
+@media (max-width: 800px) {
+  .lesson-header {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+}
+
+.rss-reader-tools,
+.rss-translation-settings {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 1rem 0;
+  border-block: 1px solid var(--line, #d7ded9);
+  margin-block: 1rem;
+}
+.rss-reader-tools p,
+.rss-translation-settings p,
+.rss-translation-settings h3 {
+  flex-basis: 100%;
+  margin: 0;
+}
+.rss-reader-tools select,
+.rss-translation-settings select {
+  max-width: 100%;
+}
+.rss-article-body {
+  overflow-wrap: anywhere;
+}
+
+.rss-tag-editor {
+  border-top: 1px solid var(--line, #d7ded9);
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+}
+.rss-tag-editor h2 {
+  font-size: 1rem;
+  margin: 0;
+}
+.rss-tag-summary {
+  font-size: 0.85rem;
+  color: #365b59;
+  overflow-wrap: anywhere;
+}
+.rss-tag-editor summary {
+  cursor: pointer;
+  margin-block: 0.5rem;
+}
+.rss-tag-editor input {
+  width: 100%;
+  margin-block: 0.5rem;
+}
+.rss-tag-editor form {
+  margin-block: 1rem;
+}
+
+/* Keep the live region available, without empty reading chrome. */
+.save-status:empty {
+  padding: 0;
+  min-height: 0;
+}
+.reading-settings label {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+}
+.reading-settings input[type="checkbox"] {
+  flex: 0 0 auto;
+  width: 22px;
+  height: 22px;
+}
+
+@supports not (scrollbar-gutter: stable) {
+  :root {
+    overflow-y: scroll;
+  }
 }

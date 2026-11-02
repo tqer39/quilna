@@ -1,4 +1,4 @@
-# Tsumiki Text: Apple Native Prototype
+# Quilna: Apple Native Prototype
 
 [English](README.md) | [日本語](README.ja.md)
 
@@ -66,13 +66,14 @@ Specifying a test data directory avoids writing to existing Application Support 
 
 ```bash
 swift run --package-path apple \
-  --scratch-path /private/tmp/adaptive-textbook-swift-build \
-  --cache-path /private/tmp/adaptive-textbook-swift-cache \
-  TsumikiText --data-directory /private/tmp/tsumiki-native-qa
+  --scratch-path /private/tmp/quilna-swift-build \
+  --cache-path /private/tmp/quilna-swift-cache \
+  Quilna --data-directory /private/tmp/quilna-native-qa
 ```
 
 When launched normally without a data directory, the app uses
 `TsumikiText/answers.sqlite` and `TsumikiText/feed-library.sqlite` under its Application Support directory.
+These legacy directory and bundle identifiers are retained across the Quilna rename so existing data stays available.
 Feed fetches contact the subscribed sources. Secrets and API keys are not handled.
 The prototype does not yet have distribution settings for DB encryption, App Sandbox, signing, or notarization.
 Swift's memory safety does not replace those OS permission and distribution settings.
@@ -81,8 +82,8 @@ Generate an unsigned `.app` for local checks with:
 
 ```bash
 sh apple/scripts/build-macos-app.sh
-open apple/.build/native/TsumikiText.app --args \
-  --data-directory /private/tmp/tsumiki-native-qa
+open apple/.build/native/Quilna.app --args \
+  --data-directory /private/tmp/quilna-native-qa
 ```
 
 Artifacts are written to `apple/.build/native/`.
@@ -90,14 +91,14 @@ This is not an App Store distribution or a Developer ID-signed app.
 
 ## Build for the iOS Simulator
 
-The shared `TsumikiText-iOS` scheme in `apple/TsumikiText.xcodeproj`
+The shared `Quilna-iOS` scheme in `apple/Quilna.xcodeproj`
 uses the same `TextbookUI` and `TextbookCore` as a local Swift Package.
 
 ```bash
-xcodebuild -project apple/TsumikiText.xcodeproj \
-  -scheme TsumikiText-iOS -configuration Debug \
+xcodebuild -project apple/Quilna.xcodeproj \
+  -scheme Quilna-iOS -configuration Debug \
   -sdk iphonesimulator -destination 'generic/platform=iOS Simulator' \
-  -derivedDataPath /private/tmp/adaptive-textbook-ios-build \
+  -derivedDataPath /private/tmp/quilna-ios-build \
   CODE_SIGNING_ALLOWED=NO build
 ```
 
@@ -108,8 +109,8 @@ Installation on a physical device, signing, and Apple account configuration are 
 
 ```bash
 swift test --package-path apple \
-  --scratch-path /private/tmp/adaptive-textbook-swift-build \
-  --cache-path /private/tmp/adaptive-textbook-swift-cache
+  --scratch-path /private/tmp/quilna-swift-build \
+  --cache-path /private/tmp/quilna-swift-cache
 ```
 
 Tests cover answer persistence, textbook-version separation, saving the same answer again, rejection of conflicting overwrites,
@@ -207,7 +208,7 @@ The development harness's ledger is a separate component; changing the article/s
 
 - `Sources/TextbookCore`: Feed parsing and HTTP fetching, article / translation / answer models, and SQLite storage.
 - `Sources/TextbookUI`: Shared macOS / iOS information-collection and textbook screens, on-device translation, and save state.
-- `Sources/TsumikiText`: macOS entry point and the test data-directory argument.
+- `Sources/Quilna`: macOS entry point and the test data-directory argument.
 - `iOS`: iOS entry point.
 - `Tests`: Regression tests for the core and UI state transitions during saves.
 

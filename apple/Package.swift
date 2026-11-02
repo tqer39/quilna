@@ -2,12 +2,12 @@
 import PackageDescription
 
 let package = Package(
-    name: "TsumikiText",
+    name: "Quilna",
     platforms: [.macOS(.v14), .iOS(.v17)],
     products: [
         .library(name: "TextbookCore", targets: ["TextbookCore"]),
         .library(name: "TextbookUI", targets: ["TextbookUI"]),
-        .executable(name: "TsumikiText", targets: ["TsumikiText"]),
+        .executable(name: "Quilna", targets: ["Quilna"]),
     ],
     targets: [
         .target(
@@ -23,7 +23,7 @@ let package = Package(
         ),
         .target(name: "TextbookCore", dependencies: ["CSQLite"]),
         .target(name: "TextbookUI", dependencies: ["TextbookCore"]),
-        .executableTarget(name: "TsumikiText", dependencies: ["TextbookUI"]),
+        .executableTarget(name: "Quilna", dependencies: ["TextbookUI"]),
         .testTarget(name: "TextbookCoreTests", dependencies: ["TextbookCore", "CSQLite"]),
         .testTarget(name: "TextbookUITests", dependencies: ["TextbookUI", "TextbookCore"]),
     ],

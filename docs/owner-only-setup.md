@@ -8,10 +8,13 @@ Exactly one GOOGLE_ALLOWED_EMAIL is required. Missing/invalid settings stop auth
 Existing sessions are also checked against the configured verified email on every request. Client-supplied userId/email/verified flags are not trusted.
 Ownership continues to use Better Auth's verified user.id, not the email as a vault identifier.
 
-The service display name is "積み木テキスト", and the approved Dev destination is `https://tsumiki-text.tqer39.workers.dev`.
-Dev has been published. Because Google is unconfigured, only a setup-pending screen is served. Individual credentials and additional permissions require separate confirmation.
+The service is Quilna (クイルナ), with canonical URL `https://quilna.page`.
+Domain registration, DNS connection, and migration of the deployed environment have not been performed.
+The examples below describe the configuration after migration, not currently applied settings.
+See the [publication record](dev-publication.md) for the existing Dev deployment.
+Dev has been published at the previous address. Because Google is unconfigured, only a setup-pending screen is served. Individual credentials and additional permissions require separate confirmation.
 Replace the example with the actual allowed email before use.
-No production-domain purchase is needed for this preparation. Existing Kazokubi domains/authentication/databases are not changed.
+Domain purchase and configuration are not performed as part of this rename. Existing Kazokubi domains/authentication/databases are not changed.
 
 Verification: mock OAuth through the production entry point confirmed owner access, rejection of other accounts/unverified emails,
 ignored client-supplied IDs, fail-closed behavior for missing settings, and rechecks of existing sessions. All 28 Workers tests passed.
@@ -21,7 +24,7 @@ ignored client-supplied IDs, fail-closed behavior for missing settings, and rech
 Approval for Dev publication and the owner's Free-tier confirmation were received; dedicated resources were created and published.
 The remaining handoff covers secure secret entry.
 
-- Publication candidate: `https://tsumiki-text.tqer39.workers.dev`.
+- Canonical domain (connection pending): `https://quilna.page`.
 - Initial viewing/login audience: only the owner, `owner@example.invalid`.
 - Prepare owner-only application authentication and necessary OAuth/D1/DO resources. Do not add Access.
 - Check rejection of other accounts before publication. Real-key entry and live AI requests remain disabled.
@@ -39,11 +42,11 @@ No shared settings across all Workers were changed. Google client/secret configu
 | BETTER_AUTH_SECRET | Strong random value of at least 32 characters; protects authentication cookies/state | Worker Secret |
 | BYOK_ENCRYPTION_KEYRING | AES-256 keyring for LLM key storage | Worker Secret |
 
-Published configuration already applied:
+Configuration example to apply after connecting the domain:
 
 ```json
 {
-  "APP_ORIGIN": "https://tsumiki-text.tqer39.workers.dev",
+  "APP_ORIGIN": "https://quilna.page",
   "GOOGLE_ALLOWED_EMAIL": "owner@example.invalid"
 }
 ```
@@ -51,7 +54,7 @@ Published configuration already applied:
 The Google Web OAuth client's Authorized redirect URI must match exactly:
 
 ```text
-https://tsumiki-text.tqer39.workers.dev/api/auth/callback/google
+https://quilna.page/api/auth/callback/google
 ```
 
 The implementation requests only openid email, not profile/Drive/Gmail scopes or offline grants.

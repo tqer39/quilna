@@ -1,0 +1,17 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["github>tqer39/renovate-config:renovate.json5"],
+  "automerge": false,
+  "platformAutomerge": false,
+  "dependencyDashboard": true,
+  "ignoreScripts": true,
+  "ignorePlugins": true,
+  "vulnerabilityAlerts": {
+    "automerge": false,
+    "platformAutomerge": false,
+    "minimumReleaseAge": null,
+    "schedule": ["at any time"],
+    "prCreation": "immediate"
+  },
+  "packageRules": [{ "matchPackageNames": ["*"], "automerge": false }]
+}

@@ -52,11 +52,18 @@ func TestHelper(t *testing.T) {
 		os.Exit(0)
 	case "review":
 		var input struct {
-			CodeHash string `json:"codeHash"`
+			CodeHash string          `json:"codeHash"`
+			Evidence []Evidence      `json:"evidence"`
+			History  *HistorySummary `json:"history"`
 		}
 		_ = json.NewDecoder(os.Stdin).Decode(&input)
 		r := Review{Decision: "approve", CodeHash: input.CodeHash, Findings: []string{}}
 		switch args[1] {
+		case "summary-context":
+			if len(input.Evidence) != 1 || input.Evidence[0].Phase != "checks" || input.Evidence[0].ExitCode != 0 || input.Evidence[0].CodeHash != input.CodeHash || input.History == nil || input.History.CheckOperations != 2 || input.History.FailedCheckOperations != 1 || input.History.RepairCycles != 1 {
+				r.Decision = "reject"
+				r.Findings = []string{"current checks or failed history missing from reviewer input"}
+			}
 		case "invalid":
 			fmt.Println("looks fine")
 			os.Exit(0)

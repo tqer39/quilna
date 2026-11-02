@@ -2,7 +2,10 @@
 
 [English](dev-publication.md) | [日本語](dev-publication.ja.md)
 
-[Tsumiki Text Dev](https://tsumiki-text.tqer39.workers.dev) has been published.
+The service is now Quilna (クイルナ), with canonical domain [quilna.page](https://quilna.page).
+Domain registration, DNS connection, and migration of the deployed environment have not been performed.
+[Issue #53](https://github.com/tqer39/quilna/issues/53) tracks that operational work; the [naming decision](branding.md) records the investigation and adoption judgment.
+The record below describes the owner-only Dev deployment under the previous name at `https://tsumiki-text.tqer39.workers.dev`.
 Google authentication setup is pending, so the login button is disabled. This is not a successful live-login verification.
 This is a fixed CAA lesson prototype; lesson generation, cloud history sync, and live LLM requests are unimplemented/disabled.
 
@@ -49,8 +52,10 @@ Use the [owner-only authentication input steps](owner-only-setup.md).
 The Google Web client's scopes are openid email only. No profile/Drive/Gmail/offline grant is requested.
 Only the owner is a test user; the application also checks signatures, nonce, and verified email.
 
+After connecting the domain, update APP_ORIGIN and the Google redirect URI together.
+
 ```text
-https://tsumiki-text.tqer39.workers.dev/api/auth/callback/google
+https://quilna.page/api/auth/callback/google
 ```
 
 GOOGLE_CLIENT_ID is a public variable; GOOGLE_CLIENT_SECRET is the dedicated client's Secret.

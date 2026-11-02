@@ -1,6 +1,6 @@
 ---
 name: apple-native-validation
-description: "Validate Tsumiki Text's Swift and SwiftUI changes on macOS and iOS, including concurrency regressions, builds, and actual native UI behavior. Use for native implementation or validation requests; skip native execution for documentation-only changes."
+description: "Validate Quilna's Swift and SwiftUI changes on macOS and iOS, including concurrency regressions, builds, and actual native UI behavior. Use for native implementation or validation requests; skip native execution for documentation-only changes."
 ---
 
 # Apple Native Validation

@@ -1,9 +1,51 @@
 import { test, expect } from "@playwright/test";
 import { writeFile } from "node:fs/promises";
+test("reading settings contain local-save scope and shortcuts without permanent reading chrome", async ({
+  page,
+}, testInfo) => {
+  await page.goto("/#read");
+  await expect(page.locator(".save-status")).not.toBeVisible();
+  const toggle = page.getByLabel("N：次へ / P：前へ（キー移動を有効にする）");
+  await expect(toggle).not.toBeVisible();
+  await page.getByRole("button", { name: "次へ →", exact: true }).click();
+  await saveSettled(page);
+  await expect(page.locator(".save-status")).not.toBeVisible();
+  const trigger = page.getByRole("button", { name: "読書設定", exact: true });
+  await trigger.click();
+  const dialog = page.getByRole("dialog", { name: "読書設定", exact: true });
+  await expect(dialog).toBeVisible();
+  await expect(
+    dialog.getByText(/別の端末やブラウザとは同期しません/),
+  ).toBeVisible();
+  await expect(toggle).toBeVisible();
+  await page.keyboard.press("n");
+  await expect(page).toHaveURL(/#explore$/);
+  await expect
+    .poll(() =>
+      page.evaluate(() => document.documentElement.scrollWidth <= innerWidth),
+    )
+    .toBe(true);
+  await page.screenshot({
+    path: testInfo.outputPath("reading-settings.png"),
+    fullPage: true,
+  });
+  await page.keyboard.press("Escape");
+  await expect(dialog).not.toBeVisible();
+  await expect(trigger).toBeFocused();
+  await trigger.click();
+  await page.goBack();
+  await expect(dialog).not.toBeVisible();
+  await expect(trigger).toBeFocused();
+  await page.screenshot({
+    path: testInfo.outputPath("reading-without-save-panel.png"),
+    fullPage: true,
+  });
+});
+
 test("read, interact, answer retry, reload, resume, back, time and mobile layout", async ({
   page,
 }, testInfo) => {
-  await page.goto("/");
+  await page.goto("/#read");
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible();
   if (testInfo.project.name === "mobile") {
     await page.getByText("このセクションの目次", { exact: true }).click();
@@ -66,7 +108,7 @@ test("read, interact, answer retry, reload, resume, back, time and mobile layout
   await expect(
     page.getByRole("heading", { name: "03 / 結果を予測する" }),
   ).toBeVisible();
-  await page.goto("/");
+  await page.goto("/#read");
   await page.getByRole("button", { name: /前回のブロックへ/ }).click();
   await saveSettled(page);
   await expect(
@@ -137,7 +179,7 @@ test("corrupt history is not overwritten", async ({ page }) => {
   await page.addInitScript(() =>
     localStorage.setItem("fieldnotes.history.v1", "corrupt"),
   );
-  await page.goto("/");
+  await page.goto("/#read");
   await expect(
     page.getByText(/既存データの上書きを止めています/),
   ).toBeVisible();
@@ -278,7 +320,7 @@ test("new predictions, applications and old answers survive the version update",
         }),
       );
   }, old);
-  await page.goto("/");
+  await page.goto("/#read");
   await expect(page.getByText(/旧版の回答は保存したまま/)).toBeVisible();
   await expect(
     page.getByRole("button", { name: /前回のブロックへ/ }),
@@ -423,7 +465,7 @@ test("basic explanations and operational guidance are always included", async ({
 test("compact reading, visible budget endpoint and explicit resume scope", async ({
   page,
 }) => {
-  await page.goto("/");
+  await page.goto("/#read");
   for (const [minutes, endpoint] of [
     ["5", "02"],
     ["10", "04"],
@@ -794,9 +836,7 @@ test("semantic feedback separates correctness, policy, warnings and save state w
       await expect(
         page.locator('.question-feedback [data-tone="error"]'),
       ).toBeVisible();
-      await expect(
-        page.locator('.save-status [data-tone="success"]'),
-      ).toBeVisible();
+      await expect(page.locator(".save-status")).toBeEmpty();
       if (width === 390)
         await page.screenshot({
           path: testInfo.outputPath(`quiz-error-${scheme}.png`),
@@ -1149,9 +1189,7 @@ test("prediction and reflection survive a failed write and explicit save retry",
   });
   await page.getByRole("button", { name: "保存を再試行" }).click();
   await saveSettled(page);
-  await expect(
-    page.locator('.save-status [data-tone="success"]'),
-  ).toBeVisible();
+  await expect(page.locator(".save-status")).toBeEmpty();
   const history = await page.evaluate(() =>
     JSON.parse(localStorage.getItem("fieldnotes.history.v1")!),
   );
@@ -1381,10 +1419,12 @@ test("stale source holds proposals and cancellation never publishes", async ({
 
 test("term questions, local drafts and proposal controls reflow and do not send generation requests", async ({
   page,
+  baseURL,
 }, testInfo) => {
   const requests: string[] = [];
   page.on("request", (r) => {
-    if (!r.url().startsWith("http://127.0.0.1:5173")) requests.push(r.url());
+    if (new URL(r.url()).origin !== new URL(baseURL!).origin)
+      requests.push(r.url());
   });
   for (const width of [320, 390, 1440]) {
     await page.setViewportSize({ width, height: 900 });
@@ -1641,15 +1681,25 @@ test("N/P ignores forms, editable text, modifiers, composition, modal and disabl
   await expect(
     page.getByRole("dialog", { name: "RRsetの説明" }),
   ).not.toBeVisible();
+  await page.getByRole("button", { name: "読書設定", exact: true }).click();
   await page.getByLabel("N：次へ / P：前へ（キー移動を有効にする）").uncheck();
+  await page.getByRole("button", { name: "閉じて読書へ戻る" }).click();
+  await expect(
+    page.getByRole("dialog", { name: "読書設定", exact: true }),
+  ).not.toBeVisible();
   await page.locator("article h2").focus();
   await page.keyboard.press("n");
   await expect(page).toHaveURL(/#read$/);
   await saveSettled(page);
   await page.reload();
+  await page.getByRole("button", { name: "読書設定", exact: true }).click();
   await expect(
     page.getByLabel("N：次へ / P：前へ（キー移動を有効にする）"),
   ).not.toBeChecked();
+  await page.getByRole("button", { name: "閉じて読書へ戻る" }).click();
+  await expect(
+    page.getByRole("dialog", { name: "読書設定", exact: true }),
+  ).not.toBeVisible();
   await page.getByRole("button", { name: "次へ →", exact: true }).click();
   await saveSettled(page);
   await expect(page).toHaveURL(/#explore$/);
@@ -1678,12 +1728,30 @@ test("N/P navigation and answers remain usable during storage failure", async ({
       { exact: true },
     ),
   ).toBeVisible();
+  await page.getByRole("button", { name: "読書設定", exact: true }).click();
   await page.getByLabel("N：次へ / P：前へ（キー移動を有効にする）").uncheck();
   await expect(
     page.getByText("設定はこのタブのみ。保存できませんでした。", {
       exact: true,
     }),
   ).toBeVisible();
+  await page.getByRole("button", { name: "閉じて読書へ戻る" }).click();
+  await expect(
+    page.getByRole("dialog", { name: "読書設定", exact: true }),
+  ).not.toBeVisible();
+  await page.getByRole("button", { name: "読書設定", exact: true }).click();
+  await expect(
+    page.getByLabel("N：次へ / P：前へ（キー移動を有効にする）"),
+  ).not.toBeChecked();
+  await expect(
+    page.getByText("設定はこのタブのみ。保存できませんでした。", {
+      exact: true,
+    }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "閉じて読書へ戻る" }).click();
+  await expect(
+    page.getByRole("dialog", { name: "読書設定", exact: true }),
+  ).not.toBeVisible();
   await page.locator("article h2").focus();
   await page.keyboard.press("n");
   await expect(page).toHaveURL(/#predict$/);

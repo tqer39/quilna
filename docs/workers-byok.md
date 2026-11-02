@@ -105,7 +105,8 @@ There is no cross-provider automatic retry/fallback. See [generation connection 
 
 ## Preparing owner-only Dev publication
 
-The service display name is "積み木テキスト"; the approved Dev destination is tsumiki-text.tqer39.workers.dev.
+The service is Quilna (クイルナ), with canonical domain `https://quilna.page`.
+The existing Dev deployment is recorded separately; domain registration, DNS connection, and deployment migration have not been performed.
 A production custom domain, paid plans, live LLM requests, and GitHub push/PR are outside this scope.
 See [publication settings and safe handoff](dev-publication.md) and [owner-only input steps](owner-only-setup.md).
 

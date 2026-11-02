@@ -104,7 +104,8 @@ SQLiteのbudget_recordsへ要求単位で保存し、共通ledger schemaとGener
 
 ## 本人限定Devの公開準備
 
-サービス表示は「積み木テキスト」、承認されたDev公開先はtsumiki-text.tqer39.workers.devです。
+サービス名は「Quilna（クイルナ）」、正式ドメインは `https://quilna.page` です。
+既存Devの公開記録とは区別し、ドメイン取得・DNS接続・公開環境の移行は未実施です。
 本番独自domain・有料plan・LLM実送信・GitHub push/PRは対象外です。
 [公開設定と安全なhandoff](dev-publication.ja.md)、[本人限定の入力手順](owner-only-setup.ja.md)を参照してください。
 

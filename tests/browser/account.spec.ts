@@ -5,9 +5,9 @@ const panel = (page: import("@playwright/test").Page) =>
 test("unconfigured real login UI stays off and reading/mock settings still work", async ({
   page,
 }, info) => {
-  await page.goto("/");
-  await expect(page).toHaveTitle("CAA を読み解く | 積み木テキスト");
-  await expect(page.locator("header .brand")).toHaveText("積み木テキスト");
+  await page.goto("/#read");
+  await expect(page).toHaveTitle("CAA を読み解く | Quilna");
+  await expect(page.locator("header .brand")).toHaveText("Quilna");
   await panel(page).locator("summary").click();
   await expect(
     panel(page).getByRole("button", { name: "Googleでログイン", exact: true }),
@@ -69,7 +69,7 @@ test("authenticated metadata panel keeps keys empty/disabled, clears on logout, 
       },
     });
   });
-  await page.goto("/");
+  await page.goto("/#read");
   const before = await page.evaluate(() => JSON.stringify(localStorage));
   await panel(page).locator("summary").click();
   await expect(
@@ -94,6 +94,7 @@ test("authenticated metadata panel keeps keys empty/disabled, clears on logout, 
 });
 test("cancel during login startup rejects the late redirect and duplicate clicks do not create another request", async ({
   page,
+  baseURL,
 }) => {
   let release: () => void = () => {};
   const pending = new Promise<void>((r) => {
@@ -123,7 +124,7 @@ test("cancel during login startup rejects the late redirect and duplicate clicks
     }
     return route.fulfill({ json: { status: "signed-out" } });
   });
-  await page.goto("/");
+  await page.goto("/#read");
   await panel(page).locator("summary").click();
   const login = panel(page).getByRole("button", {
     name: "Googleでログイン",
@@ -138,7 +139,7 @@ test("cancel during login startup rejects the late redirect and duplicate clicks
   release();
   await expect(login).toBeEnabled();
   expect(starts).toBe(1);
-  expect(page.url()).toContain("127.0.0.1:5173");
+  expect(new URL(page.url()).origin).toBe(new URL(baseURL!).origin);
 });
 test("callback outcome query is removed and authentication failure leaves reading available", async ({
   page,
@@ -146,7 +147,7 @@ test("callback outcome query is removed and authentication failure leaves readin
   await page.route("**/api/auth/status", (route) =>
     route.fulfill({ status: 503, json: { status: "auth-unconfigured" } }),
   );
-  await page.goto("/?auth=failed");
+  await page.goto("/?auth=failed#read");
   await expect(panel(page)).toHaveAttribute("open", "");
   expect(new URL(page.url()).searchParams.has("auth")).toBe(false);
   await expect(
@@ -188,7 +189,7 @@ test("session expiry removes saved metadata on the next state refresh and does n
       },
     });
   });
-  await page.goto("/");
+  await page.goto("/#read");
   await panel(page).locator("summary").click();
   await expect(panel(page).getByRole("region")).toHaveCount(2);
   live = false;
@@ -203,9 +204,10 @@ test("session expiry removes saved metadata on the next state refresh and does n
 
 test("private Dev logout replaces cached reader with the login entry", async ({
   page,
+  baseURL,
 }) => {
   let logged = true;
-  await page.route("http://127.0.0.1:5173/", async (route) => {
+  await page.route(new URL("/", baseURL).href, async (route) => {
     if (!logged)
       return route.fulfill({
         contentType: "text/html",
@@ -255,7 +257,7 @@ test("private Dev logout replaces cached reader with the login entry", async ({
       },
     });
   });
-  await page.goto("/");
+  await page.goto("/#read");
   await panel(page).locator("summary").click();
   await expect(
     panel(page).getByRole("button", { name: "ログアウト", exact: true }),

@@ -1,8 +1,14 @@
-# 積み木テキスト
+# Quilna（クイルナ）
 
 [English](README.md) | [日本語](README.ja.md)
 
-技術的なリポジトリ名は adaptive-textbook です。現在のアプリと教材本文は日本語です。
+Quilna（クイルナ）は、人間が情報を選び、考え、自分の教科書を編むためのサービスです。
+リポジトリ名は `quilna`、正式ドメインは [quilna.page](https://quilna.page) です。
+今回の改名ではドメイン取得・DNS接続・本番公開は行っていません。現在のアプリと教材本文は日本語です。
+調査範囲と採用判断は[命名とドメインの記録](docs/branding.ja.md)、ドメイン取得・DNS接続・Dev再デプロイは[Issue #53](https://github.com/tqer39/quilna/issues/53)を参照してください。
+
+合意した全機能をブラウザ版で完成させ、プロジェクトオーナーの明示的な使いやすさの受け入れ後に、iOS・macOSを1プラットフォームずつ進めます。
+ネイティブ版の機能開発は保留しています。[開発順序と受け入れ条件](docs/product-development.ja.md)を参照してください。
 
 SwiftUIのmacOS／iOS最小アプリを`apple/`、Go製の開発ハーネスを`harness/`に追加しています。
 ネイティブ版はRSS／Atomの収集・ブックマーク・Appleの端末内翻訳と、固定の日本語教材・理解問題・回答履歴を扱います。
@@ -11,9 +17,12 @@ SwiftUIのmacOS／iOS最小アプリを`apple/`、Go製の開発ハーネスを`
 [ツール／SaaSの選定](docs/harness-tools.ja.md)を参照してください。
 開発用Codexは既存Pro認証で実装・レビュー・修正を実検証済みです。
 [実接続の結果と再現手順](docs/codex-live-validation.ja.md)を参照してください。製品の教材生成とは別の接続です。
-以下は引き続き利用できる既存Web試作の説明です。
+ブラウザ版はサイト・記事のURLから配信元を探し、RSS/Atomの登録・更新、記事閲覧、ローカル保存へ進みます。
+[起動・保存範囲・各インターフェースのバックエンド構成](docs/browser-rss.ja.md)を参照してください。
+以下の教材機能は「設定 → デモ教材 → デモ教材を開く」から開けます。
 
-[本人限定Dev](https://tsumiki-text.tqer39.workers.dev)を公開済みです。Google認証は設定準備中です。
+旧名称の本人限定Devは公開済みで、Google認証は設定準備中です。
+[既存の公開記録](docs/dev-publication.ja.md)を参照してください。
 本番domainの購入・公開とLLM実送信はこの作業に含めません。
 [公開前の最小準備](docs/workers-byok.ja.md)を参照してください。
 
@@ -29,16 +38,21 @@ Google設定欄は実APIへ接続済みですが、未設定時は停止し、�
 
 ## ローカル起動
 
-Node.js 22.12 以上（または 24/26 系）と npm を使用します。
+`mise.toml`に設定した修正版のNode.js 26.12.1とnpmを使用します。
+`package.json`では保守中の22/24系についてもセキュリティ上の最低版を指定しています。CIは26.12.1で実行します。
 macOS / Windows / Linux で共通の手順です。
 
 ```bash
-npm ci
-npm run dev
+mise install node
+mise exec -- npm ci
+mise exec -- npm run dev
 ```
 
 ブラウザで <http://127.0.0.1:5173> を開きます。
-外部 DNS、クラウド、AI API、実アカウントには接続しません。
+RSS更新時は、ローカルの取得処理から登録先の公開HTTPS配信元へ接続します。
+RSSの記事と購読はこのブラウザのIndexedDBへ保存し、端末間では同期しません。
+AI API・実アカウントへの接続や、新たなクラウド公開は行いません。
+以下のキー操作と回答履歴は設定内の「デモ教材」の動作です。
 Nで次、Pで前のブロックへ移動できます。大文字も可。入力欄・用語dialogでは発火しません。
 「N：次へ / P：前へ」のチェックで単文字shortcutを無効化できます。設定保存失敗時は同タブのみ有効です。
 履歴はこのブラウザの localStorage に保存します。
@@ -69,6 +83,11 @@ tmux kill-session -t adaptive-textbook-caa
 ```
 
 ## 検証
+
+ブラウザ版の実装言語は引き続きTypeScriptです。`mise run typecheck:tsrs`で任意のRust製コンパイラー検査を実行できます。[試行結果と互換性の制約](docs/typescript-tools.ja.md)を参照してください。
+
+[継続保守の手順](docs/security-maintenance.ja.md)で、Renovate、全依存の監査、実行環境・証明書の更新、日次検査を説明しています。
+プロジェクトの`.npmrc`でインストールスクリプトを抑止します。明示したnpmコマンドは実行されます。
 
 ```bash
 npm run lint
