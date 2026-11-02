@@ -43,6 +43,7 @@ export function feedLockSupported(): boolean {
 }
 // Two library-wide slots and a per-feed lock cover both manual and automatic calls.
 // Unsupported browsers keep manual refresh with an in-tab limit; automation is disabled.
+/** Share two refresh slots and a per-feed lock within the selected library. */
 export async function withFeedRefreshLock(
   address: string,
   job: () => Promise<void>,

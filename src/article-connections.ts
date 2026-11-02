@@ -62,6 +62,7 @@ export function validConnection(value: unknown): value is ArticleConnection {
   );
 }
 let connection: Promise<IDBDatabase> | undefined;
+/** Open this library's article relationships, keeping saved entries intact on failure. */
 export function openConnections(): Promise<IDBDatabase> {
   if (connection) return connection;
   let failed = false;

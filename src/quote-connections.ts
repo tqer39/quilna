@@ -37,6 +37,7 @@ export function validQuoteConnection(value: unknown): value is QuoteConnection {
   );
 }
 let connection: Promise<IDBDatabase> | undefined;
+/** Keep the selected library's retained quote relationships intact if opening fails. */
 export function openQuoteConnections(): Promise<IDBDatabase> {
   if (connection) return connection;
   let failed = false;

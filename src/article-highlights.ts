@@ -77,6 +77,7 @@ export function highlightMatches(
   );
 }
 let connection: Promise<IDBDatabase> | undefined;
+/** Cache this library's highlight connection without replacing notes after a failed open. */
 export function openHighlights(): Promise<IDBDatabase> {
   if (connection) return connection;
   let failed = false;

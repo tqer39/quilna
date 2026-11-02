@@ -447,7 +447,7 @@ export async function productionFetch(request, env) {
       return new Response(
         (await asset.text()).replace(
           "</head>",
-          '<meta name="private-dev" content="true">' +
+          (env.PRIVATE_DEV === "true" ? '<meta name="private-dev" content="true">' : '') +
             (env.LIBRARY_ISOLATION_ENABLED === "true" ? '<meta name="account-libraries" content="required">' : '') + '</head>',
         ),
         { status: asset.status, headers },

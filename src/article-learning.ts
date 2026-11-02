@@ -30,6 +30,7 @@ export function validLearningRecord(value: unknown): value is LearningRecord {
   );
 }
 let connection: Promise<IDBDatabase> | undefined;
+/** Cache this library's reflection connection; opening failures retain saved records. */
 export function openLearning(): Promise<IDBDatabase> {
   if (connection) return connection;
   let failed = false;

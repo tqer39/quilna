@@ -445,6 +445,7 @@ test("private Dev serves no-store reader assets only to the verified owner and b
   const page = await a.api("/");
   assert.match(page.value, /PRIVATE-READER-ASSET/);
   assert.match(page.value, /private-dev/);
+  assert.doesNotMatch(page.value, /account-libraries/);
   assert.equal(page.headers.get("cache-control"), "no-store");
   assert.match(page.headers.get("content-security-policy"), /script-src 'self'/);
   assert.ok(!page.headers.get("content-security-policy").includes("unsafe-inline"));
@@ -629,6 +630,22 @@ test("account-library opt-in gates all assets even without PRIVATE_DEV and injec
     page.value,
     /<meta name="account-libraries" content="required">/,
   );
+  assert.doesNotMatch(page.value, /<meta name="private-dev"/);
+  assert.equal(page.headers.get("cache-control"), "no-store");
+  assert.equal((await a.api("/api/library/status")).status, 200);
+  const csrf = (await a.api("/api/auth/status")).value.csrfToken;
+  await a.api("/api/auth/logout", "POST", {}, csrf);
+  assert.equal((await a.api("/assets/app.js")).status, 401);
+});
+
+
+test("private Dev and library markers are both retained when both flags are enabled", async (t) => {
+  const f = await fixture(t, { entry: "workers/index.mjs", missing: { PRIVATE_DEV: "true", LIBRARY_ISOLATION_ENABLED: "true", LIBRARY_LEGACY_OWNER_HASH: "f".repeat(64) } }), a = f.browser();
+  assert.equal((await a.api("/assets/app.js")).status, 401);
+  await a.api(f.callback(await f.start(a)));
+  const page = await a.api("/");
+  assert.match(page.value, /<meta name="private-dev" content="true">/);
+  assert.match(page.value, /<meta name="account-libraries" content="required">/);
   assert.equal(page.headers.get("cache-control"), "no-store");
   assert.equal((await a.api("/api/library/status")).status, 200);
   const csrf = (await a.api("/api/auth/status")).value.csrfToken;

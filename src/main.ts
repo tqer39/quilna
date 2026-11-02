@@ -159,6 +159,7 @@ window.addEventListener("beforeunload", (event) => {
     event.returnValue = "";
   }
 });
+/** Merge this library's retained history, holding conflicts and using Web Locks when available. */
 function save() {
   pendingSaves++;
   status.dataset.saving = "true";
@@ -238,6 +239,7 @@ function save() {
     });
   else persist();
 }
+/** Reread this library's current book under its lock before applying a reviewed proposal. */
 async function acceptProposal(proposal: Proposal): Promise<string | null> {
   if (!navigator.locks)
     return "このブラウザでは安全な排他制御を利用できません。反映は保留します。";

@@ -20,6 +20,7 @@ import {
   type DocumentVersion,
 } from "./source-document";
 export const documentDatabase = libraryName("quilna.documents.v1");
+/** Open this library's source versions while preserving data during supported upgrades. */
 export async function openDocuments(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     let failed = false;
@@ -387,6 +388,7 @@ export async function retainDocument(
   }
   return result;
 }
+/** Serialize one source's refresh within its library and retain earlier immutable versions. */
 export async function acquireDocument(
   url: string,
   options: { force?: boolean; scope?: string } = {},

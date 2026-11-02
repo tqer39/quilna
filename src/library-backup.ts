@@ -190,6 +190,7 @@ export async function exportLibrary(
     return { blob, header, counts: counter.counts };
   });
 }
+/** Open restore staging for this library without clearing damaged or future schemas. */
 async function openStage(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     let failed = false;

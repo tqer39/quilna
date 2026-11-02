@@ -96,6 +96,7 @@ export function readArticle(db: IDBDatabase, id: string): Promise<FeedArticle> {
 }
 
 export const feedDatabase = libraryName("tsumiki.rss.v1");
+/** Open the selected library's subscriptions and articles without resetting unreadable storage. */
 export function openFeedLibrary(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = openLibraryDatabase(feedDatabase, 1);
