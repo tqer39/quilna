@@ -1,4 +1,9 @@
 import {
+  paperQuery,
+  paperSearchEndpoint,
+  parsePaperSearch,
+} from "./paper-search";
+import {
   crossrefMetadata,
   paperDOI,
   paperEndpoint,
@@ -17,6 +22,35 @@ export class PaperClient {
   /** Fetch one manually requested observation under the shared rate/deadline boundary. */
   async lookup(input: string, signal: AbortSignal) {
     const doi = paperDOI(input);
+    return this.request(
+      paperEndpoint(doi),
+      signal,
+      async (raw, active) => {
+        const metadata = crossrefMetadata(raw, doi);
+        active.throwIfAborted();
+        const snapshot = await paperSnapshot(
+          metadata,
+          new Date(this.now()).toISOString(),
+        );
+        return parsePaper(JSON.stringify(snapshot));
+      },
+      true,
+    );
+  }
+  /** Search bibliographic facts only on explicit submission, sharing the DOI request boundary. */
+  async search(input: string, signal: AbortSignal) {
+    const query = paperQuery(input);
+    return this.request(paperSearchEndpoint(query), signal, async (raw) =>
+      parsePaperSearch(raw),
+    );
+  }
+  /** Keep list and singleton transport, rate limits, validation and deadlines under one profile-wide lock. */
+  private async request<T>(
+    endpoint: string,
+    signal: AbortSignal,
+    consume: (raw: unknown, active: AbortSignal) => Promise<T>,
+    single = false,
+  ): Promise<T> {
     if (!navigator.locks)
       throw Error(
         "このブラウザでは論文DBへの要求調整を利用できません。対応するブラウザで開いてください。",
@@ -34,7 +68,7 @@ export class PaperClient {
         combined = AbortSignal.any([signal, deadline]);
       let response: Response | undefined;
       try {
-        response = await this.send(paperEndpoint(doi), {
+        response = await this.send(endpoint, {
           signal: combined,
           credentials: "omit",
           referrerPolicy: "no-referrer",
@@ -63,7 +97,7 @@ export class PaperClient {
         if (response.status === 429 || response.status === 503)
           pause = Math.max(pause, 60_000);
         localStorage.setItem(rateKey, String(this.now() + pause));
-        if (response.status === 404)
+        if (response.status === 404 && single)
           throw Error(
             "CrossrefにこのDOIの書誌情報がありません。他の登録機関のDOIもあります。保存済みの記録は保持しています。",
           );
@@ -103,16 +137,13 @@ export class PaperClient {
           bytes.set(chunk, offset);
           offset += chunk.byteLength;
         }
-        const metadata = crossrefMetadata(
-          JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)),
-          doi,
+        const raw = JSON.parse(
+          new TextDecoder("utf-8", { fatal: true }).decode(bytes),
         );
         combined.throwIfAborted();
-        const snapshot = await paperSnapshot(
-          metadata,
-          new Date(this.now()).toISOString(),
-        );
-        return await parsePaper(JSON.stringify(snapshot));
+        const result = await consume(raw, combined);
+        combined.throwIfAborted();
+        return result;
       } catch (error) {
         if (combined.aborted)
           throw Error(

@@ -4,7 +4,7 @@
 
 ## Browser workflow
 
-**設定 → 論文の出典 → DOIから書誌情報を確認** opens `/?view=papers`.
+**設定 → 論文の出典 → 論文を検索・DOIから確認** opens `/?view=papers`.
 Enter a literal DOI or an HTTPS `doi.org`/`dx.doi.org` resolver URL, then explicitly press **DOIをCrossrefへ送って確認**.
 The page discloses the provider and transmitted identifier before dispatch.
 It previews selected bibliographic facts without automatically saving them.
@@ -21,15 +21,25 @@ Missing update records do not establish that no correction/retraction exists.
 The registered publisher URL is displayed as text; the DOI resolver opens only after the reader follows its link.
 Source-provided strings are text, never mounted HTML.
 
-The page does not store/display abstracts, obtain PDFs/full text, search by keywords, select source excerpts or invoke textbook generation/review.
+**書誌キーワード** accepts 1–200 characters of bibliographic terms (no line breaks/control characters).
+**キーワードをCrossrefへ送って検索** explicitly sends the query, after disclosing that Crossref records its contents and IP address.
+This searches bibliographic metadata, not full text. Only the first 20 provider items are requested; the provider's total and identical DOI duplicate count are shown.
+Refine the query for more results; there is no paging, automatic continuation or persisted query history.
+Results show selected titles/authors/type/container/publisher/publication dates with missing facts marked unknown.
+**このDOIをCrossrefへ送って詳細を確認** performs the separate DOI lookup above; list summaries cannot be saved as observations.
+A pending/failed/cancelled search keeps the last successful results labeled with their original query. Input changes and selection invalidate late completions, even if transport ignores cancellation.
+Search summaries and queries disappear on reload; saved observations remain.
+
+The page does not store/display abstracts, obtain PDFs/full text, select source excerpts or invoke textbook generation/review.
 Those parts of [Issue #31](https://github.com/tqer39/quilna/issues/31) and the connected [generation workflow](https://github.com/tqer39/quilna/issues/7) remain unfinished.
 Bibliographic retrieval does not establish claim correctness, peer review, full-text version identity or permission to redistribute publisher content.
 
 ## Provider, terms and request limits
 
-The adapter uses only Crossref's public single-record `GET https://api.crossref.org/works/{encoded DOI}` endpoint.
+The adapter uses Crossref's public single-record `GET https://api.crossref.org/works/{encoded DOI}` and explicitly submitted list `GET https://api.crossref.org/works` endpoints.
+The list uses [`query.bibliographic`, `rows=20` and `select`](https://github.com/CrossRef/rest-api-doc) limited to `DOI,title,author,type,container-title,publisher,published`; there is no `query.title`, contact parameter or API key.
 No registration, API key, paid subscription or email is configured.
-It omits credentials and referrers, refuses redirects and sends only the DOI with an `Accept: application/json` header.
+It omits credentials and referrers, refuses redirects and sends only the DOI or bounded bibliographic query/field selection with an `Accept: application/json` header.
 It does not contact a DOI resolver, publisher, another registration agency or a search endpoint automatically.
 The [official retrieval documentation](https://www.crossref.org/documentation/retrieve-metadata/) says public requests still log IP addresses and request contents.
 The [REST API documentation](https://www.crossref.org/documentation/retrieve-metadata/rest-api/) permits reuse of almost all metadata but warns that abstracts may retain publisher/author copyright.
@@ -37,8 +47,8 @@ The work response can include an abstract; its JSON is received in memory before
 The adapter selects bibliographic facts and excludes abstracts, references, arbitrary response fields and article content from storage, display and export.
 Local observations have no automatic expiry or background update. Provider availability and live-source acceptance have not been established by the offline fixtures.
 
-As checked on 2026-11-03 JST, the [official July 2026 limit update](https://community.crossref.org/t/refining-rest-api-limits-for-improved-stability-and-reliability/16137) specifies 5 single-record requests/second for the public pool, with lower list limits.
-The implementation makes no list requests and uses a more conservative minimum one-second gap.
+As checked on 2026-11-03 JST, the [official July 2026 limit update](https://community.crossref.org/t/refining-rest-api-limits-for-improved-stability-and-reliability/16137) specifies 5 single-record requests/second for the public pool, and 1 list request/second.
+Both operations share a conservative minimum one-second gap, including across account-library changes.
 A Web Lock serializes same-origin tabs in one browser profile; localStorage retains the next permitted attempt across reloads.
 Advertised limit/interval headers can extend the gap. `Retry-After` can extend it further; 429/503 impose at least 60 seconds.
 There are no automatic retries, polling or queued bulk requests. A reader retries explicitly after the boundary.
@@ -67,6 +77,6 @@ There is no cloud synchronization, automatic deletion or snapshot-management UI.
 
 ## Verification scope
 
-Synthetic fixtures cover field selection, partial dates, deposited version/relationship records, request bounds, rate responses, cancellation, immutable saves and separate-profile file exchange.
-The built reader runtime uses real local authentication with offline Google/provider responses to check page-specific CSP and explicit DOI dispatch.
+Synthetic fixtures cover field selection, partial dates, deposited version/relationship records, request bounds, list validation/deduplication, query encoding, shared list/DOI rate responses, late success/failure cancellation, immutable saves and separate-profile file exchange.
+The built reader runtime uses real local authentication with offline Google/provider responses to check page-specific CSP and explicit keyword/DOI dispatch.
 These are not live Crossref availability/CORS tests, real-source licensing approval, owner usability acceptance or completion of paper-to-textbook generation.
