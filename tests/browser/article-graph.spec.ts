@@ -1,13 +1,21 @@
 import { test, expect, type Page } from "@playwright/test";
 
-async function fixture(page: Page, design = "studio", many = false) {
-  await page.addInitScript((design) => {
-    localStorage.setItem("quilna.feed.refresh.v1", "0");
-    // Keep graph interaction fixtures stable independently of their age.
-    // Selection retention during background updates is tracked separately.
-    localStorage.setItem("quilna.article.updates.v1", "false");
-    localStorage.setItem("quilna.reader.design.v1", design);
-  }, design);
+async function fixture(
+  page: Page,
+  design = "studio",
+  many = false,
+  automatic = false,
+) {
+  await page.addInitScript(
+    ({ design, automatic }) => {
+      localStorage.setItem("quilna.feed.refresh.v1", "0");
+      // Keep graph interaction fixtures stable independently of their age.
+      // Selection retention during background updates is tracked separately.
+      localStorage.setItem("quilna.article.updates.v1", String(automatic));
+      localStorage.setItem("quilna.reader.design.v1", design);
+    },
+    { design, automatic },
+  );
   await page.route("**/api/collection", (r) =>
     r.fulfill({ status: 404, json: {} }),
   );
@@ -601,4 +609,110 @@ test("a delayed quote verification cannot move the reading position after select
   expect(await page.evaluate(() => getSelection()?.toString())).toBe("");
   await expect(evidence(page)).toBeFocused();
   await expect(evidence(page)).toContainText("同じ話題の手がかり");
+});
+
+for (const outcome of ["success", "failure"])
+  test(`automatic body update ${outcome} preserves graph selection and keyboard focus`, async ({
+    page,
+  }) => {
+    let finish: (() => void) | undefined;
+    await page.route("**/api/feeds/fetch", async (route) => {
+      if (route.request().postDataJSON().icon)
+        return route.fulfill({ status: 404, json: {} });
+      await new Promise<void>((resolve) => {
+        finish = resolve;
+      });
+      await route.fulfill(
+        outcome === "failure"
+          ? { status: 502, json: { error: "fixture update failed" } }
+          : {
+              json: {
+                url: "https://example.org/a",
+                html: `<html lang="en"><title>Updated a</title><article><p>${"Updated source evidence. ".repeat(50)}</p></article></html>`,
+              },
+            },
+      );
+    });
+    await fixture(page, "studio", false, true);
+    await expect.poll(() => !!finish).toBe(true);
+    await openGraph(page);
+    await node(page, "Graph article b").click();
+    const explore = evidence(page).getByRole("button", {
+      name: "ここを起点に周辺を見る",
+    });
+    await explore.focus();
+    const original = await explore.elementHandle();
+    finish!();
+    await expect(
+      page.getByRole("region", { name: "本文の更新", exact: true }),
+    ).toContainText(
+      outcome === "success" ? "本文の更新あり" : "自動確認できませんでした",
+    );
+    // Returning to the reader revalidates an open graph after the metadata write.
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await expect(
+      page.locator("#rss-graph [role=status]").first(),
+    ).not.toContainText("読み込んでいます");
+    await expect(explore).toBeFocused();
+    await expect(evidence(page)).toContainText("比較する理由 b");
+    expect(await original!.evaluate((element) => element.isConnected)).toBe(
+      true,
+    );
+    await expect(node(page, "Graph article b")).toHaveAttribute(
+      "aria-pressed",
+      "true",
+    );
+    await explore.press("Enter");
+    await expect(page.locator(".rss-graph-center")).toContainText(
+      "Graph article b",
+    );
+  });
+
+test("unrelated relation changes retain selection but changed selected evidence is cleared", async ({
+  page,
+}) => {
+  await fixture(page);
+  await openGraph(page);
+  await node(page, "Graph article b").click();
+  const explore = evidence(page).getByRole("button", {
+    name: "ここを起点に周辺を見る",
+  });
+  await explore.focus();
+  await page.evaluate(async () => {
+    const path = "/src/article-highlights.ts",
+      { readHighlights, writeHighlight } = await import(path);
+    const old = (await readHighlights("a"))[0];
+    await writeHighlight({ ...old, note: "別の引用の変更", revision: 2 }, 1);
+    window.dispatchEvent(new Event("focus"));
+  });
+  await expect(page.locator("#rss-graph")).toHaveAttribute(
+    "aria-busy",
+    "false",
+  );
+  await expect(explore).toBeFocused();
+  await expect(evidence(page)).toContainText("比較する理由 b");
+  await page.evaluate(async () => {
+    const path = "/src/article-connections.ts",
+      { readConnections, writeConnection } = await import(path);
+    const old = (await readConnections("a")).find(
+      (c: { state: string }) => c.state === "linked",
+    );
+    await writeConnection({ ...old, reason: "変更された理由", revision: 2 }, 1);
+    window.dispatchEvent(new Event("focus"));
+  });
+  await expect(page.locator("#rss-graph")).toHaveAttribute(
+    "aria-busy",
+    "false",
+  );
+  await expect(evidence(page)).toBeEmpty();
+  await node(page, "Graph article b").click();
+  await expect(evidence(page)).toContainText("変更された理由");
+  await evidence(page)
+    .getByRole("button", { name: "この記事を読む" })
+    .last()
+    .click();
+  await expect(page.locator("#rss-current-title")).toHaveText(
+    "Graph article b",
+  );
+  await expect(page.locator(".rss-graph-evidence")).toBeEmpty();
 });
