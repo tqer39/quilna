@@ -1,4 +1,5 @@
 import { expect, it } from "vitest";
+import { readFile } from "node:fs/promises";
 import fixture from "./fixtures/crossref-work.json";
 import { crossrefMetadata, paperSnapshot } from "../src/paper-format";
 import {
@@ -41,6 +42,37 @@ async function source() {
   };
   return paperTextSnapshot(paper, facts, "2026-11-03T00:00:01.000Z");
 }
+it("retains declared version type in portable facts and distinguishes archive and manuscript revisions", async () => {
+  const old = await source(),
+    facts = { ...old.facts, version: "2", versionType: "pmc-version" };
+  const archive = await paperTextSnapshot(old.paper, facts, old.capturedAt);
+  const manuscript = await paperTextSnapshot(
+    old.paper,
+    { ...facts, versionType: "author-manuscript" },
+    old.capturedAt,
+  );
+  expect(archive.digest).not.toBe(manuscript.digest);
+  const quote = await paperExcerpt(archive, archive.facts.blocks[0].path, 0, 8);
+  expect(
+    (await parsePaperExcerpt(JSON.stringify(quote))).source.facts,
+  ).toMatchObject({ version: "2", versionType: "pmc-version" });
+  await expect(
+    paperTextSnapshot(old.paper, { ...facts, version: null }),
+  ).rejects.toThrow();
+});
+it("keeps a legacy citation without a version type byte-for-byte in its fact identity and capture dates", async () => {
+  const raw = new TextDecoder().decode(
+    await readFile("tests/fixtures/paper-excerpt-v1.json"),
+  );
+  const legacy = JSON.parse(raw),
+    parsed = await parsePaperExcerpt(raw);
+  expect(parsed).toEqual(legacy);
+  expect(parsed.digest).toBe(
+    "5afc3f90e32ca5880894bd833240fe54cd83dd817589199e68b3e94fefc62564",
+  );
+  expect(parsed.source.facts).not.toHaveProperty("versionType");
+  expect(await parsePaperExcerpt(JSON.stringify(parsed))).toEqual(legacy);
+});
 it("fixes the PMCID endpoint and recognizes only declared supported license URLs", () => {
   expect(paperPMCID(" pmc1234567 ")).toBe("PMC1234567");
   expect(paperTextEndpoint("PMC1234567")).toBe(

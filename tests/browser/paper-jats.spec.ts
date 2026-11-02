@@ -49,6 +49,13 @@ async function parse(page: Page, raw: string) {
     { raw, paper },
   );
 }
+test("declared JATS version type survives extraction and is not inferred from bibliographic version", async ({ page }) => {
+  await environment(page);
+  const result = await parse(page, xml.replace("</article-meta>", '<article-version article-version-type="pmc-version">2</article-version></article-meta>'));
+  expect(result.error).toBeNull();
+  expect(result.source!.facts).toMatchObject({ version: "2", versionType: "pmc-version" });
+  expect(result.source!.paper.metadata.version).toBe("2");
+});
 test("JATS extraction retains source identity, attribution, exact paragraph locations and explicit unsupported-block counts without fetching assets", async ({
   page,
 }) => {

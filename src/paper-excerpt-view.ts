@@ -212,8 +212,15 @@ export function paperExcerptView(
     fact("本文のDOI", value.facts.doi);
     fact("本文の種類", value.facts.articleType || "不明");
     fact(
-      "XMLに記載された本文の版",
+      "XMLの版表記",
       value.facts.version || "不明（書誌の版番号からは推測しません）",
+    );
+    fact(
+      "XMLの版表記の種別",
+      value.facts.versionType === "pmc-version"
+        ? "PMC収録版（pmc-version）。論文の本文改訂番号とは区別します。"
+        : value.facts.versionType ||
+            "不明（論文の本文改訂番号とは断定しません）",
     );
     sourceCaptured = fact("本文を取得した日時", "");
     bibliographyCaptured = fact("対応する書誌を取得した日時", "");

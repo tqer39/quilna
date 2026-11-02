@@ -69,7 +69,8 @@ A separate profile-wide Web Lock and persisted next-attempt time enforce a conse
 
 Only a matching DOI/PMCID and a single unscoped explicit CC BY 4.0 or CC0 1.0 grant are accepted. Missing, conflicting, conditional, older or NC/ND grants are refused.
 [Europe PMC's open-access guidance](https://dev.europepmc.org/downloads/openaccess) distinguishes reusable content from merely readable articles; this adapter supports only this narrow subset and does not establish the correctness of the provider's rights claim.
-The UI retains source title/authors, copyright, license statement/link and capture dates, keeping an unknown JATS version separate from Crossref's metadata version.
+The UI retains source title/authors, copyright, license statement/link and capture dates, keeping JATS version labels and their supplied `article-version-type` separate from Crossref's metadata version.
+The [JATS definition](https://jats.nlm.nih.gov/publishing/tag-library/1.4/attribute/article-version-type.html) uses that attribute to explain a version statement's meaning. `pmc-version` is labeled as the PMC archive revision, not inferred to be a manuscript revision. Missing labels/types remain unknown.
 Follow the linked license and source before reuse. [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/) requires attribution, a license link and identification of changes.
 
 The native XML parser never mounts source HTML or fetches external DTDs, images or media. Entity declarations and internal subsets are refused.
@@ -81,6 +82,7 @@ Pending/failed/cancelled body requests retain the previous body under its origin
 
 `QuilnaPaperExcerpt`, schema 1, contains the selected quote/range, normalized source paragraphs, source attribution, linked bibliographic observation, capture dates and digests; it excludes answers, notes and account identifiers.
 The source digest binds selected facts, the linked bibliography and text-format version, including a hash of the decoded XML text. These are conflict checks, not provider signatures or authenticity proofs.
+When supplied, the optional version-1 `versionType` fact is retained and included in the source digest. Older citation files without it remain readable with unknown type, preserving their facts, hashes and capture dates unchanged.
 Retained facts are capped at 1,500,000 serialized UTF-8 bytes, including repeated section headings; this prevents a small XML document from creating an unexportable record.
 The archive cap is 3,000,000 bytes. **保存した論文引用ファイルを確認** validates UTF-8, exact fields, versions, bindings and hashes before preview, without provider requests or automatic saving.
 The independent `quilna.paper-excerpts.v1` database retains at most 100 citation records with 20-item pages and opt-in account scoping.
@@ -108,4 +110,6 @@ There is no cloud synchronization, automatic deletion or snapshot-management UI.
 Synthetic fixtures cover field selection, partial dates, deposited version/relationship records, request bounds, list validation/deduplication, query encoding, shared list/DOI rate responses, late success/failure cancellation, immutable saves and separate-profile file exchange.
 The built reader runtime uses real local authentication with offline Google/provider responses to check page-specific CSP and explicit keyword/DOI dispatch.
 Synthetic body fixtures also cover native XML parsing, grant/identity refusal, bounded archives, exact quote ranges, immutable citation storage, file exchange and account isolation. Real Chrome on 2026-11-03 JST imported a synthetic citation through the native file picker, saved/reopened it after reload and exported an identical JSON record. This is agent verification of a local development build.
-These are not live Crossref/Europe PMC availability/CORS tests, real-source licensing approval, owner usability acceptance or completion of paper-to-textbook generation.
+The offline fixtures are not live provider tests. Separately, on 2026-11-03 JST an isolated browser explicitly retrieved DOI `10.1038/s41586-021-03819-2` / [PMC8371605](https://www.ebi.ac.uk/europepmc/webservices/rest/PMC8371605/fullTextXML) from both real APIs with HTTP 200 and browser CORS acceptance. The supplied CC BY 4.0 declaration, 45 retained paragraphs, six omitted blocks and version label `2` / type `pmc-version` were checked. Quote save, actual download and a second isolated context's import/save/reload/re-export retained an identical JSON record without further provider requests. The served source maps were compared with the tested files before this check.
+An earlier replay against a stale development preview is excluded from final-source evidence; its source-cache mismatch is tracked in [Issue #123](https://github.com/tqer39/quilna/issues/123).
+This single recorded example does not establish other papers' availability/rights, correctness of the provider's licensing claim, content quality, owner usability acceptance or completion of paper-to-textbook generation.

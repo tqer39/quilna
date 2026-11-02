@@ -16,6 +16,8 @@ export interface PaperTextFacts {
   authors: string[];
   articleType: string | null;
   version: string | null;
+  /** Absent in legacy files or when JATS supplies no type; never infer a manuscript revision. */
+  versionType?: string;
   license: { url: string; statement: string; copyright: string };
   xmlTextDigest: string;
   blocks: PaperTextBlock[];
@@ -119,9 +121,14 @@ function instant(value: unknown) {
 }
 /** Validate only bounded text blocks and attribution facts; never infer an unknown manuscript version. */
 function facts(value: unknown): PaperTextFacts {
+  const hasVersionType =
+    value !== null &&
+    typeof value === "object" &&
+    Object.hasOwn(value, "versionType");
   const f = object(
       value,
-      "pmcid,doi,title,authors,articleType,version,license,xmlTextDigest,blocks,omitted",
+      "pmcid,doi,title,authors,articleType,version,license,xmlTextDigest,blocks,omitted" +
+        (hasVersionType ? ",versionType" : ""),
     ),
     license = object(f.license, "url,statement,copyright");
   const pmcid = string(f.pmcid, 15),
@@ -150,6 +157,7 @@ function facts(value: unknown): PaperTextFacts {
     authors: f.authors.map((a) => string(a, 500)),
     articleType: f.articleType === null ? null : string(f.articleType, 200),
     version: f.version === null ? null : string(f.version, 200),
+    ...(hasVersionType ? { versionType: string(f.versionType, 200) } : {}),
     license: {
       url: licenseURL,
       statement: string(license.statement, 16000, true),
@@ -159,6 +167,7 @@ function facts(value: unknown): PaperTextFacts {
     blocks: [],
     omitted: f.omitted as number,
   };
+  if (hasVersionType && selected.version === null) throw invalid();
   const paths = new Set<string>();
   let total = 0;
   const encoder = new TextEncoder();

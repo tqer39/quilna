@@ -203,7 +203,8 @@ export async function parsePaperJATS(
       titles = titleGroup
         .flatMap((g) => children(g, "article-title"))
         .map(plain),
-      versions = children(meta, "article-version").map(plain);
+      versionNodes = children(meta, "article-version"),
+      versions = versionNodes.map(plain);
     if (titles.length > 1 || versions.length > 1) throw failed();
     const authors = children(meta, "contrib-group")
       .flatMap((group) => children(group, "contrib"))
@@ -272,6 +273,13 @@ export async function parsePaperJATS(
         authors,
         articleType: article.getAttribute("article-type"),
         version: versions[0] || null,
+        ...(versionNodes[0]?.hasAttribute("article-version-type")
+          ? {
+              versionType: versionNodes[0].getAttribute(
+                "article-version-type",
+              )!,
+            }
+          : {}),
         license: grant,
         xmlTextDigest: await paperTextHash(raw),
         blocks,

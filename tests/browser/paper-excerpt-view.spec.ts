@@ -47,6 +47,69 @@ async function records(page: Page) {
     return (await api.listPaperExcerpts()).records;
   });
 }
+test("a legacy citation without a version type retains its stored bytes, dates and exported identity", async ({
+  page,
+}, info) => {
+  const requests = await providers(page),
+    file = "tests/fixtures/paper-excerpt-v1.json";
+  const original = JSON.parse(new TextDecoder().decode(await readFile(file)));
+  await page.goto("/?view=papers");
+  await page
+    .getByLabel("保存した論文引用ファイルを確認", { exact: true })
+    .setInputFiles(file);
+  await page
+    .getByRole("button", { name: "この論文引用を保存", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: "引用を保存済み", exact: true }),
+  ).toBeVisible();
+  expect(await records(page)).toEqual([original]);
+  await page.reload();
+  await page
+    .getByRole("button", { name: "論文引用を開く", exact: true })
+    .click();
+  const downloading = page.waitForEvent("download");
+  await page
+    .getByRole("button", { name: "この論文引用をファイルに保存" })
+    .click();
+  const download = await downloading,
+    path = info.outputPath("legacy-citation.json");
+  await download.saveAs(path);
+  expect(JSON.parse(new TextDecoder().decode(await readFile(path)))).toEqual(
+    original,
+  );
+  expect(requests).toEqual([]);
+});
+test("archive revision is labeled separately and remains typed in the downloaded citation", async ({
+  page,
+}, info) => {
+  await providers(
+    page,
+    xml.replace(
+      "</article-meta>",
+      '<article-version article-version-type="pmc-version">2</article-version></article-meta>',
+    ),
+  );
+  await selected(page);
+  await expect(
+    page.getByRole("region", { name: "取得した論文本文" }),
+  ).toContainText("PMC収録版（pmc-version）");
+  await page
+    .getByRole("button", { name: "この段落全体を引用として確認" })
+    .click();
+  const downloading = page.waitForEvent("download");
+  await page
+    .getByRole("button", { name: "この論文引用をファイルに保存" })
+    .click();
+  const download = await downloading,
+    path = info.outputPath("typed-version.json");
+  await download.saveAs(path);
+  const record = JSON.parse(new TextDecoder().decode(await readFile(path)));
+  expect(record.source.facts).toMatchObject({
+    version: "2",
+    versionType: "pmc-version",
+  });
+});
 /** Delay delivery of a real committed/aborted transaction, without substituting its stored result. */
 async function holdCitationSave(page: Page, fail: boolean) {
   await page.evaluate((fail) => {
