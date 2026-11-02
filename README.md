@@ -84,6 +84,8 @@ tmux kill-session -t adaptive-textbook-caa
 
 ## Validation
 
+Shared development rules and local Claude/Codex telemetry are documented in the [development tooling guide](docs/development-tooling.md).
+
 TypeScript remains the browser implementation language. An optional Rust compiler check is available with `mise run typecheck:tsrs`; see [the local trial and compatibility limits](docs/typescript-tools.md).
 
 The [security maintenance guide](docs/security-maintenance.md) covers Renovate, full dependency audits, runtime/certificate updates, and daily checks.

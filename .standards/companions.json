@@ -1,0 +1,12 @@
+[
+  {
+    "path": "harness",
+    "profile": "go",
+    "verifyTask": "project:verify:harness"
+  },
+  {
+    "path": "apple",
+    "profile": "swift",
+    "verifyTask": "project:verify:apple"
+  }
+]
