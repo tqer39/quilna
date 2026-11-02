@@ -11,7 +11,7 @@ It previews selected bibliographic facts without automatically saving them.
 **この書誌情報を保存** retains an immutable observation in this browser profile.
 Opening an older observation never replaces it with a newer provider response.
 The page accepts DOI registrant prefixes of 4–9 digits and non-whitespace printable ASCII suffixes up to 2,048 characters; unsupported inputs fail locally.
-Resolver URLs with credentials, ports, queries or fragments are refused; use a literal DOI for suffixes containing `?` or `#`.
+Resolver URLs with credentials, non-default ports, queries or fragments are refused; use a literal DOI for suffixes containing `?` or `#`.
 
 Stored facts include the normalized DOI, titles, supplied author names/ORCIDs, work type, supplied version label, container titles, publisher and its registered primary URL, volume/issue/pages/article number, publication dates, creation/deposit/index dates and supplied relationship/update records.
 Partial dates retain their original precision. Missing facts display as **不明** rather than being inferred.
