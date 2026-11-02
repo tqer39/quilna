@@ -14,19 +14,20 @@ export function extractArticleDocument(
   url: string,
   doc: Document,
   prepareFragment?: (fragment: DocumentFragment) => void,
+  parseFragment?: (html: string) => DocumentFragment,
 ): ArticleContent {
   if (html.length > 2_000_000)
     throw Error("記事が大きすぎるため取り込めませんでした。");
   // Never mount remote nodes. A template avoids subresource requests during parsing.
   const template = doc.createElement("template");
   // HTML tokenization normalizes literal CR/CRLF, but not &#13; references.
-  template.innerHTML = html.replace(/\r\n?/g, "\n");
+  const normalizedHTML = html.replace(/\r\n?/g, "\n");
+  if (!parseFragment) template.innerHTML = normalizedHTML;
+  const fragment = parseFragment?.(normalizedHTML) ?? template.content;
   const language =
     /<html\b[^>]*\blang=["']([a-zA-Z-]+)["']/i.exec(html)?.[1] ?? "";
   // Bound work before selector traversal, cloning, and Readability recursion.
-  const stack: { node: Node; depth: number }[] = [
-    { node: template.content, depth: 0 },
-  ];
+  const stack: { node: Node; depth: number }[] = [{ node: fragment, depth: 0 }];
   let elements = 0;
   while (stack.length) {
     const { node, depth } = stack.pop()!;
@@ -38,7 +39,7 @@ export function extractArticleDocument(
   // Zenn publishes article topics in inert page data rather than standard meta tags.
   let siteTags: string[] = [];
   if (new URL(url).hostname === "zenn.dev") {
-    const data = template.content.querySelector(
+    const data = fragment.querySelector(
       'script#__NEXT_DATA__[type="application/json"]',
     )?.textContent;
     if (data) {
@@ -55,7 +56,7 @@ export function extractArticleDocument(
   }
   const sourceTags = normalizeSourceTags([
     ...siteTags,
-    ...Array.from(template.content.querySelectorAll("meta")).flatMap((meta) => {
+    ...Array.from(fragment.querySelectorAll("meta")).flatMap((meta) => {
       const name = (
         meta.getAttribute("property") ||
         meta.getAttribute("name") ||
@@ -69,12 +70,12 @@ export function extractArticleDocument(
           : [];
     }),
     ...Array.from(
-      template.content.querySelectorAll('article a[rel~="tag"]'),
+      fragment.querySelectorAll('article a[rel~="tag"]'),
       (node) => node.textContent || "",
     ),
   ]);
   const meta = (name: string) =>
-    Array.from(template.content.querySelectorAll("meta"))
+    Array.from(fragment.querySelectorAll("meta"))
       .find(
         (m) =>
           (
@@ -93,18 +94,16 @@ export function extractArticleDocument(
   if (siteName) info.siteName = siteName.slice(0, 300);
   if (published && Number.isFinite(Date.parse(published)))
     info.published = new Date(published).toISOString();
-  prepareFragment?.(template.content);
+  prepareFragment?.(fragment);
   // Native template parsing discards these wrappers; DOM-only parsers retain them.
-  for (const wrapper of Array.from(
-    template.content.querySelectorAll("html,head,body"),
-  ))
+  for (const wrapper of Array.from(fragment.querySelectorAll("html,head,body")))
     wrapper.replaceWith(...Array.from(wrapper.childNodes));
-  template.content
+  fragment
     .querySelectorAll(
       "script,style,iframe,object,embed,img,picture,video,audio,source,link,meta,base,form,nav,footer,template,svg,math,[hidden],[aria-hidden='true']",
     )
     .forEach((n) => n.remove());
-  for (const element of Array.from(template.content.querySelectorAll("*"))) {
+  for (const element of Array.from(fragment.querySelectorAll("*"))) {
     for (const attr of Array.from(element.attributes)) {
       if (attr.name === "href" && element.tagName.toLowerCase() === "a") {
         const href = safeArticleLink(attr.value, url);
@@ -118,10 +117,10 @@ export function extractArticleDocument(
   }
   // Readability rewrites consecutive br elements into paragraphs. Preserve code
   // line breaks first, inside the inert fragment, before that prose cleanup.
-  template.content
+  fragment
     .querySelectorAll("pre br, code br")
     .forEach((br) => br.replaceWith("\n"));
-  doc.body.append(doc.importNode(template.content, true));
+  doc.body.append(doc.importNode(fragment, true));
   doc.documentElement.lang = language;
   doc.title =
     doc.body.querySelector("title")?.textContent ||

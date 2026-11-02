@@ -50,6 +50,17 @@ export function createArticleLoader({ blockedHosts = [], send = fetch } = {}) {
             first.textContent = first.textContent.slice(1);
         }
       },
+      (html) => {
+        // LinkeDOM's template.innerHTML moves DocumentType without detaching it,
+        // which can lose siblings or stall Readability's body fallback loop.
+        // Parse a document directly, then move only its ordinary child nodes.
+        // The DOM-only parser neither executes scripts nor loads resources.
+        const parsed = new DOMParser().parseFromString(html, "text/html");
+        const fragment = doc.createDocumentFragment();
+        for (const child of Array.from(parsed.childNodes))
+          if (child.nodeType !== 10) fragment.appendChild(child);
+        return fragment;
+      },
     );
     if (!validDocumentContent(content)) throw Error("document-response");
     return {
