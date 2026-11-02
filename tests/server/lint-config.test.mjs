@@ -2,7 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { ESLint } from "eslint";
 
-// A dependency upgrade must not silently stop linting any source/test tree.
+/**
+ * Verify lint dependency upgrades preserve diagnostics across every target tree,
+ * TypeScript-specific checks, and exclusions for generated/dependency files.
+ * Synthetic paths are linted in memory without writing fixture files.
+ */
 test("lint config still checks JavaScript and TypeScript across all target trees", async () => {
   const eslint = new ESLint();
   for (const filePath of [

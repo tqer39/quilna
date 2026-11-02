@@ -106,6 +106,7 @@ function policy(v: unknown): v is DocumentPolicy {
     new Set(p.aliases.map((a) => a.url)).size === p.aliases.length
   );
 }
+/** Validate history metadata, requiring an unknown actor only for legacy baselines. */
 function historyEntry(v: unknown): v is PolicyHistoryEntry {
   return (
     object(v) &&
@@ -310,6 +311,11 @@ export class DocumentPolicyClient {
     if (!policy(result.policy) || result.policy.id !== id) throw invalid();
     return result.policy;
   }
+  /**
+   * Read at most 20 history entries for a policy, newest first.
+   * A null cursor starts at the newest entry; otherwise revisions precede it.
+   * Reject mismatched identities, invalid metadata, ordering or pagination.
+   */
   async history(id: string, before: number | null, signal: AbortSignal) {
     const result = await this.command(
       "history",
@@ -338,6 +344,10 @@ export class DocumentPolicyClient {
       before: result.before as number | null,
     };
   }
+  /**
+   * Read one immutable policy snapshot without changing the current policy.
+   * Reject a response unless its policy ID and both revisions match the request.
+   */
   async revision(id: string, revision: number, signal: AbortSignal) {
     const result = await this.command("revision", { id, revision }, signal);
     if (

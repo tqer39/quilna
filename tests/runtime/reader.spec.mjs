@@ -157,6 +157,12 @@ for (const aliasMode of [false, true])
   }, info) => {
     await runReaderScenario(browser, info, aliasMode);
   });
+/**
+ * Exercise the built reader through offline OAuth and real local Worker/D1 storage.
+ * Use separate readers to verify private state, immutable bodies and explicit
+ * permission recovery for either an exact source or an approved alias.
+ * Capture evidence through test info and close all contexts/fixtures on failure.
+ */
 async function runReaderScenario(browser, info, aliasMode) {
   const aliasURL = articleURL + "?utm_source=approved",
     aliasFeed = feedURL + "?reader=b";

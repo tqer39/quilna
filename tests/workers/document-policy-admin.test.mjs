@@ -24,6 +24,12 @@ const script = (
     logLevel: "silent",
   })
 ).outputFiles[0].text;
+/**
+ * Start an isolated persistent policy Worker with synthetic users and source data.
+ * Apply all document migrations, optionally seeding legacy data before management
+ * migration. Return authenticated commands, DB access, fetch counts and restart;
+ * the test after hook disposes the Worker and removes its temporary storage.
+ */
 async function fixture(t, { enabled = true, beforeMigration, outbound } = {}) {
   const dir = await mkdtemp(join(tmpdir(), "quilna-policy-"));
   let fetches = 0;

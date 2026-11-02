@@ -19,6 +19,11 @@ const localDate = (time: number) => {
 };
 const dateValue = (value: string) => (value ? new Date(value).getTime() : NaN);
 
+/**
+ * Build the administrator's in-memory policy editor and history viewer.
+ * Session failures hide the workspace while retaining drafts for reconnection;
+ * history reads never save changes, and recovery requires review and saving.
+ */
 export function documentPolicySettings(client = new DocumentPolicyClient()) {
   const root = el("details", undefined, "rss-policy-settings");
   root.append(el("summary", "共有する本文の管理（管理者用）"));
@@ -175,6 +180,11 @@ export function documentPolicySettings(client = new DocumentPolicyClient()) {
     }
     controls();
   }
+  /**
+   * Replace the editor using the latest saved policy as the concurrency baseline.
+   * A historical snapshot creates a dirty draft with sharing and aliases disabled,
+   * alias approval cleared and original expiry dates retained. Nothing is saved.
+   */
   function renderEditor(
     saved: DocumentPolicy | null,
     historical?: DocumentPolicy,
@@ -494,6 +504,7 @@ export function documentPolicySettings(client = new DocumentPolicyClient()) {
         entries = el("div"),
         detail = el("div");
       history.setAttribute("aria-label", "共有設定の変更履歴");
+      /** Replace the history page and detail pane, preserving the current draft. */
       const show = async (before: number | null, signal: AbortSignal) => {
         const page = await client.history(saved.id, before, signal);
         entries.replaceChildren();
