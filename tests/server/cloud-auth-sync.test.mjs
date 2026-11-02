@@ -192,12 +192,15 @@ function assertNoRunExpressions(workflow) {
   for (const line of workflow.split(/\r?\n/)) {
     if (!line.trim()) continue;
     const indent = /^ */.exec(line)[0].length;
+    // YAML comments outside the scalar do not end a pending run value.
+    if (/^ *#/.test(line) && (runIndent === null || indent <= runIndent))
+      continue;
     if (runIndent !== null && indent > runIndent) {
       assert.doesNotMatch(line, /\$\{\{/);
       continue;
     }
     runIndent = null;
-    const run = /^( *(?:- +)?)run:(.*)$/.exec(line);
+    const run = /^( *(?:- +)?)run[ \t]*:(.*)$/.exec(line);
     if (run) {
       runIndent = run[1].length;
       assert.doesNotMatch(run[2], /\$\{\{/);
@@ -213,6 +216,9 @@ test("shell expression guard catches multiline scripts without rejecting adjacen
     `  - run: |+\n      echo ready\n\n      echo ${expression}`,
     `  - run: echo\n      ${expression}`,
     `  - run: echo ${expression}`,
+    `  - name: Apply\n    run:\n    # YAML comment before the value\n      echo ${expression}`,
+    `  - run : |\n      echo ${expression}`,
+    `  - run: |\n      # ${expression}`,
     `  - run: 'echo\n      ${expression}'`,
   ]) {
     assert.throws(() => assertNoRunExpressions(`steps:\n${script}\n`), script);
