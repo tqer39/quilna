@@ -37,8 +37,8 @@ export default defineConfig({
     }),
   ),
   webServer: {
-    command: "npm run dev -- --port 5199 --strictPort",
-    url: "http://127.0.0.1:5199",
+    command: "node scripts/browser-dev-server.mjs 5199",
+    wait: { stdout: /QUILNA_BROWSER_SERVER_READY 5199\b/ },
     reuseExistingServer: false,
   },
 });
