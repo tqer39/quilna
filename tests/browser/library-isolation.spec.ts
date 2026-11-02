@@ -10,6 +10,7 @@ const paper = await paperSnapshot(
   crossrefMetadata(crossref, crossref.message.DOI),
   "2026-11-01T00:00:00.000Z",
 );
+const paperXML = new TextDecoder().decode(await readFile("tests/fixtures/europepmc-work.xml"));
 const alice = { schema: 1, account: "a".repeat(64), legacy: true };
 const bob = { schema: 1, account: "b".repeat(64), legacy: false };
 /** Keep the account boundary local and synthetic; only the status route is controlled. */
@@ -69,7 +70,7 @@ async function fixture(context: BrowserContext) {
 /** Save valid records through maintained storage APIs, including private answers and immutable facts. */
 async function seed(page: Page, owner: string) {
   return page.evaluate(
-    async ({ owner, rawBook, paper }) => {
+    async ({ owner, rawBook, paper, paperXML }) => {
       const paths = [
         "/src/feed-store.ts",
         "/src/article-highlights.ts",
@@ -203,6 +204,13 @@ async function seed(page: Page, owner: string) {
         section.question.options[0].id,
       );
       await papers.savePaper(paper);
+      const jatsPath = "/src/paper-jats.ts", excerptPath = "/src/paper-text-format.ts", excerptStorePath = "/src/paper-excerpt-store.ts";
+      const jats: typeof import("../../src/paper-jats") = await import(jatsPath);
+      const format: typeof import("../../src/paper-text-format") = await import(excerptPath);
+      const excerpts: typeof import("../../src/paper-excerpt-store") = await import(excerptStorePath);
+      const source = await jats.parsePaperJATS(paperXML, "PMC1234567", paper, "2026-11-03T00:00:01.000Z");
+      const selected = source.facts.blocks[owner === "alice" ? 0 : 1];
+      await excerpts.savePaperExcerpt(await format.paperExcerpt(source, selected.path, 0, selected.text.length));
       const record = history.emptyHistory();
       localStorage.setItem(
         libraryName(history.storageKey),
@@ -218,7 +226,7 @@ async function seed(page: Page, owner: string) {
         book: book.id,
       };
     },
-    { owner, rawBook, paper },
+    { owner, rawBook, paper, paperXML },
   );
 }
 /** Read the selected namespace without relying on UI notices or inspecting another account's raw DB. */
@@ -260,6 +268,8 @@ async function inspect(page: Page) {
     const quotes: typeof import("../../src/quote-connections") = await import(
       quotePath
     );
+    const excerptStorePath = "/src/paper-excerpt-store.ts";
+    const excerpts: typeof import("../../src/paper-excerpt-store") = await import(excerptStorePath);
     const imported = await books.listSharedTextbooks();
     return {
       database: feeds.feedDatabase,
@@ -274,6 +284,7 @@ async function inspect(page: Page) {
         imported.map((book) => books.readSharedAnswers(book)),
       ),
       papers: (await papers.listPapers()).snapshots.map((p) => p.digest),
+      excerpts: (await excerpts.listPaperExcerpts()).records.map((r) => r.text),
       history: localStorage.getItem(libraryName("fieldnotes.history.v1")),
       design: localStorage.getItem(libraryName("quilna.reader.design.v1")),
     };
@@ -298,6 +309,7 @@ test("same profile alice→bob→alice retains legacy records and separates note
   expect(a.connections[0].reason).toBe("Article relation alice");
   expect(a.quoteConnections[0].reason).toBe("Quote relation alice");
   expect(a.answers[0]).toHaveLength(1);
+  expect(a.excerpts).toEqual(["Evidence😀 & exact quote."]);
   state.identity = bob;
   await page.reload();
   await ready(page);
@@ -312,6 +324,7 @@ test("same profile alice→bob→alice retains legacy records and separates note
     "books",
     "answers",
     "papers",
+    "excerpts",
   ] as const)
     expect(empty[key]).toEqual([]);
   expect(empty.history).toBeNull();
@@ -321,6 +334,7 @@ test("same profile alice→bob→alice retains legacy records and separates note
   await page.reload();
   await ready(page);
   expect((await inspect(page)).highlights[0].note).toBe("Note bob");
+  expect((await inspect(page)).excerpts).toEqual(["CO_{2} x^{3}."]);
   state.identity = alice;
   await page.reload();
   await ready(page);

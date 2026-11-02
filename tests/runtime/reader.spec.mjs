@@ -303,7 +303,7 @@ async function runReaderScenario(browser, info, aliasMode) {
     });
     const paperPage = await a.page.goto(origin + "/?view=papers");
     expect(paperPage.headers()["content-security-policy"]).toContain(
-      "connect-src 'self' https://api.crossref.org;",
+      "connect-src 'self' https://api.crossref.org https://www.ebi.ac.uk/europepmc/webservices/rest/;",
     );
     expect(paperRequests).toBe(0);
     await a.page.getByLabel("書誌キーワード", { exact: true }).fill("synthetic runtime");
@@ -320,6 +320,23 @@ async function runReaderScenario(browser, info, aliasMode) {
       }),
     ).toBeVisible();
     expect(paperRequests).toBe(2);
+    let bodyRequests = 0;
+    const paperXML = await readFile("tests/fixtures/europepmc-work.xml", "utf8");
+    await a.page.route("https://www.ebi.ac.uk/europepmc/webservices/rest/PMC1234567/fullTextXML", async (route) => {
+      bodyRequests++;
+      expect(route.request().headers().authorization).toBeUndefined();
+      expect(route.request().headers().referer).toBeUndefined();
+      await route.fulfill({ contentType: "application/xml", body: paperXML, headers: { "Access-Control-Allow-Origin": "*" } });
+    });
+    expect(bodyRequests).toBe(0);
+    await a.page.getByLabel("Europe PMCのPMCID").fill("PMC1234567");
+    await a.page.getByRole("button", { name: "PMCIDをEurope PMCへ送って本文を確認" }).click();
+    await a.page.getByRole("button", { name: "この段落全体を引用として確認" }).click();
+    const citation = a.page.getByRole("region", { name: "論文引用のプレビュー", exact: true });
+    await expect(citation.locator("blockquote")).toHaveText("Evidence😀 & exact quote.");
+    await a.page.getByRole("button", { name: "この論文引用を保存", exact: true }).click();
+    await expect(citation).toContainText("論文引用を保存しました");
+    expect(bodyRequests).toBe(1);
     const readerPage = await a.page.goto(origin + "/?view=feeds");
     expect(readerPage.headers()["content-security-policy"]).toContain(
       "connect-src 'self';",
@@ -327,6 +344,7 @@ async function runReaderScenario(browser, info, aliasMode) {
     expect(readerPage.headers()["content-security-policy"]).not.toContain(
       "api.crossref.org",
     );
+    expect(readerPage.headers()["content-security-policy"]).not.toContain("www.ebi.ac.uk");
     // Navigation load/CSP inspection does not guarantee the lazy reader is ready.
     await expect(a.page.getByRole("button", { name: "設定", exact: true })).toBeVisible();
     await f.restart(a.account);

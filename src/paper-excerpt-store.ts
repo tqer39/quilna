@@ -54,7 +54,7 @@ async function stored(key: IDBValidKey, value: unknown) {
   if (record.digest !== key) throw failed();
   return record;
 }
-/** Atomically retain at most 100 cited sources without eviction; identical recaptures reuse the original record and dates. */
+/** Atomically retain at most 100 citation records without eviction; identical recaptures reuse the original record and dates. */
 export async function savePaperExcerpt(input: PaperExcerpt) {
   const record = await parsePaperExcerpt(JSON.stringify(input)),
     db = await open();
