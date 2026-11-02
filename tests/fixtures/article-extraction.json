@@ -42,5 +42,12 @@
       "\n  first\n\tsecond\n",
       "\n  nested\n"
     ]
+  },
+  {
+    "name": "uppercase and nested doctype with literal code",
+    "html": "<!DOCTYPE html><html lang=\"en\"><title>Doctype evidence</title><body><main><h1>Doctype evidence</h1><!DOCTYPE html>Source evidence stays readable. Source evidence stays readable. Source evidence stays readable. Source evidence stays readable. Source evidence stays readable. Source evidence stays readable. Source evidence stays readable. Source evidence stays readable. Source evidence stays readable. Source evidence stays readable. Source evidence stays readable. Source evidence stays readable. Source evidence stays readable. Source evidence stays readable. Source evidence stays readable. Source evidence stays readable. Source evidence stays readable. Source evidence stays readable. Source evidence stays readable. Source evidence stays readable. Source evidence stays readable. Source evidence stays readable. Source evidence stays readable. Source evidence stays readable. Source evidence stays readable. Source evidence stays readable. Source evidence stays readable. Source evidence stays readable. Source evidence stays readable. Source evidence stays readable. <pre><code>&lt;!DOCTYPE html&gt;\n</code></pre><textarea>&lt;!DOCTYPE html&gt;</textarea></main></body></html>",
+    "codes": [
+      "<!DOCTYPE html>\n"
+    ]
   }
 ]
