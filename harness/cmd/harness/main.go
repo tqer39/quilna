@@ -15,7 +15,7 @@ import (
 func main() { os.Exit(run()) }
 func run() int {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: harness freeze-task -task ABS_PATH -output NEW_ABS_PATH -file ABS_PATH (repeat), or run|status|resume|stop -state ABS_PATH [-task ABS_PATH | -run ID]")
+		fmt.Fprintln(os.Stderr, "usage: harness freeze-task -task ABS_PATH -output NEW_ABS_PATH -file ABS_PATH (repeat), or run|status|summary|resume|stop -state ABS_PATH [-task ABS_PATH | -run ID]")
 		return 2
 	}
 	verb := os.Args[1]
@@ -37,6 +37,17 @@ func run() int {
 		return 1
 	}
 	engine := harness.Engine{Store: store, AllowCodex: *allow}
+	if verb == "summary" {
+		summary, err := engine.Summary(*id)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			return 1
+		}
+		if json.NewEncoder(os.Stdout).Encode(summary) != nil {
+			return 1
+		}
+		return 0
+	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	var result *harness.Run

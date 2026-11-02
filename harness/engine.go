@@ -232,18 +232,23 @@ func (e Engine) Execute(ctx context.Context, id string, reconcileLocal bool) (*R
 		if err := e.Store.Save(r, false); err != nil {
 			return r, err
 		}
-		inputEvidence := append([]Evidence(nil), r.Evidence...)
+		inputEvidence := latestCheckEvidence(r)
 		for i := range inputEvidence {
 			inputEvidence[i].Log = filepath.Join(e.Store.Directory, inputEvidence[i].Log)
 		}
+		history, historyErr := summarizeHistory(r)
+		if historyErr != nil {
+			return e.finish(r, "blocked", historyErr.Error())
+		}
 		input, _ := json.Marshal(struct {
-			Goal       string     `json:"goal"`
-			Acceptance []string   `json:"acceptance"`
-			CodeHash   string     `json:"codeHash"`
-			TaskHash   string     `json:"taskHash"`
-			Findings   []string   `json:"findings"`
-			Evidence   []Evidence `json:"evidence"`
-		}{r.Task.Goal, r.Task.Acceptance, before, r.TaskHash, r.Findings, inputEvidence})
+			Goal       string         `json:"goal"`
+			Acceptance []string       `json:"acceptance"`
+			CodeHash   string         `json:"codeHash"`
+			TaskHash   string         `json:"taskHash"`
+			Findings   []string       `json:"findings"`
+			Evidence   []Evidence     `json:"evidence"`
+			History    HistorySummary `json:"history"`
+		}{r.Task.Goal, r.Task.Acceptance, before, r.TaskHash, r.Findings, inputEvidence, history})
 		var result processResult
 		started := time.Now().UTC()
 		switch r.Phase {
@@ -287,6 +292,10 @@ func (e Engine) Execute(ctx context.Context, id string, reconcileLocal bool) (*R
 		}
 		r.Pending.ObservedHash = after
 		r.Evidence = append(r.Evidence, Evidence{Model: r.Pending.Model, Operation: r.Operations, Phase: r.Phase, CodeHash: before, AfterHash: after, ExitCode: result.exitCode, Outcome: result.outcome, StartedAt: started.Format(time.RFC3339Nano), DurationMillis: result.duration.Milliseconds(), Log: logName, LogHash: logHash})
+		if r.Phase == "checks" {
+			index := r.CheckIndex
+			r.Evidence[len(r.Evidence)-1].CheckIndex = &index
+		}
 		if err := verifySnapshots(r.Task.ProtectedFiles); err != nil {
 			return e.finish(r, "blocked", err.Error())
 		}

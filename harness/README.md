@@ -95,7 +95,7 @@ Checkpoints made with an older encoding safely become stale and must be validate
 This identifies code snapshots; it does not monitor temporary changes that are reverted during a process.
 
 Each command receives JSON on stdin containing `goal`, `acceptance`, `codeHash`, `taskHash`,
-`findings`, and `evidence`. Reviewer stdout must use only this format:
+`findings`, `evidence`, and `history`. Reviewer stdout must use only this format:
 
 ```json
 {"decision":"approve","codeHash":"64文字の小文字SHA-256","findings":[]}
@@ -134,6 +134,28 @@ Up to 256 regular files, each at most 256 MiB, are supported. Missing files, sym
 The engine checks controls before and after operations, during recovery and when inspecting existing evidence. A changed external control makes `status` stale even if the workspace code hash has not changed; resume refuses it without replaying checks. In-flight edits are recorded and blocked before the next operation can accept their changed test.
 This is checkpoint change detection, not an OS write prohibition; changes reverted between checks are not detected. Logs/report artifacts are not implicitly frozen by this field.
 See [browser validation](../docs/browser-validation.md) for the browser-only check selection and toolchain setup.
+
+## Concise evidence
+
+```bash
+/private/tmp/textbook-harness summary -state /absolute/path/state -run RUN_ID
+```
+
+`summary` reports the latest checks for the recorded source hash, exit codes, durations, and hash-linked log paths,
+plus historical failures, repair cycles, repeated check operations, and model usage from recorded evidence.
+`phase` and `pendingOperation` expose unfinished work separately; history counters do not estimate usage that has not reached evidence.
+Its exit code 0 means that the summary was read, not that the work is currently accepted; inspect `status` and `stale` together.
+Legacy evidence without check indices reports an unknown (`null`) repeated-check count rather than inventing one.
+Usage uses the highest recorded cumulative total for each distinct thread/turn, avoiding double counting after recovery.
+Coverage fields identify turns with counters and operations with unknown turn identity. Missing counters remain unknown.
+These are recorded cumulative request counters, not a single context-window size, a monetary bill, or a new measurement of model quality.
+
+Model and command inputs carry the latest checks for the current source and a compact `history` summary;
+older raw evidence remains in the ledger and logs. Previous failures and repair counts are not concealed.
+Read the full log only when needed and verify its recorded SHA-256 before reusing it.
+Maintained product-profile generation, runtime artifact manifests, and representative live-model comparisons
+remain follow-up work. Unavailable native UI or physical devices must remain explicit external prerequisites,
+not repeated source-repair attempts.
 
 ## Stop, resume, and evidence
 
