@@ -6,22 +6,27 @@ import {
   sharedTextbookDigest,
 } from "../src/shared-textbook-format";
 
+/** Recover exact fixture bytes for independent digest checks. */
 const bytes = (value: string) =>
   Uint8Array.from(atob(value), (c) => c.charCodeAt(0));
+/** Encode synthetic JSON mutations into portable UTF-8 base64 payloads. */
 const encode = (value: unknown) =>
   btoa(
     Array.from(new TextEncoder().encode(JSON.stringify(value)), (n) =>
       String.fromCharCode(n),
     ).join(""),
   );
+/** Inspect synthetic nested payloads before introducing one controlled defect. */
 const decode = (value: string) =>
   JSON.parse(new TextDecoder().decode(bytes(value)));
 const archive = JSON.stringify(fixture);
+/** Change one outer record property while preserving the source, draft and review fixtures. */
 function changeRecord(mutate: (record: ReturnType<typeof decode>) => void) {
   const record = decode(fixture.record);
   mutate(record);
   return JSON.stringify({ ...fixture, record: encode(record) });
 }
+/** Keep sender-controlled hash links coherent so semantic-refusal tests are not merely stale-hash tests. */
 async function changePart(
   part: "request" | "draft" | "review",
   mutate: (value: ReturnType<typeof decode>) => void,

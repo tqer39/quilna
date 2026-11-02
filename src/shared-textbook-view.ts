@@ -13,6 +13,7 @@ import {
   type SharedAnswer,
 } from "./shared-textbook-store";
 
+/** Display an explicit failure when an operation cannot safely publish its result. */
 const message = (error: unknown) =>
   error instanceof Error
     ? error.message
@@ -251,6 +252,7 @@ export async function sharedTextbookView(root: HTMLElement) {
         : list.querySelector<HTMLElement>("button")
       )?.focus();
     };
+    /** Create the persistent library return control for both loading and completed readers. */
     const navigation = () => {
       const actions = el("div", undefined, "shared-textbook-actions");
       actions.append(button("教材一覧へ戻る", returnToLibrary));

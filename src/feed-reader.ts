@@ -92,6 +92,7 @@ import {
   setFeedSubscription,
 } from "./feed-store";
 
+/** Mount collection and reading while retaining browser-local state through asynchronous updates. */
 export async function feedReader(root: HTMLElement) {
   document.title = "情報収集 | Quilna";
   const designSettings = readerDesignSettings();

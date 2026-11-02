@@ -45,6 +45,7 @@ async function holdAnswerCompletion(
     };
   }, mode);
 }
+/** Wait for a real transaction completion to be held before exercising a competing user action. */
 async function waitForHeldAnswer(page: Page) {
   await expect
     .poll(() =>
@@ -56,6 +57,7 @@ async function waitForHeldAnswer(page: Page) {
     )
     .toBe(true);
 }
+/** Release the recorded completion and cross an event-loop boundary before checking late UI work. */
 async function releaseAnswerCompletion(page: Page) {
   await page.evaluate(async () => {
     (
@@ -68,6 +70,7 @@ async function releaseAnswerCompletion(page: Page) {
 const fixturePath = "tests/fixtures/shared-textbook-v1.json";
 const fixture = new TextDecoder().decode(await readFile(fixturePath));
 const title = "合成教材：モデルと実行";
+/** Vary an outer immutable record while retaining the fixed nested source and review bytes. */
 function modifiedRecord(
   mutate: (record: ReturnType<typeof JSON.parse>) => void,
 ) {
@@ -85,6 +88,7 @@ function modifiedRecord(
   );
   return JSON.stringify(envelope);
 }
+/** Exercise actual file selection using a disposable filesystem artifact rather than an injected payload. */
 async function selectFile(page: Page, raw: string) {
   const path = test.info().outputPath(`shared-${crypto.randomUUID()}.json`);
   await writeFile(path, raw);
@@ -92,6 +96,7 @@ async function selectFile(page: Page, raw: string) {
     .getByLabel("教材JSONファイル（540,000バイト以下）")
     .setInputFiles(path);
 }
+/** Wait for validated preview readiness without treating file selection as an import. */
 async function upload(page: Page, raw = fixture) {
   await selectFile(page, raw);
   await expect(
@@ -101,6 +106,7 @@ async function upload(page: Page, raw = fixture) {
     }),
   ).toBeVisible();
 }
+/** Require the explicit import action and its committed-success notice. */
 async function importBook(page: Page, raw = fixture) {
   await upload(page, raw);
   await page
@@ -111,6 +117,7 @@ async function importBook(page: Page, raw = fixture) {
     .click();
   await expect(page.getByRole("status")).toContainText("教材を取り込みました");
 }
+/** Open the specified immutable edition and wait for its readable content. */
 async function openBook(page: Page, version = 7) {
   await page
     .getByRole("button", {
@@ -122,6 +129,7 @@ async function openBook(page: Page, version = 7) {
     page.getByRole("navigation", { name: "教材の目次", exact: true }),
   ).toBeVisible();
 }
+/** Confirm the selected archive and read the actual downloaded bytes for privacy and fidelity assertions. */
 async function exported(page: Page) {
   await page.getByText("教材ファイルを書き出す", { exact: true }).click();
   await page
@@ -448,6 +456,7 @@ test("simultaneous conflicting imports are atomic and a corrupt retained file is
   const alternate = modifiedRecord((r) => {
     r.createdAt++;
   });
+  /** Observe one real import outcome in a competing page without retrying a rejected write. */
   const run = (p: Page, raw: string) =>
     p.evaluate(async (raw) => {
       const path = "/src/shared-textbook-store.ts";

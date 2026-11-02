@@ -3,7 +3,9 @@ import { z } from "zod";
 // The existing native file envelope keeps its name for compatibility. No
 // provider client, credential store or personal learning store enters this module.
 export const sharedTextbookMaximumBytes = 540_000;
+/** Encode text for byte-based file and field bounds rather than UTF-16 character counts. */
 const utf8 = (s: string) => new TextEncoder().encode(s);
+/** Keep every portable payload closed to unknown fields, including nested private extensions. */
 const object = <T extends z.ZodRawShape>(fields: T) =>
   z.object(fields).strict();
 const uuid = z.string().regex(/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i);
@@ -22,6 +24,7 @@ const text = (maximum: number) =>
 const identifier = z.string().regex(/^[A-Za-z0-9_-]{1,64}$/);
 const citation = object({ sourceID: uuid, quote: text(1500) });
 const citations = z.array(citation).min(1).max(4);
+/** Allow missing source metadata to stay unknown instead of inventing values. */
 const nullable = <T extends z.ZodType>(schema: T) => schema.nullish();
 const sourceSchema = object({
   id: uuid,
@@ -141,6 +144,7 @@ const envelopeSchema = object({
   schemaVersion: z.literal(1),
   record: z.string(),
 });
+/** Report a bounded validation failure without disclosing untrusted payloads or parser details. */
 const invalid = () =>
   Error(
     "教材ファイルの形式・出典・版の対応を確認できません。保存済みのデータは変更していません。",
@@ -181,8 +185,10 @@ const decode = (encoded: string, maximum: number) => {
   if (btoa(binary) !== encoded || binary.length > maximum) throw invalid();
   return Uint8Array.from(binary, (c) => c.charCodeAt(0));
 };
+/** Decode embedded bytes strictly as UTF-8 before duplicate-key and shape validation. */
 const jsonBytes = (bytes: Uint8Array) =>
   parseSharedJSON(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+/** Check identity collections without normalizing or silently dropping duplicate entries. */
 const unique = (values: string[]) => new Set(values).size === values.length;
 /** Hash exact retained bytes rather than reserialized objects. */
 export async function sharedTextbookDigest(bytes: Uint8Array) {

@@ -6,10 +6,12 @@ import {
 } from "./shared-textbook-format";
 
 export const sharedTextbookDatabase = "quilna.shared-textbooks.v1";
+/** Keep storage failure explicit while retaining earlier books and private answers. */
 const unavailable = () =>
   Error(
     "教材の保存領域を利用できません。既存の教材と回答は保持しています。再試行してください。",
   );
+/** Explain that a conflicting immutable edition was refused rather than replaced. */
 const conflict = () =>
   Error(
     "同じ教材・版で内容の異なるファイルが保存済みです。上書きしませんでした。",
@@ -83,6 +85,7 @@ async function transaction<T>(
     return await new Promise<T>((resolve, reject) => {
       const tx = db.transaction(names, mode);
       let result: T, failure: Error | undefined;
+      /** Retain the intended failure and abort the whole transaction before publishing success. */
       const fail = (error: Error) => {
         failure = error;
         tx.abort();
