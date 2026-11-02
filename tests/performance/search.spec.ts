@@ -58,7 +58,10 @@ for (const tagged of [false, true]) {
       await expect(
         page.getByRole("button", { name: "フィードを探す", exact: true }),
       ).toBeEnabled();
-      await expect(page.locator("html")).toHaveAttribute("data-reader-design", design);
+      await expect(page.locator("html")).toHaveAttribute(
+        "data-reader-design",
+        design,
+      );
       const databaseName = await page.evaluate(async () => {
         const path = "/src/feed-store.ts";
         const { feedDatabase }: typeof import("../../src/feed-store") =
@@ -70,83 +73,86 @@ for (const tagged of [false, true]) {
       );
       report.database = databaseName;
       const seedStart = Date.now();
-      await page.evaluate(async ({ tagged, databaseName }) => {
-        const labels = [
-          "技術・開発",
-          "AI・機械学習",
-          "科学・研究",
-          "ビジネス・経済",
-          "暮らし・健康",
-          "手順・解説",
-          "レビュー",
-          "ニュース",
-        ];
-        const db = await new Promise<IDBDatabase>((resolve, reject) => {
-          const r = indexedDB.open(databaseName);
-          r.onsuccess = () => resolve(r.result);
-          r.onerror = () => reject(r.error);
-        });
-        for (let start = 0; start < 100000; start += 500) {
-          await new Promise<void>((resolve, reject) => {
-            const tx = db.transaction("articles", "readwrite");
-            const store = tx.objectStore("articles");
-            for (let i = start; i < start + 500; i++) {
-              const id = i.toString().padStart(6, "0");
-              const header = `Article ${id} SQLite ${i % 100 === 0 ? "cohort" : "ordinary"} `;
-              const body = header + "a".repeat(2048 - header.length);
-              const lead = `日本語翻訳 ${id} ${i % 100 === 0 ? "対象集合" : "通常記事"} `;
-              const bytes = new TextEncoder().encode(lead).length;
-              const translated =
-                lead +
-                "文".repeat(Math.floor((2048 - bytes) / 3)) +
-                "x".repeat((2048 - bytes) % 3);
-              store.put({
-                id,
-                title: `Article ${id}`,
-                body,
-                url: "",
-                feedUrl: "",
-                published: null,
-                fetchedAt: "2026-10-24T00:00:00Z",
-                ...(tagged
-                  ? {
-                      tags: {
-                        version: 1,
-                        state: "classified",
-                        suggestions: labels.map((tag) => ({
-                          tag,
-                          evidence: ["synthetic corpus"],
-                        })),
-                      },
-                      ...(i % 3 === 1
-                        ? {
-                            manualTags: [
-                              ...labels,
-                              "手動限定",
-                              `分類${i % 100}`,
-                              `棚${i % 20}`,
-                              i % 100 === 0 ? "対象タグ" : "通常タグ",
-                            ],
-                          }
-                        : {}),
-                    }
-                  : {}),
-                saved: i % 10 === 0,
-                read: i % 2 === 0,
-                translation: {
-                  text: translated,
-                  sourceText: body,
-                  sourceLanguage: "en",
-                  targetLanguage: "ja",
-                },
-              });
-            }
-            tx.oncomplete = () => resolve();
-            tx.onerror = tx.onabort = () => reject(tx.error);
+      await page.evaluate(
+        async ({ tagged, databaseName }) => {
+          const labels = [
+            "技術・開発",
+            "AI・機械学習",
+            "科学・研究",
+            "ビジネス・経済",
+            "暮らし・健康",
+            "手順・解説",
+            "レビュー",
+            "ニュース",
+          ];
+          const db = await new Promise<IDBDatabase>((resolve, reject) => {
+            const r = indexedDB.open(databaseName);
+            r.onsuccess = () => resolve(r.result);
+            r.onerror = () => reject(r.error);
           });
-        }
-        db.close();
-      }, { tagged, databaseName });
+          for (let start = 0; start < 100000; start += 500) {
+            await new Promise<void>((resolve, reject) => {
+              const tx = db.transaction("articles", "readwrite");
+              const store = tx.objectStore("articles");
+              for (let i = start; i < start + 500; i++) {
+                const id = i.toString().padStart(6, "0");
+                const header = `Article ${id} SQLite ${i % 100 === 0 ? "cohort" : "ordinary"} `;
+                const body = header + "a".repeat(2048 - header.length);
+                const lead = `日本語翻訳 ${id} ${i % 100 === 0 ? "対象集合" : "通常記事"} `;
+                const bytes = new TextEncoder().encode(lead).length;
+                const translated =
+                  lead +
+                  "文".repeat(Math.floor((2048 - bytes) / 3)) +
+                  "x".repeat((2048 - bytes) % 3);
+                store.put({
+                  id,
+                  title: `Article ${id}`,
+                  body,
+                  url: "",
+                  feedUrl: "",
+                  published: null,
+                  fetchedAt: "2026-10-24T00:00:00Z",
+                  ...(tagged
+                    ? {
+                        tags: {
+                          version: 1,
+                          state: "classified",
+                          suggestions: labels.map((tag) => ({
+                            tag,
+                            evidence: ["synthetic corpus"],
+                          })),
+                        },
+                        ...(i % 3 === 1
+                          ? {
+                              manualTags: [
+                                ...labels,
+                                "手動限定",
+                                `分類${i % 100}`,
+                                `棚${i % 20}`,
+                                i % 100 === 0 ? "対象タグ" : "通常タグ",
+                              ],
+                            }
+                          : {}),
+                      }
+                    : {}),
+                  saved: i % 10 === 0,
+                  read: i % 2 === 0,
+                  translation: {
+                    text: translated,
+                    sourceText: body,
+                    sourceLanguage: "en",
+                    targetLanguage: "ja",
+                  },
+                });
+              }
+              tx.oncomplete = () => resolve();
+              tx.onerror = tx.onabort = () => reject(tx.error);
+            });
+          }
+          db.close();
+        },
+        { tagged, databaseName },
+      );
       report.seedMs = Date.now() - seedStart;
       const readyStart = Date.now();
       await page.reload();
@@ -158,9 +164,12 @@ for (const tagged of [false, true]) {
       report.loadAndPrepareMs = Date.now() - readyStart;
       const writer = await context.newPage();
       // Same origin, no app: the writer owns one explicit transaction at a time.
-      await writer.route("**/__search-writer", (route) => route.fulfill({
-        contentType: "text/html", body: "<!doctype html><title>Search writer fixture</title>",
-      }));
+      await writer.route("**/__search-writer", (route) =>
+        route.fulfill({
+          contentType: "text/html",
+          body: "<!doctype html><title>Search writer fixture</title>",
+        }),
+      );
       await writer.goto("/__search-writer");
       await expect(writer).toHaveTitle("Search writer fixture");
       await expect(writer.locator("#app")).toHaveCount(0);
@@ -229,84 +238,87 @@ for (const tagged of [false, true]) {
           },
         );
       for (const group of ["idle", "held-write", "continuous-write"]) {
-        await writer.evaluate(async ({ group, databaseName }) => {
-          const w = window as unknown as {
-            stop: boolean;
-            commits: number[];
-            held: boolean;
-          };
-          w.stop = false;
-          w.commits = [];
-          w.held = false;
-          if (group === "idle") return;
-          const db = await new Promise<IDBDatabase>((resolve) => {
-            const r = indexedDB.open(databaseName);
-            r.onsuccess = () => resolve(r.result);
-          });
-          if (group === "held-write") {
-            const tx = db.transaction("articles", "readwrite");
-            const store = tx.objectStore("articles");
-            store.put({ id: "held-probe" });
-            const keep = () => {
-              if (w.stop) {
-                tx.abort();
-                db.close();
-                return;
-              }
-              const r = store.get("000001");
-              r.onsuccess = keep;
+        await writer.evaluate(
+          async ({ group, databaseName }) => {
+            const w = window as unknown as {
+              stop: boolean;
+              commits: number[];
+              held: boolean;
             };
-            w.held = true;
-            tx.onabort = () => {
-              w.held = false;
-            };
-            keep();
-          } else {
-            const write = () => {
-              if (w.stop) {
-                db.close();
-                return;
-              }
+            w.stop = false;
+            w.commits = [];
+            w.held = false;
+            if (group === "idle") return;
+            const db = await new Promise<IDBDatabase>((resolve) => {
+              const r = indexedDB.open(databaseName);
+              r.onsuccess = () => resolve(r.result);
+            });
+            if (group === "held-write") {
               const tx = db.transaction("articles", "readwrite");
               const store = tx.objectStore("articles");
-              const r = store.get("000001");
-              r.onsuccess = () => {
-                const body =
-                  r.result.body.slice(0, 2000) +
-                  " writer-generation-" +
-                  w.commits.length;
-                store.put({
-                  ...r.result,
-                  ...(r.result.manualTags
-                    ? {
-                        manualTags: [
-                          ...r.result.manualTags.slice(0, 11),
-                          "書込タグ" + w.commits.length,
-                        ],
-                      }
-                    : {}),
-                  body,
-                  translation: {
-                    ...r.result.translation,
-                    sourceText: body,
-                    text:
-                      r.result.translation.text.slice(0, 600) +
-                      " 書込世代" +
-                      w.commits.length,
-                  },
-                });
+              store.put({ id: "held-probe" });
+              const keep = () => {
+                if (w.stop) {
+                  tx.abort();
+                  db.close();
+                  return;
+                }
+                const r = store.get("000001");
+                r.onsuccess = keep;
               };
-              tx.oncomplete = () => {
-                w.commits.push(Date.now());
-                const channel = new BroadcastChannel(databaseName);
-                channel.postMessage({ articleId: "000001" });
-                channel.close();
-                setTimeout(write, 20);
+              w.held = true;
+              tx.onabort = () => {
+                w.held = false;
               };
-            };
-            write();
-          }
-        }, { group, databaseName });
+              keep();
+            } else {
+              const write = () => {
+                if (w.stop) {
+                  db.close();
+                  return;
+                }
+                const tx = db.transaction("articles", "readwrite");
+                const store = tx.objectStore("articles");
+                const r = store.get("000001");
+                r.onsuccess = () => {
+                  const body =
+                    r.result.body.slice(0, 2000) +
+                    " writer-generation-" +
+                    w.commits.length;
+                  store.put({
+                    ...r.result,
+                    ...(r.result.manualTags
+                      ? {
+                          manualTags: [
+                            ...r.result.manualTags.slice(0, 11),
+                            "書込タグ" + w.commits.length,
+                          ],
+                        }
+                      : {}),
+                    body,
+                    translation: {
+                      ...r.result.translation,
+                      sourceText: body,
+                      text:
+                        r.result.translation.text.slice(0, 600) +
+                        " 書込世代" +
+                        w.commits.length,
+                    },
+                  });
+                };
+                tx.oncomplete = () => {
+                  w.commits.push(Date.now());
+                  const channel = new BroadcastChannel(databaseName);
+                  channel.postMessage({ articleId: "000001" });
+                  channel.close();
+                  setTimeout(write, 20);
+                };
+              };
+              write();
+            }
+          },
+          { group, databaseName },
+        );
         for (const c of cases) {
           if (tagged) {
             await page.getByLabel("タグで絞り込み").selectOption("");

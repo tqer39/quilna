@@ -14,7 +14,9 @@ export type ArticleUpdate = {
   latest?: DocumentReference;
   error?: string;
 };
-export const articleUpdatePreferenceKey = libraryName("quilna.article.updates.v1");
+export const articleUpdatePreferenceKey = libraryName(
+  "quilna.article.updates.v1",
+);
 export function automaticArticleUpdates(): boolean {
   try {
     return localStorage.getItem(articleUpdatePreferenceKey) !== "false";

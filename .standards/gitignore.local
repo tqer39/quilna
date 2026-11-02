@@ -1,0 +1,21 @@
+node_modules/
+dist/
+test-results/
+playwright-report/
+.local-state/
+
+.wrangler/
+.dev.vars*
+.env*
+
+# Owner-specific deployment configuration (copy the example before editing).
+wrangler.dev.jsonc
+wrangler.cloud.jsonc
+
+# Native app and development harness build products.
+apple/.build/
+apple/.swiftpm/
+apple/DerivedData/
+*.xcuserstate
+**/xcuserdata/
+harness/bin/

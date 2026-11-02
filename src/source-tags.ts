@@ -5,10 +5,7 @@ export function normalizeSourceTags(values: string[]): string[] {
   const tags: string[] = [];
   const seen = new Set<string>();
   for (const value of values) {
-    const tag = value
-      .normalize("NFKC")
-      .replace(controls, " ")
-      .trim();
+    const tag = value.normalize("NFKC").replace(controls, " ").trim();
     const key = tag.toLowerCase();
     if (!tag || tag.length > 60 || seen.has(key)) continue;
     seen.add(key);

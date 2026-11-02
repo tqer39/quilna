@@ -291,13 +291,20 @@ async function runReaderScenario(browser, info, aliasMode) {
       expect(route.request().headers().referer).toBeUndefined();
       const url = new URL(route.request().url());
       if (url.pathname === "/works") {
-        expect(url.searchParams.get("query.bibliographic")).toBe("synthetic runtime");
+        expect(url.searchParams.get("query.bibliographic")).toBe(
+          "synthetic runtime",
+        );
         expect(url.searchParams.get("rows")).toBe("20");
       }
       await route.fulfill({
-        json: url.pathname === "/works"
-          ? { status: "ok", "message-type": "work-list", message: { "total-results": 1, items: [paperFixture.message] } }
-          : paperFixture,
+        json:
+          url.pathname === "/works"
+            ? {
+                status: "ok",
+                "message-type": "work-list",
+                message: { "total-results": 1, items: [paperFixture.message] },
+              }
+            : paperFixture,
         headers: { "Access-Control-Allow-Origin": "*" },
       });
     });
@@ -306,18 +313,42 @@ async function runReaderScenario(browser, info, aliasMode) {
       "connect-src 'self' https://api.crossref.org;",
     );
     expect(paperRequests).toBe(0);
-    await a.page.getByLabel("書誌キーワード", { exact: true }).fill("synthetic runtime");
-    await a.page.getByRole("button", { name: "キーワードをCrossrefへ送って検索" }).click();
-    const results = a.page.getByRole("region", { name: "書誌キーワードの検索結果", exact: true });
-    await expect(results.getByRole("heading", { name: paperFixture.message.title[0], exact: true })).toBeVisible();
-    expect(paperRequests).toBe(1);
-    await expect.poll(() => a.page.evaluate(() => Date.now() >= Number(globalThis.localStorage.getItem("quilna.crossref-rate.v1")))).toBe(true);
-    await results.getByRole("button", { name: "このDOIをCrossrefへ送って詳細を確認" }).click();
+    await a.page
+      .getByLabel("書誌キーワード", { exact: true })
+      .fill("synthetic runtime");
+    await a.page
+      .getByRole("button", { name: "キーワードをCrossrefへ送って検索" })
+      .click();
+    const results = a.page.getByRole("region", {
+      name: "書誌キーワードの検索結果",
+      exact: true,
+    });
     await expect(
-      a.page.getByRole("region", { name: "書誌情報のプレビュー", exact: true }).getByRole("heading", {
+      results.getByRole("heading", {
         name: paperFixture.message.title[0],
         exact: true,
       }),
+    ).toBeVisible();
+    expect(paperRequests).toBe(1);
+    await expect
+      .poll(() =>
+        a.page.evaluate(
+          () =>
+            Date.now() >=
+            Number(globalThis.localStorage.getItem("quilna.crossref-rate.v1")),
+        ),
+      )
+      .toBe(true);
+    await results
+      .getByRole("button", { name: "このDOIをCrossrefへ送って詳細を確認" })
+      .click();
+    await expect(
+      a.page
+        .getByRole("region", { name: "書誌情報のプレビュー", exact: true })
+        .getByRole("heading", {
+          name: paperFixture.message.title[0],
+          exact: true,
+        }),
     ).toBeVisible();
     expect(paperRequests).toBe(2);
     const readerPage = await a.page.goto(origin + "/?view=feeds");
@@ -328,7 +359,9 @@ async function runReaderScenario(browser, info, aliasMode) {
       "api.crossref.org",
     );
     // Navigation load/CSP inspection does not guarantee the lazy reader is ready.
-    await expect(a.page.getByRole("button", { name: "設定", exact: true })).toBeVisible();
+    await expect(
+      a.page.getByRole("button", { name: "設定", exact: true }),
+    ).toBeVisible();
     await f.restart(a.account);
     const admin = a.page.locator(".rss-policy-settings");
     async function openAdmin() {

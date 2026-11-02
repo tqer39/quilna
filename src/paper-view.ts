@@ -87,11 +87,15 @@ export async function paperView(root: HTMLElement, client = new PaperClient()) {
   );
   const imported = el("section");
   imported.append(el("h2", "書誌ファイルから確認"), fileLabel, file);
-  const search = paperSearchView(client, (doi) => {
-    input.value = doi;
-    changed();
-    form.requestSubmit();
-  }, changed);
+  const search = paperSearchView(
+    client,
+    (doi) => {
+      input.value = doi;
+      changed();
+      form.requestSubmit();
+    },
+    changed,
+  );
   main.append(search.root, form, imported, notice, preview, library);
   root.replaceChildren(header, main);
 
@@ -390,7 +394,9 @@ export async function paperView(root: HTMLElement, client = new PaperClient()) {
   main.append(
     el(
       "p",
-      hasAccountLibrary() ? "書誌情報はこのブラウザの現在のログイン専用のライブラリに保存します。別の端末とは同期しません。記事のバックアップとは別です。必要な記録は書誌ファイルとして保存できます。同じDOIの変更された登録情報は別の記録として残します。" : "書誌情報はこのブラウザのプロフィールに保存します。ログインごとの分離や同期はありません。別の人とはプロフィールを分けてください。記事のバックアップとは別です。必要な記録は書誌ファイルとして保存できます。同じDOIの変更された登録情報は別の記録として残します。",
+      hasAccountLibrary()
+        ? "書誌情報はこのブラウザの現在のログイン専用のライブラリに保存します。別の端末とは同期しません。記事のバックアップとは別です。必要な記録は書誌ファイルとして保存できます。同じDOIの変更された登録情報は別の記録として残します。"
+        : "書誌情報はこのブラウザのプロフィールに保存します。ログインごとの分離や同期はありません。別の人とはプロフィールを分けてください。記事のバックアップとは別です。必要な記録は書誌ファイルとして保存できます。同じDOIの変更された登録情報は別の記録として残します。",
     ),
   );
   await refresh();

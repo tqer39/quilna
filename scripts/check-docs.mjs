@@ -6,8 +6,14 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 const pages = ["README.md", "apple/README.md", "harness/README.md"];
 const errors = [];
 
-function collect(directory, target = pages, include = (path) => path.endsWith(".md")) {
-  for (const entry of readdirSync(join(root, directory), { withFileTypes: true })) {
+function collect(
+  directory,
+  target = pages,
+  include = (path) => path.endsWith(".md"),
+) {
+  for (const entry of readdirSync(join(root, directory), {
+    withFileTypes: true,
+  })) {
     const path = `${directory}/${entry.name}`;
     if (entry.isDirectory()) collect(path, target, include);
     else if (entry.isFile() && include(path)) target.push(path);
@@ -39,8 +45,14 @@ for (const path of [...documents].sort()) {
   const source = readFileSync(file, "utf8");
   const navigation = `[English](${basename(english)}) | [日本語](${basename(translation)})`;
   const lines = source.split(/\r?\n/);
-  if (!lines[0].startsWith("# ") || lines[1] !== "" || lines[2] !== navigation) {
-    errors.push(`${path}: put the language switch immediately after the H1 and a blank line`);
+  if (
+    !lines[0].startsWith("# ") ||
+    lines[1] !== "" ||
+    lines[2] !== navigation
+  ) {
+    errors.push(
+      `${path}: put the language switch immediately after the H1 and a blank line`,
+    );
   }
 
   checkLinks(path, source, { navigation });
@@ -49,10 +61,16 @@ for (const path of [...documents].sort()) {
 // Tool-discovered English entrypoints do not need a translated manifest.
 // Their script/source references must remain usable as well as Markdown links.
 for (const path of skills) {
-  checkLinks(path, readFileSync(join(root, path), "utf8"), { allTargets: true });
+  checkLinks(path, readFileSync(join(root, path), "utf8"), {
+    allTargets: true,
+  });
 }
 
-function checkLinks(path, source, { navigation = "", allTargets = false } = {}) {
+function checkLinks(
+  path,
+  source,
+  { navigation = "", allTargets = false } = {},
+) {
   const file = join(root, path);
   const japanese = path.endsWith(".ja.md");
   // Examples and inline code may intentionally contain non-existent paths.
@@ -61,8 +79,14 @@ function checkLinks(path, source, { navigation = "", allTargets = false } = {}) 
     .replace(/`[^`\n]*`/g, "")
     .replace(navigation, "");
   const targets = [
-    ...[...prose.matchAll(/\[[^\]\n]*\]\((?:<([^>\n]+)>|([^\s)]+))(?:\s+"[^"]*")?\)/g)].map((m) => m[1] ?? m[2]),
-    ...[...prose.matchAll(/^ {0,3}\[[^\]\n]+\]:\s*(?:<([^>\n]+)>|([^\s]+))/gm)].map((m) => m[1] ?? m[2]),
+    ...[
+      ...prose.matchAll(
+        /\[[^\]\n]*\]\((?:<([^>\n]+)>|([^\s)]+))(?:\s+"[^"]*")?\)/g,
+      ),
+    ].map((m) => m[1] ?? m[2]),
+    ...[
+      ...prose.matchAll(/^ {0,3}\[[^\]\n]+\]:\s*(?:<([^>\n]+)>|([^\s]+))/gm),
+    ].map((m) => m[1] ?? m[2]),
   ];
   for (const target of targets) {
     if (/^[a-z][a-z\d+.-]*:/i.test(target) || target.startsWith("//")) continue;
@@ -76,9 +100,12 @@ function checkLinks(path, source, { navigation = "", allTargets = false } = {}) 
     if (!destination || (!allTargets && !destination.endsWith(".md"))) continue;
     const resolved = resolve(dirname(file), destination);
     const linked = relative(root, resolved).split("\\").join("/");
-    if (!existsSync(resolved)) errors.push(`${path}: broken local link: ${target}`);
+    if (!existsSync(resolved))
+      errors.push(`${path}: broken local link: ${target}`);
     if (documents.has(linked) && linked.endsWith(".ja.md") !== japanese) {
-      errors.push(`${path}: keep document links in the same language: ${target}`);
+      errors.push(
+        `${path}: keep document links in the same language: ${target}`,
+      );
     }
   }
 }
@@ -87,5 +114,7 @@ if (errors.length) {
   console.error(errors.join("\n"));
   process.exitCode = 1;
 } else {
-  console.log(`Documentation checks passed: ${documents.size / 2} English/Japanese pairs; ${skills.length} skill entrypoints.`);
+  console.log(
+    `Documentation checks passed: ${documents.size / 2} English/Japanese pairs; ${skills.length} skill entrypoints.`,
+  );
 }

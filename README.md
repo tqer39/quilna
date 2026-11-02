@@ -166,3 +166,11 @@ The backend uses only Node standard modules and Zod. Stubs exist only in tests.
 
 English documentation uses `.md`; Japanese translations use `.ja.md`. Each page links to its counterpart.
 See [AGENTS.md](AGENTS.md) for contributor instructions and the [documentation rules](docs/rules/documentation.md) for scoped updates that avoid retranslating unrelated pages.
+
+## Shared development configuration
+
+Use `mise run standards:prepare` before work, then `mise run standards:verify` and
+`mise run standards:finish` before finishing. `mise run standards:version` shows the adopted version.
+Edit `.standards/mise.project.toml` for repository tasks and tools, review a generated plan,
+and apply it instead of editing generated configuration. The shared checks cover the browser,
+workers, and Go harness. Existing macOS-only Apple tasks and CI remain separate.

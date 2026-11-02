@@ -168,3 +168,11 @@ backendはNodeの標準moduleとZodのみ、stubはテスト内のみです。
 英語版は`.md`、日本語訳は`.ja.md`です。各ページから対応する言語版へ切り替えられます。
 貢献時の指示は[AGENTS.md](AGENTS.md)、無関係な文書の再翻訳を避ける更新方法は
 [ドキュメントのルール](docs/rules/documentation.ja.md)を参照してください。
+
+## 共通開発設定
+
+開始時に `mise run standards:prepare`、終了前に `mise run standards:verify` と
+`mise run standards:finish` を実行します。適用版は `mise run standards:version` で確認できます。
+タスクとツールは `.standards/mise.project.toml` を編集し、生成された計画を確認して適用します。
+共通検証はブラウザー、Workers、Go ハーネスを対象とします。
+既存の macOS 専用 Apple タスクと CI は分離したまま維持します。

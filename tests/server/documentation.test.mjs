@@ -12,7 +12,12 @@ async function fixture(t, skillBody) {
     await mkdir(dirname(join(root, path)), { recursive: true });
     await writeFile(join(root, path), text);
   };
-  for (const path of ["README.md", "apple/README.md", "harness/README.md", "docs/guide.md"]) {
+  for (const path of [
+    "README.md",
+    "apple/README.md",
+    "harness/README.md",
+    "docs/guide.md",
+  ]) {
     const basename = path.split("/").at(-1);
     const japanese = basename.replace(/\.md$/, ".ja.md");
     const body = `# Guide\n\n[English](${basename}) | [日本語](${japanese})\n`;
@@ -21,16 +26,29 @@ async function fixture(t, skillBody) {
   }
   await write("AGENTS.md", "# Repository instructions\n");
   await write("scripts/check.sh", "#!/bin/sh\nexit 0\n");
-  await copyFile(new URL("../../scripts/check-docs.mjs", import.meta.url), join(root, "scripts/check-docs.mjs"));
+  await copyFile(
+    new URL("../../scripts/check-docs.mjs", import.meta.url),
+    join(root, "scripts/check-docs.mjs"),
+  );
   if (skillBody !== undefined) {
-    await write(".agents/skills/example/SKILL.md", `---\nname: example\ndescription: Review this project.\n---\n\n# Example\n\n${skillBody}\n`);
+    await write(
+      ".agents/skills/example/SKILL.md",
+      `---\nname: example\ndescription: Review this project.\n---\n\n# Example\n\n${skillBody}\n`,
+    );
   }
   return root;
 }
 
 function check(root) {
   try {
-    return { status: 0, output: execFileSync(process.execPath, [join(root, "scripts/check-docs.mjs")], { encoding: "utf8", stdio: "pipe" }) };
+    return {
+      status: 0,
+      output: execFileSync(
+        process.execPath,
+        [join(root, "scripts/check-docs.mjs")],
+        { encoding: "utf8", stdio: "pipe" },
+      ),
+    };
   } catch (error) {
     return { status: error.status, output: `${error.stdout}${error.stderr}` };
   }
@@ -41,7 +59,10 @@ test("documentation checks retain support for a checkout without local skills", 
 });
 
 test("a discovered SKILL entrypoint can reference canonical rules and scripts without a translation copy", async (t) => {
-  const root = await fixture(t, "Read [rules](../../../AGENTS.md), [guide](../../../harness/README.md), and [checks](../../../scripts/check.sh). Explicitly invoke `$example`.\n```text\n[example](not-a-real-file.md)\n```");
+  const root = await fixture(
+    t,
+    "Read [rules](../../../AGENTS.md), [guide](../../../harness/README.md), and [checks](../../../scripts/check.sh). Explicitly invoke `$example`.\n```text\n[example](not-a-real-file.md)\n```",
+  );
   assert.equal(check(root).status, 0);
 });
 

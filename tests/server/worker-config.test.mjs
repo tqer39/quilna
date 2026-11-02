@@ -121,18 +121,38 @@ test("deployment checks include ignored owner config, parse JSONC, and never pri
   assert.ok(!errors.includes("do-not-print"));
 });
 
-
 test("account-library deployment refuses asset bypass, previews and an unspecified legacy owner", () => {
-  const enabled = () => ({ ...safe(), vars: { LIBRARY_ISOLATION_ENABLED: "true", LIBRARY_LEGACY_OWNER_HASH: "a".repeat(64) } });
+  const enabled = () => ({
+    ...safe(),
+    vars: {
+      LIBRARY_ISOLATION_ENABLED: "true",
+      LIBRARY_LEGACY_OWNER_HASH: "a".repeat(64),
+    },
+  });
   assert.deepEqual(inspectWorkerConfig(enabled()), []);
   for (const mutate of [
-    (value) => { value.assets.run_worker_first = ["/api/*"]; },
-    (value) => { value.preview_urls = true; },
-    (value) => { delete value.vars.LIBRARY_LEGACY_OWNER_HASH; },
-    (value) => { value.vars.LIBRARY_LEGACY_OWNER_HASH = "unknown"; },
-    (value) => { value.env = { staging: { vars: { LIBRARY_ISOLATION_ENABLED: "true" } } }; },
+    (value) => {
+      value.assets.run_worker_first = ["/api/*"];
+    },
+    (value) => {
+      value.preview_urls = true;
+    },
+    (value) => {
+      delete value.vars.LIBRARY_LEGACY_OWNER_HASH;
+    },
+    (value) => {
+      value.vars.LIBRARY_LEGACY_OWNER_HASH = "unknown";
+    },
+    (value) => {
+      value.env = { staging: { vars: { LIBRARY_ISOLATION_ENABLED: "true" } } };
+    },
   ]) {
-    const config = enabled(); mutate(config);
-    assert.ok(inspectWorkerConfig(config).some((error) => error.includes("account libraries")));
+    const config = enabled();
+    mutate(config);
+    assert.ok(
+      inspectWorkerConfig(config).some((error) =>
+        error.includes("account libraries"),
+      ),
+    );
   }
 });

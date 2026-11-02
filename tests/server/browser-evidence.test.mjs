@@ -234,7 +234,14 @@ async function artifact(t) {
     for (const tagged of [false, true])
       await put(
         `.local-state/search-performance/results/case-${tagged}-${d}/measurements.json`,
-        { ...measurement(tagged), design: d.replace(/^account-/, ""), library: d.startsWith("account-") ? "account" : "legacy", database: "tsumiki.rss.v1" + (d.startsWith("account-") ? `.account.${"b".repeat(64)}` : "") },
+        {
+          ...measurement(tagged),
+          design: d.replace(/^account-/, ""),
+          library: d.startsWith("account-") ? "account" : "legacy",
+          database:
+            "tsumiki.rss.v1" +
+            (d.startsWith("account-") ? `.account.${"b".repeat(64)}` : ""),
+        },
       );
   return { root, put };
 }
@@ -312,9 +319,17 @@ test("CLI emits a summary only on success and does not modify evidence", async (
 
 test("evidence verifier refuses an account measurement bound to a legacy or different account database", async (t) => {
   const { root, put } = await artifact(t);
-  const path = ".local-state/search-performance/results/case-false-account-studio/measurements.json";
-  for (const [library, database] of [["legacy", "tsumiki.rss.v1"], ["account", "tsumiki.rss.v1"], ["account", `tsumiki.rss.v1.account.${"c".repeat(64)}`]]) {
+  const path =
+    ".local-state/search-performance/results/case-false-account-studio/measurements.json";
+  for (const [library, database] of [
+    ["legacy", "tsumiki.rss.v1"],
+    ["account", "tsumiki.rss.v1"],
+    ["account", `tsumiki.rss.v1.account.${"c".repeat(64)}`],
+  ]) {
     await put(path, { ...measurement(false), library, database });
-    await assert.rejects(verifyBrowserEvidence(root, expected), /namespace mismatch/);
+    await assert.rejects(
+      verifyBrowserEvidence(root, expected),
+      /namespace mismatch/,
+    );
   }
 });

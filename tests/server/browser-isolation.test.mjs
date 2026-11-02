@@ -33,33 +33,52 @@ for (const [config, port] of [
       });
       // Retain the real server policy. Only replace the test payload and output
       // so this negative probe needs no browser and cannot erase useful reports.
-      await writeFile(join(directory, "config.ts"), `
+      await writeFile(
+        join(directory, "config.ts"),
+        `
 import original from ${JSON.stringify(join(root, config))};
 export default { ...original, testDir: ${JSON.stringify(directory)},
   testMatch: "probe.spec.ts", reporter: "dot", projects: [{ name: "probe" }],
   outputDir: ${JSON.stringify(join(directory, "results"))} };
-`);
-      await writeFile(join(directory, "probe.spec.ts"), `
+`,
+      );
+      await writeFile(
+        join(directory, "probe.spec.ts"),
+        `
 import { test } from "@playwright/test";
 import { writeFileSync } from "node:fs";
 test("must not execute against an unrelated server", () => {
   writeFileSync(${JSON.stringify(marker)}, "executed");
 });
-`);
+`,
+      );
       await assert.rejects(
-        exec(process.execPath, [
-          join(root, "node_modules/@playwright/test/cli.js"),
-          "test", "--config", join(directory, "config.ts"),
-        ], { cwd: root, timeout: 20000, maxBuffer: 256 * 1024 }),
+        exec(
+          process.execPath,
+          [
+            join(root, "node_modules/@playwright/test/cli.js"),
+            "test",
+            "--config",
+            join(directory, "config.ts"),
+          ],
+          { cwd: root, timeout: 20000, maxBuffer: 256 * 1024 },
+        ),
         (error) => {
           assert.equal(error.code, 1);
           assert.match(error.stdout + error.stderr, /already used/);
-          assert.match(error.stdout + error.stderr, new RegExp(`127\\.0\\.0\\.1:${port}`));
+          assert.match(
+            error.stdout + error.stderr,
+            new RegExp(`127\\.0\\.0\\.1:${port}`),
+          );
           return true;
         },
       );
       assert.ok(requests > 0, "the existing server must be observed");
-      assert.equal(existsSync(marker), false, "no test may use the existing server");
+      assert.equal(
+        existsSync(marker),
+        false,
+        "no test may use the existing server",
+      );
     } finally {
       server.closeAllConnections();
       await new Promise((accept) => server.close(accept));
