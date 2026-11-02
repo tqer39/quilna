@@ -20,6 +20,7 @@ A failed answer write retains the selection for an explicit retry.
 If existing answers cannot be read, the textbook remains readable while new answers are disabled until a successful retry.
 Reload retains books and answers. The shared reader currently opens the whole book; a per-section resume position is not stored.
 Answer history pages 20 attempts at a time, starting with the most recent page; older pages remain available.
+Visible answer dates use Japanese date/time formatting in the browser's local timezone. Stored ISO timestamps and each `time` element's `datetime` remain unchanged.
 
 In **教材ファイルを書き出す**, review the chosen edition and excerpts, check the confirmation and download the file.
 Export uses the retained archive text and never reads the answer database, account/session stores, notes or existing demo history.

@@ -913,3 +913,59 @@ test("a delayed answer commit respects newer focus and navigation while retainin
   await openBook(page);
   await expect(page.getByText(/文章が出力された · 正答/)).toHaveCount(2);
 });
+
+for (const [zone, date, time] of [
+  ["Asia/Tokyo", "2026/11/02", "8:30:00"],
+  ["America/Los_Angeles", "2026/11/01", "15:30:00"],
+]) {
+  test.describe(`answer date display in ${zone}`, () => {
+    test.use({ timezoneId: zone, locale: "ja-JP" });
+    test("formats the visible local date while retaining the exact stored ISO timestamp and archive", async ({
+      page,
+    }) => {
+      await page.goto("/?view=textbooks");
+      await importBook(page);
+      const stamp = "2026-11-01T23:30:00.000Z";
+      await page.evaluate(async (time) => {
+        const path = "/src/shared-textbook-store.ts",
+          api = await import(path),
+          [book] = await api.listSharedTextbooks();
+        await new Promise<void>((resolve, reject) => {
+          const request = indexedDB.open("quilna.shared-textbooks.v1", 1);
+          request.onsuccess = () => {
+            const db = request.result,
+              tx = db.transaction("answers", "readwrite");
+            tx.objectStore("answers").add({
+              id: "20000000-0000-4000-8000-000000000001",
+              textbook: book.digest,
+              section: "models",
+              question: "models-question",
+              option: "text",
+              correct: true,
+              time,
+            });
+            tx.oncomplete = () => {
+              db.close();
+              resolve();
+            };
+            tx.onerror = () => reject(tx.error);
+          };
+        });
+      }, stamp);
+      await openBook(page);
+      const display = page.locator("main time");
+      await expect(display).toHaveCount(1);
+      await expect(display).toHaveAttribute("datetime", stamp);
+      await expect(display).toContainText(date);
+      await expect(display).toContainText(time);
+      const retained = await page.evaluate(async () => {
+        const path = "/src/shared-textbook-store.ts",
+          api = await import(path),
+          [book] = await api.listSharedTextbooks();
+        return (await api.readSharedAnswers(book))[0].time;
+      });
+      expect(retained).toBe(stamp);
+      expect(await exported(page)).toBe(fixture);
+    });
+  });
+}

@@ -410,16 +410,23 @@ export async function sharedTextbookView(root: HTMLElement) {
               `回答 ${records.length}件 · ${historyPage + 1} / ${Math.ceil(records.length / 20)}ページ（新しい回答から20件ずつ）`,
             ),
           );
+        const timeFormat = new Intl.DateTimeFormat("ja-JP", {
+          dateStyle: "medium",
+          timeStyle: "medium",
+        });
         for (const a of records.slice(
           Math.max(0, records.length - (historyPage + 1) * 20),
           records.length - historyPage * 20,
-        ))
-          ownHistory.append(
-            el(
-              "p",
-              `${a.time} · ${q.options.find((o) => o.id === a.option)!.text} · ${a.correct ? "正答" : "別の選択肢"}`,
-            ),
+        )) {
+          const time = el("time", timeFormat.format(new Date(a.time)));
+          time.dateTime = a.time;
+          const attempt = el("p");
+          attempt.append(
+            time,
+            ` · ${q.options.find((o) => o.id === a.option)!.text} · ${a.correct ? "正答" : "別の選択肢"}`,
           );
+          ownHistory.append(attempt);
+        }
         if (records.length > 20) {
           const older = button("古い20件", () => {
             historyPage++;
