@@ -12,7 +12,9 @@ export type QuoteConnection = {
   createdAt: string;
   revision: number;
 };
-export const quoteConnectionDatabase = libraryName("quilna.quote-connections.v1");
+export const quoteConnectionDatabase = libraryName(
+  "quilna.quote-connections.v1",
+);
 export const quoteConnectionLimit = 200;
 export function validQuoteConnection(value: unknown): value is QuoteConnection {
   if (!value || typeof value !== "object") return false;

@@ -1,4 +1,8 @@
-import { libraryName, hasAccountLibrary, librarySignedOut } from "./library-context";
+import {
+  libraryName,
+  hasAccountLibrary,
+  librarySignedOut,
+} from "./library-context";
 import { ReaderLocation } from "./reader-location";
 import { ArticleOutline } from "./article-outline";
 import { ArticleAutoUpdate } from "./article-auto-update";
@@ -220,7 +224,9 @@ export async function feedReader(root: HTMLElement) {
     designSettings,
     el(
       "p",
-      hasAccountLibrary() ? "記事・既読・保存済みの印と個人記録は、このブラウザの現在のログイン専用のライブラリに保存します。別の端末やブラウザとは同期しません。ログアウトしても記録は残り、同じアカウントで戻ると利用できます。ブラウザのデータを消去すると失われます。" : "記事・既読・保存済みの印は、このブラウザ内に保存します。これらの状態は別の端末やブラウザとは同期しません。ブラウザのデータを消去すると失われます。",
+      hasAccountLibrary()
+        ? "記事・既読・保存済みの印と個人記録は、このブラウザの現在のログイン専用のライブラリに保存します。別の端末やブラウザとは同期しません。ログアウトしても記録は残り、同じアカウントで戻ると利用できます。ブラウザのデータを消去すると失われます。"
+        : "記事・既読・保存済みの印は、このブラウザ内に保存します。これらの状態は別の端末やブラウザとは同期しません。ブラウザのデータを消去すると失われます。",
     ),
     el(
       "p",
@@ -244,8 +250,9 @@ export async function feedReader(root: HTMLElement) {
           librarySignedOut();
           return;
         }
-        if (state.authenticated && await auth.logout()) return;
-        notice.textContent = "ログアウトを確認できませんでした。記録はこのアカウントのまま保持しています。接続後に再試行してください。";
+        if (state.authenticated && (await auth.logout())) return;
+        notice.textContent =
+          "ログアウトを確認できませんでした。記録はこのアカウントのまま保持しています。接続後に再試行してください。";
         logout.disabled = false;
       })();
     });

@@ -225,18 +225,20 @@ function save() {
       );
   };
   if (navigator.locks)
-    void navigator.locks.request(libraryName("fieldnotes.history.v1"), persist).catch(() => {
-      pendingSaves--;
-      if (!pendingSaves) delete status.dataset.saving;
-      status.replaceChildren(
-        feedbackMessage(
-          "error",
-          "保存エラー",
-          "排他制御中に保存できませんでした。このタブ内の記録は保持しています。",
-        ),
-        button("保存を再試行", save),
-      );
-    });
+    void navigator.locks
+      .request(libraryName("fieldnotes.history.v1"), persist)
+      .catch(() => {
+        pendingSaves--;
+        if (!pendingSaves) delete status.dataset.saving;
+        status.replaceChildren(
+          feedbackMessage(
+            "error",
+            "保存エラー",
+            "排他制御中に保存できませんでした。このタブ内の記録は保持しています。",
+          ),
+          button("保存を再試行", save),
+        );
+      });
   else persist();
 }
 /** Reread this library's current book under its lock before applying a reviewed proposal. */
@@ -245,76 +247,79 @@ async function acceptProposal(proposal: Proposal): Promise<string | null> {
     return "このブラウザでは安全な排他制御を利用できません。反映は保留します。";
   proposalApplying = true;
   try {
-    return await navigator.locks.request(libraryName("fieldnotes.history.v1"), async () => {
-      const latest = readHistory(storage);
-      if (latest.error)
-        return "保存領域を読み込めません。既存データの保護のため反映を止めました。";
-      if (
-        activeLocalBook(baseBook, latest.history.bookRevisions).version !==
-        book.version
-      )
-        return "別タブで教材版が変わりました。再読み込みして現版を確認してください。";
-      try {
-        const revisionId = crypto.randomUUID();
-        const nextBook = applyProposal(
-          book,
-          proposal,
-          [...history.proposalEvents, ...latest.history.proposalEvents],
-          revisionId,
-        );
-        const time = new Date().toISOString();
-        const identity = {
-          bookId: book.bookId,
-          version: book.version,
-          blockId: proposal.blockId,
-          userId: history.userId,
-          time,
-        };
-        const staged = historySchema.parse(history);
-        mergeHistoryRecords(staged, latest.history);
-        staged.bookRevisions.push({
-          ...identity,
-          version: nextBook.version,
-          revisionId,
-          proposalId: proposal.proposalId,
-          baseVersion: book.version,
-          book: nextBook,
-        });
-        staged.proposalEvents.push({
-          ...identity,
-          eventId: crypto.randomUUID(),
-          proposalId: proposal.proposalId,
-          action: "apply",
-        });
-        staged.questionEvents.push({
-          ...identity,
-          eventId: crypto.randomUUID(),
-          questionId: proposal.questionId,
-          action: "resolved",
-        });
-        if (!writeHistory(storage, staged))
-          return "新しい版を保存できませんでした。元の教材のままです。保存を再試行してから、もう一度本人選択で反映してください。";
-        const readingId = book.blocks[index]?.id;
-        Object.assign(history, staged);
-        book = nextBook;
-        index = Math.max(
-          0,
-          book.blocks.findIndex((b) => b.id === readingId),
-        );
-        planStart = Math.min(planStart, book.blocks.length - 1);
-        resume = null;
-        reviewOpen = false;
-        reviewNode = null;
-        render();
-        save();
-        main.querySelector("h2")?.focus();
-        return null;
-      } catch (error) {
-        return error instanceof Error
-          ? error.message
-          : "追加案の検証に失敗しました。";
-      }
-    });
+    return await navigator.locks.request(
+      libraryName("fieldnotes.history.v1"),
+      async () => {
+        const latest = readHistory(storage);
+        if (latest.error)
+          return "保存領域を読み込めません。既存データの保護のため反映を止めました。";
+        if (
+          activeLocalBook(baseBook, latest.history.bookRevisions).version !==
+          book.version
+        )
+          return "別タブで教材版が変わりました。再読み込みして現版を確認してください。";
+        try {
+          const revisionId = crypto.randomUUID();
+          const nextBook = applyProposal(
+            book,
+            proposal,
+            [...history.proposalEvents, ...latest.history.proposalEvents],
+            revisionId,
+          );
+          const time = new Date().toISOString();
+          const identity = {
+            bookId: book.bookId,
+            version: book.version,
+            blockId: proposal.blockId,
+            userId: history.userId,
+            time,
+          };
+          const staged = historySchema.parse(history);
+          mergeHistoryRecords(staged, latest.history);
+          staged.bookRevisions.push({
+            ...identity,
+            version: nextBook.version,
+            revisionId,
+            proposalId: proposal.proposalId,
+            baseVersion: book.version,
+            book: nextBook,
+          });
+          staged.proposalEvents.push({
+            ...identity,
+            eventId: crypto.randomUUID(),
+            proposalId: proposal.proposalId,
+            action: "apply",
+          });
+          staged.questionEvents.push({
+            ...identity,
+            eventId: crypto.randomUUID(),
+            questionId: proposal.questionId,
+            action: "resolved",
+          });
+          if (!writeHistory(storage, staged))
+            return "新しい版を保存できませんでした。元の教材のままです。保存を再試行してから、もう一度本人選択で反映してください。";
+          const readingId = book.blocks[index]?.id;
+          Object.assign(history, staged);
+          book = nextBook;
+          index = Math.max(
+            0,
+            book.blocks.findIndex((b) => b.id === readingId),
+          );
+          planStart = Math.min(planStart, book.blocks.length - 1);
+          resume = null;
+          reviewOpen = false;
+          reviewNode = null;
+          render();
+          save();
+          main.querySelector("h2")?.focus();
+          return null;
+        } catch (error) {
+          return error instanceof Error
+            ? error.message
+            : "追加案の検証に失敗しました。";
+        }
+      },
+    );
   } finally {
     proposalApplying = false;
     if (deferredPopstate !== null) {
