@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const designs = ["studio", "editorial", "focus"];
+const searchProjects = [...designs, ...designs.map((d) => `account-${d}`)];
 const groups = ["idle", "held-write", "continuous-write"];
 const shaPattern = /^[a-f0-9]{40}$/;
 const requireEvidence = (condition, message) => {
@@ -162,6 +163,7 @@ export function inspectMeasurements(report, label) {
   };
 }
 
+/** Check source, complete workload inventories and hashes without changing or rerunning evidence. */
 export async function verifyBrowserEvidence(
   root,
   { source, functional, runtime },
@@ -199,7 +201,7 @@ export async function verifyBrowserEvidence(
   for (const [name, expected, projects] of [
     ["browser", functional, ["desktop", "mobile"]],
     ["reader-runtime", runtime, ["desktop", "mobile"]],
-    ["search", 6, designs],
+    ["search", 12, searchProjects],
   ]) {
     const tests = inspectReport(
       JSON.parse(await read(`test-results/${name}.json`)),
@@ -222,28 +224,41 @@ export async function verifyBrowserEvidence(
       entry.isDirectory(),
       "Unexpected entry in search measurements",
     );
-    const design = designs.find((d) => entry.name.endsWith(`-${d}`));
-    requireEvidence(design, "Unknown search project directory");
+    const project = [...searchProjects]
+      .sort((a, b) => b.length - a.length)
+      .find((d) => entry.name.endsWith(`-${d}`));
+    requireEvidence(project, "Unknown search project directory");
+    const design = project.replace(/^account-/, "");
     const path = `${measurementRoot}/${entry.name}/measurements.json`;
-    const result = inspectMeasurements(JSON.parse(await read(path)), path);
-    const key = `${design}:${result.tagged}`;
+    const raw = JSON.parse(await read(path));
+    const library = project.startsWith("account-") ? "account" : "legacy";
+    requireEvidence(
+      raw.design === design &&
+        raw.library === library &&
+        raw.database ===
+          "tsumiki.rss.v1" +
+            (library === "account" ? `.account.${"b".repeat(64)}` : ""),
+      "Search project/library namespace mismatch",
+    );
+    const result = inspectMeasurements(raw, path);
+    const key = `${project}:${result.tagged}`;
     const title = `100k originals and translations${result.tagged ? " with dense tags" : ""}: input to painted results, correctness and contention`;
     requireEvidence(
       !seen.has(key) &&
-        searchTests.filter((t) => t.project === design && t.title === title)
+        searchTests.filter((t) => t.project === project && t.title === title)
           .length === 1,
       "Duplicate or unmatched search measurement condition",
     );
     seen.add(key);
-    search.push({ design, ...result });
+    search.push({ project, design, library, ...result });
   }
   requireEvidence(
-    seen.size === 6,
-    "Missing design/baseline/dense-tag measurements",
+    seen.size === 12,
+    "Missing project/baseline/dense-tag measurements",
   );
   search.sort(
     (a, b) =>
-      a.design.localeCompare(b.design) || Number(a.tagged) - Number(b.tagged),
+      a.project.localeCompare(b.project) || Number(a.tagged) - Number(b.tagged),
   );
   return { source, reports, search, hashes };
 }

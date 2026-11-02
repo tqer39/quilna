@@ -7,7 +7,29 @@ for (const tagged of [false, true]) {
     context,
     browser,
   }, info) => {
+    const account = info.project.metadata.libraryAccount as string | null;
+    const design = info.project.name.replace(/^account-/, "");
+    if (account) {
+      await context.route(
+        (url) => url.pathname === "/",
+        async (route) => {
+          const response = await route.fetch();
+          await route.fulfill({
+            response,
+            body: (await response.text()).replace(
+              "</head>",
+              '<meta name="account-libraries" content="required"></head>',
+            ),
+          });
+        },
+      );
+      await context.route("**/api/library/status", (route) =>
+        route.fulfill({ json: { schema: 1, account, legacy: false } }),
+      );
+    }
     const report: Record<string, unknown> = {
+      library: account ? "account" : "legacy",
+      design,
       browser: browser.version(),
       os: await page.evaluate(() => navigator.userAgent),
       corpus: 100000,
@@ -36,8 +58,19 @@ for (const tagged of [false, true]) {
       await expect(
         page.getByRole("button", { name: "フィードを探す", exact: true }),
       ).toBeEnabled();
+      await expect(page.locator("html")).toHaveAttribute("data-reader-design", design);
+      const databaseName = await page.evaluate(async () => {
+        const path = "/src/feed-store.ts";
+        const { feedDatabase }: typeof import("../../src/feed-store") =
+          await import(path);
+        return feedDatabase;
+      });
+      expect(databaseName).toBe(
+        "tsumiki.rss.v1" + (account ? `.account.${account}` : ""),
+      );
+      report.database = databaseName;
       const seedStart = Date.now();
-      await page.evaluate(async (tagged) => {
+      await page.evaluate(async ({ tagged, databaseName }) => {
         const labels = [
           "技術・開発",
           "AI・機械学習",
@@ -49,7 +82,7 @@ for (const tagged of [false, true]) {
           "ニュース",
         ];
         const db = await new Promise<IDBDatabase>((resolve, reject) => {
-          const r = indexedDB.open("tsumiki.rss.v1");
+          const r = indexedDB.open(databaseName);
           r.onsuccess = () => resolve(r.result);
           r.onerror = () => reject(r.error);
         });
@@ -113,7 +146,7 @@ for (const tagged of [false, true]) {
           });
         }
         db.close();
-      }, tagged);
+      }, { tagged, databaseName });
       report.seedMs = Date.now() - seedStart;
       const readyStart = Date.now();
       await page.reload();
@@ -125,7 +158,12 @@ for (const tagged of [false, true]) {
       report.loadAndPrepareMs = Date.now() - readyStart;
       const writer = await context.newPage();
       // Same origin, no app: the writer owns one explicit transaction at a time.
-      await writer.goto("/favicon.ico");
+      await writer.route("**/__search-writer", (route) => route.fulfill({
+        contentType: "text/html", body: "<!doctype html><title>Search writer fixture</title>",
+      }));
+      await writer.goto("/__search-writer");
+      await expect(writer).toHaveTitle("Search writer fixture");
+      await expect(writer.locator("#app")).toHaveCount(0);
       const cases: {
         query: string;
         expected: string[];
@@ -191,7 +229,7 @@ for (const tagged of [false, true]) {
           },
         );
       for (const group of ["idle", "held-write", "continuous-write"]) {
-        await writer.evaluate(async (group) => {
+        await writer.evaluate(async ({ group, databaseName }) => {
           const w = window as unknown as {
             stop: boolean;
             commits: number[];
@@ -202,7 +240,7 @@ for (const tagged of [false, true]) {
           w.held = false;
           if (group === "idle") return;
           const db = await new Promise<IDBDatabase>((resolve) => {
-            const r = indexedDB.open("tsumiki.rss.v1");
+            const r = indexedDB.open(databaseName);
             r.onsuccess = () => resolve(r.result);
           });
           if (group === "held-write") {
@@ -260,7 +298,7 @@ for (const tagged of [false, true]) {
               };
               tx.oncomplete = () => {
                 w.commits.push(Date.now());
-                const channel = new BroadcastChannel("tsumiki.rss.v1");
+                const channel = new BroadcastChannel(databaseName);
                 channel.postMessage({ articleId: "000001" });
                 channel.close();
                 setTimeout(write, 20);
@@ -268,7 +306,7 @@ for (const tagged of [false, true]) {
             };
             write();
           }
-        }, group);
+        }, { group, databaseName });
         for (const c of cases) {
           if (tagged) {
             await page.getByLabel("タグで絞り込み").selectOption("");

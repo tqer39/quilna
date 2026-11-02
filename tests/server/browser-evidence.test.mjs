@@ -12,6 +12,7 @@ import {
 
 const source = "a".repeat(40);
 const designs = ["studio", "editorial", "focus"];
+const projects = [...designs, ...designs.map((d) => `account-${d}`)];
 const searchTitle = (tagged) =>
   `100k originals and translations${tagged ? " with dense tags" : ""}: input to painted results, correctness and contention`;
 function report(projects, titles = ["fixture"]) {
@@ -61,6 +62,9 @@ function measurement(tagged) {
   ];
   return {
     tagged,
+    library: "legacy",
+    design: "studio",
+    database: "tsumiki.rss.v1",
     corpus: 100000,
     originalBytes: 2048,
     translationBytes: 2048,
@@ -224,13 +228,13 @@ async function artifact(t) {
   await put("test-results/reader-runtime.json", report(["desktop", "mobile"]));
   await put(
     "test-results/search.json",
-    report(designs, [searchTitle(false), searchTitle(true)]),
+    report(projects, [searchTitle(false), searchTitle(true)]),
   );
-  for (const d of designs)
+  for (const d of projects)
     for (const tagged of [false, true])
       await put(
         `.local-state/search-performance/results/case-${tagged}-${d}/measurements.json`,
-        measurement(tagged),
+        { ...measurement(tagged), design: d.replace(/^account-/, ""), library: d.startsWith("account-") ? "account" : "legacy", database: "tsumiki.rss.v1" + (d.startsWith("account-") ? `.account.${"b".repeat(64)}` : "") },
       );
   return { root, put };
 }
@@ -239,12 +243,12 @@ const expected = { source, functional: 2, runtime: 2 };
 test("artifact verifier rejects mismatched source, incomplete inventories and duplicate measurements", async (t) => {
   const { root, put } = await artifact(t);
   const result = await verifyBrowserEvidence(root, expected);
-  assert.equal(result.search.length, 6);
+  assert.equal(result.search.length, 12);
   assert.equal(
     result.search.reduce((n, r) => n + r.samples, 0),
-    2700,
+    5400,
   );
-  assert.equal(Object.keys(result.hashes).length, 10);
+  assert.equal(Object.keys(result.hashes).length, 16);
   await assert.rejects(
     verifyBrowserEvidence(root, { ...expected, source: "b".repeat(40) }),
     /SHA/,
@@ -304,4 +308,13 @@ test("CLI emits a summary only on success and does not modify evidence", async (
   assert.equal(failed.stdout, "");
   await rm(join(root, "test-results/reader-runtime.json"));
   assert.equal(run(source, "2", "2").status, 1);
+});
+
+test("evidence verifier refuses an account measurement bound to a legacy or different account database", async (t) => {
+  const { root, put } = await artifact(t);
+  const path = ".local-state/search-performance/results/case-false-account-studio/measurements.json";
+  for (const [library, database] of [["legacy", "tsumiki.rss.v1"], ["account", "tsumiki.rss.v1"], ["account", `tsumiki.rss.v1.account.${"c".repeat(64)}`]]) {
+    await put(path, { ...measurement(false), library, database });
+    await assert.rejects(verifyBrowserEvidence(root, expected), /namespace mismatch/);
+  }
 });
