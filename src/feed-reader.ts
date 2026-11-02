@@ -92,6 +92,7 @@ import {
   setFeedSubscription,
 } from "./feed-store";
 
+/** Mount collection and reading while retaining browser-local state through asynchronous updates. */
 export async function feedReader(root: HTMLElement) {
   document.title = "情報収集 | Quilna";
   const designSettings = readerDesignSettings();
@@ -402,6 +403,18 @@ export async function feedReader(root: HTMLElement) {
     lesson,
   );
   settingsBody.append(demo);
+  const shared = el("section");
+  shared.append(
+    el("h3", "受け取った教材"),
+    el(
+      "p",
+      "出典つきの教材ファイルを確認して取り込み、読むことができます。回答は自分のブラウザに保存します。",
+    ),
+  );
+  const sharedLink = el("a", "教材ファイルの取り込み・読書へ", "rss-text-link");
+  sharedLink.href = "/?view=textbooks";
+  shared.append(sharedLink);
+  settingsBody.append(shared);
   actions.append(skipToArticles, settingsOpen);
   rootHeader.append(brand, actions);
   const locationNavigation = new ReaderLocation({

@@ -15,6 +15,8 @@ Select an article title to open its reading view. **← 記事一覧へ** stays 
 Open an article, select **この記事を保存**, return to the list and select **保存した記事**.
 Reload to check the saved copy. **設定 → デモ教材 → デモ教材を開く** opens the existing fixed CAA lesson separately; collection does not generate it. It is no longer in the everyday reader header, and its previous learning history is preserved.
 
+**設定 → 受け取った教材** opens the separate [textbook-file library](textbook-sharing.md) for explicit file preview/import, reading and re-export with private recipient answers. Collected-source generation remains unconnected.
+
 Discovery reads the page's advertised RSS/Atom alternate links, including relative URLs and its HTML base URL.
 If an article page has no advertised feeds, it also checks the final site's home page, within the same 16-second client deadline.
 Up to 20 distinct candidates are shown. Changing the input cancels the search and discards stale results.

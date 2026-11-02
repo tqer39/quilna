@@ -81,7 +81,7 @@ Do not represent a fixed sample lesson as completion of the full generated-textb
 - Address security and data-loss problems first, including [security maintenance](security-maintenance.md).
 - Use Issue #41 for browser usability and concrete feedback. Validate the [collection entry in #48](https://github.com/tqer39/quilna/issues/48) first; repair blocking defects before optional additions.
 - Prioritize subscriptions and reading, then highlights and source-backed connections as described above. Continue the source-to-textbook-to-comprehension workflow in [Issue #7](https://github.com/tqer39/quilna/issues/7) as an optional deepening path on the browser.
-- Preserve source-aware sharing in [Issue #30](https://github.com/tqer39/quilna/issues/30) and paper discovery in [Issue #31](https://github.com/tqer39/quilna/issues/31) as follow-ups to the learning flow.
+- Preserve source-aware sharing in [Issue #30](https://github.com/tqer39/quilna/issues/30) and paper discovery in [Issue #31](https://github.com/tqer39/quilna/issues/31) as follow-ups to the learning flow. The browser [textbook-file workflow](textbook-sharing.md) implements explicit import, reading and re-export with separate recipient answers; connected browser authoring and owner acceptance remain unfinished.
 - Keep native-only work deferred until all agreed browser features are complete and the owner accepts the browser experience.
 
 This sequencing decision does not authorize paid provider calls, new credentials, publication or merging unrelated PRs.

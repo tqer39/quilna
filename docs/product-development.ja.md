@@ -81,7 +81,7 @@ RSS/Atomがあれば利用し、認証・API・料金が必要なサービスは
 - [セキュリティ保守](security-maintenance.ja.md)を含む、安全性とデータ消失の問題を優先します。
 - ブラウザの使いやすさと具体的な感想はIssue #41で扱います。[情報収集の入口 #48](https://github.com/tqer39/quilna/issues/48)を先に確認し、任意の機能追加より利用を妨げる問題の修正を優先します。
 - 上記の購読と閲覧、続いてハイライトと根拠付きの関連を優先します。[Issue #7](https://github.com/tqer39/quilna/issues/7)の出典から教材・理解問題までの流れは、さらに深く学ぶ任意の経路としてブラウザ版で進めます。
-- 出典を保つ共有は[Issue #30](https://github.com/tqer39/quilna/issues/30)、論文の収集は[Issue #31](https://github.com/tqer39/quilna/issues/31)として、学習体験に続く課題に保持します。
+- 出典を保つ共有は[Issue #30](https://github.com/tqer39/quilna/issues/30)、論文の収集は[Issue #31](https://github.com/tqer39/quilna/issues/31)として、学習体験に続く課題に保持します。ブラウザの[教材ファイルの経路](textbook-sharing.ja.md)では、明示的な取り込み・読書・再書き出しと受け取り側の回答分離を実装しています。ブラウザでの作成経路の接続と利用者の受け入れは未完了です。
 - ネイティブ専用の作業は、合意したブラウザ機能がすべて完成し、プロジェクトオーナーが受け入れるまで保留します。
 
 この順序の変更は、有料API呼び出し、新しい認証情報、公開、無関係なPRのマージを許可するものではありません。
