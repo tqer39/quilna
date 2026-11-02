@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { build } from "esbuild";
+import { spawnSync } from "node:child_process";
 
 const script = (
   await build({
@@ -150,4 +151,25 @@ test("structural limits fail explicitly before Readability recursion", async () 
       /記事の構造が大きすぎる/,
     );
   }
+});
+
+test("DOCTYPE nodes in HTML fragments cannot stall synchronous server extraction", () => {
+  const html = `<!DOCTYPE html><html><head><title>Doctype evidence</title></head><body><main><h1>Doctype evidence</h1><!DOCTYPE html>${"Source text remains readable and quotations keep their positions. ".repeat(20)}</main></body></html>`;
+  const result = spawnSync(process.execPath, ["--input-type=module"], {
+    input: `const {createArticleLoader}=await import(${JSON.stringify("data:text/javascript;base64," + Buffer.from(script).toString("base64"))});
+      const result=await createArticleLoader({send:async()=>new Response(${JSON.stringify(html)},{headers:{"Content-Type":"text/html"}})})(${JSON.stringify(url)});
+      console.log(JSON.stringify(result.content));`,
+    encoding: "utf8",
+    timeout: 3000,
+    maxBuffer: 1024 * 1024,
+  });
+  assert.equal(
+    result.error,
+    undefined,
+    "extraction must terminate within the subprocess deadline",
+  );
+  assert.equal(result.status, 0, result.stderr);
+  const content = JSON.parse(result.stdout);
+  assert.match(content.text, /Source text remains readable/);
+  assert.doesNotMatch(content.text, /DOCTYPE/);
 });
