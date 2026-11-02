@@ -94,6 +94,30 @@ export function extractArticleDocument(
   if (siteName) info.siteName = siteName.slice(0, 300);
   if (published && Number.isFinite(Date.parse(published)))
     info.published = new Date(published).toISOString();
+  // Qiita calendars put counters and sharing/signup controls beside an explicit
+  // description. Scope this preference to that publisher and page type, keeping
+  // matching words and legitimate links inside the description intact.
+  const source = new URL(url);
+  if (
+    source.hostname === "qiita.com" &&
+    /^\/advent-calendar\/\d{4}\/[^/]+\/?$/.test(source.pathname)
+  ) {
+    const descriptions = fragment.querySelectorAll(
+      "article > .ac-MdContent.mdContent-inner",
+    );
+    if (descriptions.length === 1) {
+      const article = descriptions[0].parentElement!;
+      const main = article.closest("main");
+      if (main) {
+        const heading = main.querySelector("h1");
+        main.replaceChildren(
+          ...(heading && !article.contains(heading)
+            ? [heading, article]
+            : [article]),
+        );
+      }
+    }
+  }
   prepareFragment?.(fragment);
   // Native template parsing discards these wrappers; DOM-only parsers retain them.
   for (const wrapper of Array.from(fragment.querySelectorAll("html,head,body")))
