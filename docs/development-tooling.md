@@ -7,14 +7,14 @@
 This repository adopts [dev-standards](https://github.com/tqer39/dev-standards) with a `node-npm` primary component and explicitly declared Go/Swift companion packages.
 See the [language decision](decisions/0001-language.md) for the boundaries of each check.
 Mixed-package support and duplicate verification-task rejection were merged into `main` in [source PR #13](https://github.com/tqer39/dev-standards/pull/13).
-`.standards/cli-source.json` pins the adopted `0.4.0` source to the merge commit. Build that commit; the setup does not depend on a release tag or the PR branch.
+`.standards/cli-source.json` pins the adopted `0.4.1` source to the merge commit. Build that commit; the setup does not depend on a release tag or the PR branch.
 
 For a fresh checkout, clone the source separately and build its CLI using the pinned Go toolchain:
 
 ```bash
 git clone --branch main https://github.com/tqer39/dev-standards.git ../dev-standards
 cd ../dev-standards
-git checkout --detach ad4d937037742d8ae99f416950e4e5a119795bc2
+git checkout --detach fea5c41fa69e63334ca250ffa2e90ed271a396ea
 mise trust
 mise run build
 cd ../quilna

@@ -7,14 +7,14 @@
 このリポジトリは [dev-standards](https://github.com/tqer39/dev-standards) の主コンポーネントに `node-npm` を採用し、Go/Swift パッケージを companion として明示的に宣言します。
 各検査の範囲は[言語選定記録](decisions/0001-language.ja.md)を参照してください。
 混在パッケージの対応と検証タスクの重複拒否は、[本体 PR #13](https://github.com/tqer39/dev-standards/pull/13) で `main` にマージされました。
-採用する `0.4.0` のソースは `.standards/cli-source.json` でマージコミットに固定します。そのコミットをビルドし、リリースタグや PR ブランチには依存しません。
+採用する `0.4.1` のソースは `.standards/cli-source.json` でマージコミットに固定します。そのコミットをビルドし、リリースタグや PR ブランチには依存しません。
 
 新しい checkout では、ソースを別途 clone し、固定した Go ツールチェーンで CLI をビルドします。
 
 ```bash
 git clone --branch main https://github.com/tqer39/dev-standards.git ../dev-standards
 cd ../dev-standards
-git checkout --detach ad4d937037742d8ae99f416950e4e5a119795bc2
+git checkout --detach fea5c41fa69e63334ca250ffa2e90ed271a396ea
 mise trust
 mise run build
 cd ../quilna

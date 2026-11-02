@@ -29,7 +29,7 @@ jobs:
               assert not target.is_symlink(), name
               assert expected['exists'] and target.read_bytes() == expected['content'].encode(), name
           PYTHON
-      - run: mise run bootstrap
+      - run: npm ci --ignore-scripts --prefix .
       - run: mise run lint
       - run: mise run format:check
       - run: mise run test
