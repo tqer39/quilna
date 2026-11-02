@@ -11,6 +11,7 @@ The browser keeps a separate imported library with the original book identity an
 An identical record can be imported again; different content under the same original book/version is refused without overwriting it.
 
 Open a retained edition to read its paragraphs, prerequisites, worked examples, questions and explanations.
+Reading hides the import instructions, file controls and library. **教材一覧へ戻る** restores them and returns focus to the originating edition; it also works during an answer-history read, and a late read cannot reopen a closed reader.
 The contents links move focus to the selected section; evidence disclosures show the exact quoted passage and source link.
 Text remains plain text, including imported markup; source links open only on an explicit click.
 Answer choices and outcomes are saved under the exact immutable record, separately from the fixed CAA demo and every other imported edition.

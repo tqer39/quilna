@@ -85,6 +85,7 @@ test("settings leads to the separate file library, preview/cancel keeps the exis
   await expect(
     page.getByRole("heading", { level: 1, name: "受け取った教材" }),
   ).toBeVisible();
+  await expect(page).toHaveTitle("受け取った教材 | Quilna");
   await page.evaluate(() =>
     localStorage.setItem("fieldnotes.history.v1", "PRIVATE_HISTORY_SENTINEL"),
   );
@@ -107,6 +108,33 @@ test("settings leads to the separate file library, preview/cancel keeps the exis
   await importBook(page);
   await page.reload();
   await openBook(page);
+  await expect(page).toHaveTitle(`${title} · 版 7 | Quilna`);
+  await expect(
+    page.getByLabel("教材JSONファイル（540,000バイト以下）"),
+  ).toBeHidden();
+  await page
+    .getByRole("button", { name: "教材一覧へ戻る", exact: true })
+    .click();
+  await expect(page).toHaveTitle("受け取った教材 | Quilna");
+  await expect(
+    page.getByLabel("教材JSONファイル（540,000バイト以下）"),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: `${title} · 版 7を読む`, exact: true }),
+  ).toBeFocused();
+  await importBook(
+    page,
+    modifiedRecord((r) => {
+      r.version = 8;
+    }),
+  );
+  await openBook(page, 8);
+  await page
+    .getByRole("button", { name: "教材一覧へ戻る", exact: true })
+    .click();
+  await expect(
+    page.getByRole("button", { name: `${title} · 版 8を読む`, exact: true }),
+  ).toBeFocused();
   expect(
     await page.evaluate(() => localStorage.getItem("fieldnotes.history.v1")),
   ).toBe("PRIVATE_HISTORY_SENTINEL");
@@ -737,4 +765,75 @@ test("10,000 retained answers are paged without loss and capacity failure preser
     return (await api.readSharedAnswers(book)).length;
   });
   expect(count).toBe(10_000);
+});
+
+test("returning to the library during an answer read prevents its late completion from reopening the reader", async ({
+  page,
+}) => {
+  await page.goto("/?view=textbooks");
+  await importBook(page);
+  await page.evaluate(() => {
+    const original = IDBDatabase.prototype.transaction;
+    const state = window as unknown as {
+      heldSharedRead: boolean;
+      releaseSharedRead: () => void;
+    };
+    let first = true;
+    IDBDatabase.prototype.transaction = function (...args) {
+      const tx = original.apply(this, args);
+      if (
+        first &&
+        args[1] === "readonly" &&
+        Array.from(tx.objectStoreNames).includes("answers")
+      ) {
+        first = false;
+        let completed:
+          ((this: IDBTransaction, event: Event) => unknown) | null = null;
+        Object.defineProperty(tx, "oncomplete", {
+          set(value) {
+            completed = value;
+          },
+          get() {
+            return completed;
+          },
+        });
+        tx.addEventListener("complete", (event) => {
+          state.heldSharedRead = true;
+          state.releaseSharedRead = () => {
+            completed?.call(tx, event);
+          };
+        });
+      }
+      return tx;
+    };
+  });
+  await page
+    .getByRole("button", { name: `${title} · 版 7を読む`, exact: true })
+    .click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (window as unknown as { heldSharedRead: boolean }).heldSharedRead,
+      ),
+    )
+    .toBe(true);
+  await page
+    .getByRole("button", { name: "教材一覧へ戻る", exact: true })
+    .click();
+  await page.evaluate(async () => {
+    (
+      window as unknown as { releaseSharedRead: () => void }
+    ).releaseSharedRead();
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  });
+  await expect(
+    page.getByLabel("教材JSONファイル（540,000バイト以下）"),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("navigation", { name: "教材の目次", exact: true }),
+  ).toHaveCount(0);
+  await expect(page).toHaveTitle("受け取った教材 | Quilna");
+  await expect(
+    page.getByRole("button", { name: `${title} · 版 7を読む`, exact: true }),
+  ).toBeFocused();
 });

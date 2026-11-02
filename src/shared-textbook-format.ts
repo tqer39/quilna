@@ -8,6 +8,7 @@ const object = <T extends z.ZodRawShape>(fields: T) =>
   z.object(fields).strict();
 const uuid = z.string().regex(/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i);
 const digest = z.string().regex(/^[a-f0-9]{64}$/);
+/** Bound UTF-8 content while refusing empty text, NULs and unpaired surrogate code units. */
 const text = (maximum: number) =>
   z
     .string()
@@ -173,6 +174,7 @@ export function parseSharedJSON(raw: string): unknown {
   }
   return value;
 }
+/** Decode only bounded canonical base64 so opaque bytes cannot conceal extra payloads. */
 const decode = (encoded: string, maximum: number) => {
   if (!encoded || encoded.length > Math.ceil(maximum / 3) * 4) throw invalid();
   const binary = atob(encoded);

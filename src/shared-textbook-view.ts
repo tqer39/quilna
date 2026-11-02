@@ -25,6 +25,7 @@ const reviewLabels: Record<string, string> = {
   correctAnswerSupported: "正答の根拠",
   distractorsExplained: "誤答の解説",
 };
+/** Preserve the portable reference epoch and explicitly label absent or undisplayable dates. */
 const sourceDate = (seconds: number | null | undefined) => {
   if (seconds === null || seconds === undefined) return "不明";
   const d = new Date((seconds + 978307200) * 1000);
@@ -144,13 +145,15 @@ function download(book: SharedTextbook) {
 
 /** Connect local file review, an independent imported library and recipient-only answers. */
 export async function sharedTextbookView(root: HTMLElement) {
+  document.title = "受け取った教材 | Quilna";
   root.className = "shared-textbook-page";
   const header = el("header"),
     back = el("a", "記事一覧へ");
   back.href = "/?view=feeds";
   header.append(el("h1", "受け取った教材"), back);
-  root.append(
-    header,
+  const library = el("div");
+  root.append(header, library);
+  library.append(
     el(
       "p",
       "教材ファイルを確認して、このブラウザに保存できます。本文・問題・解説・出典と版を保持します。回答履歴は自分のブラウザだけに保存し、書き出しには含めません。教材ファイルの処理はこのブラウザ内で行います。",
@@ -174,7 +177,9 @@ export async function sharedTextbookView(root: HTMLElement) {
   list.setAttribute("aria-label", "保存した教材");
   const reader = el("main");
   reader.setAttribute("aria-label", "共有教材の読書");
-  root.append(label, input, notice, preview, list, reader);
+  reader.hidden = true;
+  library.append(label, input, notice, preview, list);
+  root.append(reader);
   let fileEpoch = 0,
     readEpoch = 0,
     listEpoch = 0,
@@ -209,7 +214,7 @@ export async function sharedTextbookView(root: HTMLElement) {
         const read = button(
           `${book.draft.title} · 版 ${book.record.version}を読む`,
           () => {
-            void showBook(book);
+            void showBook(book, read);
           },
         );
         row.append(read);
@@ -229,10 +234,26 @@ export async function sharedTextbookView(root: HTMLElement) {
   }
 
   /** Keep late answer reads from replacing another edition; unreadable answers never block the text. */
-  async function showBook(book: SharedTextbook) {
+  async function showBook(book: SharedTextbook, trigger?: HTMLElement) {
+    document.title = `${book.draft.title} · 版 ${book.record.version} | Quilna`;
     const epoch = ++readEpoch;
+    library.hidden = true;
+    reader.hidden = false;
+    /** Invalidate late reader work before restoring the originating library control. */
+    const returnToLibrary = () => {
+      readEpoch++;
+      document.title = "受け取った教材 | Quilna";
+      reader.replaceChildren();
+      reader.hidden = true;
+      library.hidden = false;
+      (trigger?.isConnected
+        ? trigger
+        : list.querySelector<HTMLElement>("button")
+      )?.focus();
+    };
     reader.replaceChildren(
       el("h2", book.draft.title),
+      button("教材一覧へ戻る", returnToLibrary),
       el("p", "自分の回答を確認しています。"),
     );
     let answers: SharedAnswer[] = [];
@@ -245,19 +266,12 @@ export async function sharedTextbookView(root: HTMLElement) {
     if (epoch !== readEpoch) return;
     const heading = el("h2", book.draft.title);
     heading.tabIndex = -1;
-    reader.replaceChildren(
-      heading,
-      button("教材一覧へ戻る", () => {
-        readEpoch++;
-        reader.replaceChildren();
-        list.querySelector<HTMLElement>("button")?.focus();
-      }),
-    );
+    reader.replaceChildren(heading, button("教材一覧へ戻る", returnToLibrary));
     if (answerError)
       reader.append(
         el("p", message(answerError)),
         button("回答の読み込みを再試行", () => {
-          void showBook(book);
+          void showBook(book, trigger);
         }),
       );
     const sourceSummary = el("details");
