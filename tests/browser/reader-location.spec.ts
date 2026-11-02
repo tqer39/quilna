@@ -296,3 +296,105 @@ test("saved and import destination URLs reopen their named screens", async ({
   ).toBeVisible();
   await expect(current(page)).toHaveText("保存した記事");
 });
+
+for (const mode of ["inline", "dialog", "repeat", "draft", "error"])
+  test(`late registration cannot replace a newer reader context (${mode})`, async ({
+    page,
+  }) => {
+    await seed(page);
+    const modal = mode !== "inline";
+    if (mode === "repeat") {
+      await page
+        .getByRole("button", { name: "Location article 002", exact: true })
+        .click();
+      await page.locator(".rss-destinations > summary").click();
+    }
+    const url = "https://example.org/delayed-feed.xml";
+    const xml =
+      "<rss version='2.0'><channel><title>Delayed registration</title><item><guid>later</guid><title>Delayed entry</title><description>Source evidence.</description></item></channel></rss>";
+    let requests = 0;
+    let finish: (() => void) | undefined;
+    await page.route("**/api/feeds/fetch", async (route) => {
+      if (route.request().postDataJSON().icon)
+        return route.fulfill({ status: 404, json: {} });
+      if (++requests === 2)
+        await new Promise<void>((resolve) => {
+          finish = resolve;
+        });
+      await route.fulfill({ json: { url, xml } });
+    });
+    if (modal)
+      await destinations(page)
+        .getByRole("link", { name: "サイト・記事の取り込み", exact: true })
+        .click();
+    await page.getByLabel("サイト・RSSのURL").fill(url);
+    await page
+      .getByRole("button", { name: "フィードを探す", exact: true })
+      .click();
+    await page
+      .getByRole("button", { name: "登録して読む", exact: true })
+      .click();
+    await expect.poll(() => !!finish).toBe(true);
+    if (mode === "draft" || mode === "error") {
+      const draft =
+        mode === "error"
+          ? "http://127.0.0.1/private"
+          : "https://example.org/new-draft";
+      await page.getByLabel("サイト・RSSのURL").fill(draft);
+      if (mode === "error") {
+        await dialog(page)
+          .getByRole("button", { name: "記事として取り込む", exact: true })
+          .click();
+        await expect(dialog(page).getByRole("alert")).toContainText(
+          "公開HTTPSの記事URLを入力",
+        );
+      }
+      finish!();
+      await expect(
+        page
+          .locator("#feed-source option")
+          .filter({ hasText: "Delayed registration" }),
+      ).toHaveCount(1);
+      await expect(dialog(page)).toBeVisible();
+      await expect(dialog(page).getByLabel("サイト・RSSのURL")).toHaveValue(
+        draft,
+      );
+      if (mode === "error")
+        await expect(dialog(page).getByRole("alert")).toContainText(
+          "公開HTTPSの記事URLを入力",
+        );
+      else
+        await expect(dialog(page).getByLabel("サイト・RSSのURL")).toBeFocused();
+      return;
+    }
+    if (modal)
+      await dialog(page)
+        .getByRole("button", { name: /へ戻る$/, exact: false })
+        .click();
+    if (mode === "repeat") {
+      await page
+        .getByRole("button", { name: "← 記事一覧へ", exact: true })
+        .click();
+      await page
+        .getByRole("button", { name: "Location article 004", exact: true })
+        .click();
+      await page
+        .getByRole("button", { name: "← 記事一覧へ", exact: true })
+        .click();
+    }
+    await page
+      .getByRole("button", { name: "Location article 002", exact: true })
+      .click();
+    await expect(page.locator("#rss-current-title")).toBeFocused();
+    finish!();
+    await expect(
+      page
+        .locator("#feed-source option")
+        .filter({ hasText: "Delayed registration" }),
+    ).toHaveCount(1);
+    await expect(current(page)).toContainText(
+      "記事詳細 — Location article 002",
+    );
+    await expect(page.locator("#rss-current-title")).toBeFocused();
+    await expect(dialog(page)).toBeHidden();
+  });
