@@ -2958,10 +2958,9 @@ export async function feedReader(root: HTMLElement) {
         restored.setSelectionRange(selection[0], selection[1]);
     }
     updateLocation();
-    for (const link of root.querySelectorAll<HTMLAnchorElement>(
-      "a[data-reader-target]",
-    ))
-      updateReadingLink(link);
+    root
+      .querySelectorAll<HTMLAnchorElement>("a[data-reader-target]")
+      .forEach(updateReadingLink);
     revealPendingAnchor();
   }
   channel?.addEventListener("message", (event) => {
