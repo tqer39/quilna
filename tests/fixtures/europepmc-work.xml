@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE article PUBLIC "-//NLM//DTD JATS 1.4//EN" "https://never-fetch.invalid/jats.dtd">
+<article xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:ali="http://www.niso.org/schemas/ali/1.0/" xmlns:mml="http://www.w3.org/1998/Math/MathML" article-type="research-article">
+<front><article-meta>
+<article-id pub-id-type="doi">10.5555/quilna.synthetic</article-id><article-id pub-id-type="pmcid">PMC1234567</article-id>
+<title-group><article-title><![CDATA[Synthetic <script>window.PAPER_XML_XSS=true</script>]]></article-title></title-group>
+<contrib-group><contrib contrib-type="author"><name><surname>Author</surname><given-names>Fixture</given-names></name></contrib></contrib-group>
+<permissions><copyright-statement>Copyright Synthetic Author</copyright-statement><license license-type="open-access" xlink:href="https://creativecommons.org/licenses/by/4.0/"><license-p>Synthetic CC BY 4.0 license.</license-p></license></permissions>
+</article-meta></front><body><sec><title>合成の節</title><p id="one">Evidence😀 &amp; <bold>exact</bold> <ext-link xlink:href="https://never-fetch.invalid/link">quote</ext-link>.</p><p>CO<sub>2</sub> x<sup>3</sup>.</p><fig><graphic xlink:href="https://never-fetch.invalid/figure.png"/></fig><p>Equation <inline-formula><mml:math><mml:mi>x</mml:mi></mml:math></inline-formula>.</p><preformat>unsupported code</preformat><sec><title>Nested section</title><p>Another paragraph.</p></sec></sec></body></article>

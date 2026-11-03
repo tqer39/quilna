@@ -1451,6 +1451,17 @@ header {
   width: 100%;
   box-sizing: border-box;
 }
+.paper-page textarea,
+.paper-page select {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  font: inherit;
+}
+.paper-page textarea {
+  padding: 12px;
+}
 .paper-page button {
   margin: 8px 8px 8px 0;
 }
