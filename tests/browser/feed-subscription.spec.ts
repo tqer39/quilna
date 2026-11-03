@@ -61,6 +61,7 @@ async function seed(page: Page) {
     { url, fetchedAt },
   );
   await page.goto("/?view=feeds");
+  await page.getByLabel("Publisherの管理", { exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Publisherの購読を解除", exact: true }),
   ).toBeEnabled();
@@ -81,6 +82,13 @@ async function stored(page: Page) {
   }, url);
 }
 async function operate(page: Page, label: string) {
+  const summary = page.getByLabel("Publisherの管理", { exact: true });
+  if (
+    !(await summary
+      .locator("..")
+      .evaluate((e) => (e as HTMLDetailsElement).open))
+  )
+    await summary.click();
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByRole("button", { name: label, exact: true }).click();
 }
@@ -115,6 +123,8 @@ test("unsubscribe keeps articles, excludes collection, survives reload and resum
   );
   let refreshes = 0;
   await page.route("**/api/feeds/fetch", (r) => {
+    if (r.request().postDataJSON().icon === true)
+      return r.fulfill({ status: 404, json: {} });
     refreshes++;
     return r.abort();
   });
@@ -132,6 +142,7 @@ test("unsubscribe keeps articles, excludes collection, survives reload and resum
     page.getByRole("button", { name: "すべて更新", exact: true }),
   ).toBeDisabled();
   await page.reload();
+  await page.getByLabel("Publisherの管理", { exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Publisherを更新", exact: true }),
   ).toBeDisabled();
@@ -339,6 +350,7 @@ test("a stale tab's cloud configuration rereads local subscription choices", asy
     Object.defineProperty(window, "BroadcastChannel", { value: undefined }),
   );
   await stale.goto("/?view=feeds");
+  await stale.getByLabel("Publisherの管理", { exact: true }).click();
   await expect(
     stale.getByRole("button", { name: "Publisherの購読を解除", exact: true }),
   ).toBeEnabled();

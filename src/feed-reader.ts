@@ -519,6 +519,7 @@ export async function feedReader(root: HTMLElement) {
     },
     import: () => openImport(),
   });
+  rootHeader.insertBefore(locationNavigation.destinations, actions);
   const importDialog = el("dialog", undefined, "rss-import-dialog");
   const importHeading = el("h2", "サイト・記事の取り込み");
   importHeading.id = "rss-import-title";
@@ -2903,7 +2904,7 @@ export async function feedReader(root: HTMLElement) {
       listView.update({
         items: result.items,
         metadata: (item) =>
-          `${feeds.find((f) => f.url === item.feedUrl)?.title ?? "取り込んだ記事"} · ${date(item.published)}${item.saved ? " · 保存済み" : ""}${item.read ? " · 既読" : " · 未読"} · ${articleReadingTime(item)}${hasArticleUpdate(item) ? " · 本文の更新あり" : item.bodyUpdate?.error ? " · 更新確認に失敗" : ""}`,
+          `${feeds.find((f) => f.url === item.feedUrl)?.title ?? "取り込んだ記事"} · ${date(item.published)}${item.saved ? " · 保存済み" : ""}${item.read ? " · 既読" : " · 未読"}${hasArticleUpdate(item) ? " · 本文の更新あり" : item.bodyUpdate?.error ? " · 更新確認に失敗" : ""}`,
         status:
           searchProblem ||
           (preparing

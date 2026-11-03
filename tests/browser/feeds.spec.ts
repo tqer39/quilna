@@ -440,6 +440,7 @@ test("failed and pending feed refresh keep cached articles readable and retryabl
   await page
     .getByRole("button", { name: "配信元の収集メニューを表示", exact: true })
     .click();
+  await page.getByLabel("検証用フィードの管理", { exact: true }).click();
   await expect(
     page.getByRole("button", { name: "検証用フィードを再試行", exact: true }),
   ).toBeVisible();
@@ -485,6 +486,7 @@ test("Atom, malformed XML and malicious feed markup are handled without executin
     .click();
   xml = "<rss><broken>";
   await page.getByRole("button", { name: "すべて更新", exact: true }).click();
+  await page.getByLabel("Atomの管理", { exact: true }).click();
   await expect(
     page.getByRole("button", { name: "Atomを再試行", exact: true }),
   ).toBeVisible();

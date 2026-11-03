@@ -5,7 +5,7 @@ export class ReaderLocation {
   readonly reader = el("nav", undefined, "rss-reader-navigation");
   readonly progress = el("div", undefined, "rss-location-progress");
   private readonly current = el("p", undefined, "rss-location-current");
-  private readonly destinations = el("div", undefined, "rss-destinations");
+  readonly destinations = el("div", undefined, "rss-destinations");
   private readonly links = new Map<string, HTMLAnchorElement>();
 
   constructor(actions: { list: (filter: string) => void; import: () => void }) {
