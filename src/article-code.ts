@@ -1,5 +1,10 @@
 import { readerIcon } from "./reader-icons";
-import { safeArticleLink, type ArticleStructure } from "./article-structure";
+import {
+  safeArticleLink,
+  validArticleBlocks,
+  type ArticleBlock,
+  type ArticleStructure,
+} from "./article-structure";
 import { decorateArticleLink } from "./link-preview";
 import { codeTokens } from "./code-syntax";
 
@@ -122,75 +127,128 @@ export function appendArticleText(
     { text: string; host: HTMLElement }
   >();
   copyControls.set(parent, currentControls);
-  let offset = 0;
   let syntaxBudget = 20_000;
   let syntaxBlocks = 0;
-  let paragraph: HTMLElement | undefined;
-  const getParagraph = () => {
-    if (!paragraph) {
-      const heading = structure?.headings.find(
-        (h) =>
-          h.end > offset &&
-          (h.start <= offset || !text.slice(offset, h.start).trim()),
-      );
-      paragraph = document.createElement(
-        heading ? `h${Math.max(2, heading.level)}` : "p",
-      );
-      if (heading) {
-        paragraph.id = `rss-section-${heading.start}`;
-        paragraph.tabIndex = -1;
-      }
-      paragraph.dataset.readingStart = String(offset);
-      parent.append(paragraph);
-    }
-    return paragraph;
-  };
-  for (const segment of articleSegments(text, ranges)) {
-    if (segment.code) {
-      const code = document.createElement("code");
-      if (
-        segment.code.block &&
-        segment.text.length <= syntaxBudget &&
-        syntaxBlocks < 20
-      ) {
-        syntaxBudget -= segment.text.length;
-        syntaxBlocks++;
-        let position = offset;
-        for (const token of codeTokens(segment.text)) {
-          const node = renderText(token.text, position);
-          if (token.classes.length) {
-            const span = document.createElement("span");
-            span.classList.add(...token.classes);
-            span.append(node);
-            code.append(span);
-          } else code.append(node);
-          position += token.text.length;
+  const appendFlow = (target: HTMLElement, from: number, to: number) => {
+    let offset = from;
+    let paragraph: HTMLElement | undefined;
+    const getParagraph = () => {
+      if (!paragraph) {
+        const heading = structure?.headings.find(
+          (h) =>
+            h.start < to &&
+            h.end > offset &&
+            (h.start <= offset || !text.slice(offset, h.start).trim()),
+        );
+        paragraph = document.createElement(
+          heading ? `h${Math.max(2, heading.level)}` : "p",
+        );
+        if (heading) {
+          paragraph.id = `rss-section-${heading.start}`;
+          paragraph.tabIndex = -1;
         }
-      } else code.append(renderText(segment.text, offset));
-      if (segment.code.block) {
-        paragraph = undefined;
-        const pre = document.createElement("pre");
-        pre.dataset.readingStart = String(offset);
-        pre.append(code);
-        const block = document.createElement("div");
-        block.className = "rss-code-block";
-        const previous = previousControls?.get(offset);
-        const control =
-          previous?.text === segment.text
-            ? previous
-            : { text: segment.text, host: codeCopyControl(segment.text) };
-        currentControls.set(offset, control);
-        block.append(control.host, pre);
-        parent.append(block);
-      } else getParagraph().append(code);
-      offset += segment.text.length;
-      continue;
+        paragraph.dataset.readingStart = String(offset);
+        target.append(paragraph);
+      }
+      return paragraph;
+    };
+    const selectedRanges = ranges
+      .filter((r) => r.end > from && r.start < to)
+      .map((r) => ({
+        ...r,
+        start: Math.max(r.start, from) - from,
+        end: Math.min(r.end, to) - from,
+      }));
+    for (const segment of articleSegments(
+      text.slice(from, to),
+      selectedRanges,
+    )) {
+      if (segment.code) {
+        const code = document.createElement("code");
+        if (
+          segment.code.block &&
+          segment.text.length <= syntaxBudget &&
+          syntaxBlocks < 20
+        ) {
+          syntaxBudget -= segment.text.length;
+          syntaxBlocks++;
+          let position = offset;
+          for (const token of codeTokens(segment.text)) {
+            const node = renderText(token.text, position);
+            if (token.classes.length) {
+              const span = document.createElement("span");
+              span.classList.add(...token.classes);
+              span.append(node);
+              code.append(span);
+            } else code.append(node);
+            position += token.text.length;
+          }
+        } else code.append(renderText(segment.text, offset));
+        if (segment.code.block) {
+          paragraph = undefined;
+          const pre = document.createElement("pre");
+          pre.dataset.readingStart = String(offset);
+          pre.append(code);
+          const block = document.createElement("div");
+          block.className = "rss-code-block";
+          const previous = previousControls?.get(offset);
+          const control =
+            previous?.text === segment.text
+              ? previous
+              : { text: segment.text, host: codeCopyControl(segment.text) };
+          currentControls.set(offset, control);
+          block.append(control.host, pre);
+          target.append(block);
+        } else getParagraph().append(code);
+        offset += segment.text.length;
+        continue;
+      }
+      for (const piece of segment.text.split(/(\n\s*\n)/)) {
+        if (/^\n\s*\n$/.test(piece)) paragraph = undefined;
+        else if (piece.trim() || paragraph)
+          getParagraph().append(renderText(piece, offset));
+        offset += piece.length;
+      }
     }
-    for (const piece of segment.text.split(/(\n\s*\n)/)) {
-      if (/^\n\s*\n$/.test(piece)) paragraph = undefined;
-      else if (piece.trim() || paragraph)
-        getParagraph().append(renderText(piece, offset));
-      offset += piece.length;
+  };
+  const appendLayout = (
+    target: HTMLElement,
+    from: number,
+    to: number,
+    blocks: ArticleBlock[],
+  ) => {
+    let cursor = from;
+    for (const block of blocks) {
+      appendFlow(target, cursor, block.start);
+      const node = document.createElement(block.tag);
+      node.dataset.readingStart = String(block.start);
+      if (block.ordinal !== undefined)
+        node.setAttribute(
+          block.tag === "ol" ? "start" : "value",
+          String(block.ordinal),
+        );
+      for (const attr of ["colspan", "rowspan"] as const)
+        if (block[attr] !== undefined)
+          node.setAttribute(attr, String(block[attr]));
+      if (block.tag === "table") {
+        const scroll = document.createElement("div");
+        scroll.className = "rss-table-scroll";
+        scroll.tabIndex = 0;
+        scroll.setAttribute("role", "region");
+        scroll.setAttribute("aria-label", "記事の表（横にスクロールできます）");
+        scroll.append(node);
+        target.append(scroll);
+      } else target.append(node);
+      appendLayout(node, block.start, block.end, block.children);
+      cursor = block.end;
     }
-  }
+    appendFlow(target, cursor, to);
+  };
+  const blocks = structure?.blocks;
+  appendLayout(
+    parent,
+    0,
+    text.length,
+    blocks && validArticleBlocks(text, blocks) ? blocks : [],
+  );
 }

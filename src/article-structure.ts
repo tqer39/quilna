@@ -1,10 +1,107 @@
 // UTF-16 ranges in retained plain text; markup is never persisted or mounted.
 export type ArticleLink = { start: number; end: number; href: string };
 export type ArticleHeading = { start: number; end: number; level: number };
+export const articleBlockTags = [
+  "ul",
+  "ol",
+  "li",
+  "table",
+  "thead",
+  "tbody",
+  "tfoot",
+  "tr",
+  "th",
+  "td",
+  "caption",
+] as const;
+export type ArticleBlock = {
+  tag: (typeof articleBlockTags)[number];
+  start: number;
+  end: number;
+  children: ArticleBlock[];
+  ordinal?: number;
+  colspan?: number;
+  rowspan?: number;
+};
+/** Bounded, nested ranges contain only allowlisted semantic elements, never HTML. */
+export function validArticleBlocks(
+  text: string,
+  value: unknown,
+): value is ArticleBlock[] | undefined {
+  if (value === undefined) return true;
+  if (!Array.isArray(value)) return false;
+  const stack = [
+    { items: value, start: 0, end: text.length, depth: 0, parent: "" },
+  ];
+  let count = 0;
+  const allowed: Record<string, readonly string[]> = {
+    "": ["ul", "ol", "table"],
+    ul: ["li"],
+    ol: ["li"],
+    li: ["ul", "ol", "table"],
+    table: ["thead", "tbody", "tfoot", "tr", "caption"],
+    thead: ["tr"],
+    tbody: ["tr"],
+    tfoot: ["tr"],
+    tr: ["th", "td"],
+    th: ["ul", "ol", "table"],
+    td: ["ul", "ol", "table"],
+    caption: [],
+  };
+  while (stack.length) {
+    const frame = stack.pop()!;
+    let end = frame.start;
+    for (const block of frame.items) {
+      if (
+        ++count > 5000 ||
+        frame.depth > 32 ||
+        !block ||
+        typeof block !== "object" ||
+        !allowed[frame.parent]?.includes(block.tag) ||
+        !Array.isArray(block.children) ||
+        !Number.isSafeInteger(block.start) ||
+        !Number.isSafeInteger(block.end) ||
+        block.start < end ||
+        block.end < block.start ||
+        block.end > frame.end ||
+        (block.ordinal !== undefined &&
+          (!["ol", "li"].includes(block.tag) ||
+            !Number.isSafeInteger(block.ordinal) ||
+            Math.abs(block.ordinal) > 1_000_000)) ||
+        [block.colspan, block.rowspan].some(
+          (n) =>
+            n !== undefined &&
+            (!["td", "th"].includes(block.tag) ||
+              !Number.isInteger(n) ||
+              n < 1 ||
+              n > 100),
+        )
+      )
+        return false;
+      for (const i of [block.start, block.end])
+        if (
+          i > 0 &&
+          /[\uD800-\uDBFF]/.test(text[i - 1]) &&
+          /[\uDC00-\uDFFF]/.test(text[i])
+        )
+          return false;
+      end = block.end;
+      stack.push({
+        items: block.children,
+        start: block.start,
+        end: block.end,
+        depth: frame.depth + 1,
+        parent: block.tag,
+      });
+    }
+  }
+  return true;
+}
 export type ArticleStructure = {
   version: 1;
   links: ArticleLink[];
   headings: ArticleHeading[];
+  blocks?: ArticleBlock[];
 };
 export function safeArticleLink(value: string, base?: string): string | null {
   if (value.length > 4096) return null;
@@ -33,7 +130,8 @@ export function validArticleStructure(
     !Array.isArray(s.links) ||
     !Array.isArray(s.headings) ||
     s.links.length > 2000 ||
-    s.headings.length > 1000
+    s.headings.length > 1000 ||
+    !validArticleBlocks(text, s.blocks)
   )
     return false;
   const ranges = (items: (ArticleLink | ArticleHeading)[]) => {

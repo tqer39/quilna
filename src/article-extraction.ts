@@ -135,6 +135,22 @@ export function extractArticleDocument(
         else element.removeAttribute("href");
         continue;
       }
+      const tag = element.tagName.toLowerCase();
+      if (
+        ((tag === "ol" && attr.name === "start") ||
+          (tag === "li" && attr.name === "value")) &&
+        /^-?\d+$/.test(attr.value) &&
+        Math.abs(Number(attr.value)) <= 1_000_000
+      )
+        continue;
+      if (
+        ["th", "td"].includes(tag) &&
+        ["colspan", "rowspan"].includes(attr.name) &&
+        /^\d+$/.test(attr.value) &&
+        Number(attr.value) >= 1 &&
+        Number(attr.value) <= 100
+      )
+        continue;
       if (!["class", "id", "lang", "dir"].includes(attr.name))
         element.removeAttribute(attr.name);
     }

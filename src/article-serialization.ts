@@ -1,5 +1,11 @@
 import type { ArticleCodeRange } from "./document-format";
-import { safeArticleLink, type ArticleStructure } from "./article-structure";
+import {
+  safeArticleLink,
+  articleBlockTags,
+  type ArticleBlock,
+  type ArticleStructure,
+  validArticleBlocks,
+} from "./article-structure";
 
 // Map boundaries through the same whitespace normalization used by legacy imports.
 function replaceMapped(text: string, pattern: RegExp, replacement: string) {
@@ -48,6 +54,8 @@ export function serializeArticle(
   }[] = [];
   const links: { start: number; end: number; href: string }[] = [];
   const headings: { start: number; end: number; level: number }[] = [];
+  const blocks: ArticleBlock[] = [],
+    containers: ArticleBlock[] = [];
   let prose = "",
     rawLength = 0;
   const add = (value: string) => {
@@ -92,7 +100,35 @@ export function serializeArticle(
       return;
     }
     const start = rawLength;
+    let block: ArticleBlock | undefined;
+    if ((articleBlockTags as readonly string[]).includes(tag)) {
+      block = {
+        tag: tag as ArticleBlock["tag"],
+        start,
+        end: start,
+        children: [],
+      };
+      const ordinal = element.getAttribute(tag === "ol" ? "start" : "value");
+      if (
+        ["ol", "li"].includes(tag) &&
+        ordinal !== null &&
+        /^-?\d+$/.test(ordinal) &&
+        Math.abs(Number(ordinal)) <= 1_000_000
+      )
+        block.ordinal = Number(ordinal);
+      if (["th", "td"].includes(tag))
+        for (const attr of ["colspan", "rowspan"] as const) {
+          const n = Number(element.getAttribute(attr));
+          if (Number.isInteger(n) && n >= 1 && n <= 100) block[attr] = n;
+        }
+      (containers.at(-1)?.children ?? blocks).push(block);
+      containers.push(block);
+    }
     for (const child of Array.from(current.childNodes)) walk(child);
+    if (block) {
+      block.end = rawLength;
+      containers.pop();
+    }
     if (tag === "a" && links.length < 2000) {
       const href = safeArticleLink(element.getAttribute("href") ?? "", base);
       if (element.hasAttribute("href") && href && rawLength > start)
@@ -101,6 +137,7 @@ export function serializeArticle(
     if (/^h[1-6]$/.test(tag) && headings.length < 1000 && rawLength > start)
       headings.push({ start, end: rawLength, level: Number(tag[1]) });
     if (/^(p|div|li|h[1-6]|blockquote|br|tr)$/.test(tag)) add("\n\n");
+    if (tag === "td" || tag === "th") add("\n");
   };
   walk(node);
   flush();
@@ -145,6 +182,16 @@ export function serializeArticle(
       .map((r) => ({ ...r, start: mapped(r.start), end: mapped(r.end) }))
       .filter((r) => r.end > r.start)
       .sort((a, b) => a.start - b.start);
+  const convertBlocks = (items: ArticleBlock[]): ArticleBlock[] =>
+    items.map((block) => ({
+      ...block,
+      start: mapped(block.start),
+      end: mapped(block.end),
+      children: convertBlocks(block.children),
+    }));
+  const layout = convertBlocks(blocks);
+  if (!validArticleBlocks(text, layout))
+    throw Error("記事のリスト・表の構造が複雑すぎるため取り込めませんでした。");
   return {
     text,
     codeRanges,
@@ -152,6 +199,7 @@ export function serializeArticle(
       version: 1,
       links: convert(links),
       headings: convert(headings),
+      blocks: layout,
     },
   };
 }

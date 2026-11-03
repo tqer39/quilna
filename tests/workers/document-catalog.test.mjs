@@ -23,7 +23,7 @@ const body = (n = 1) => ({
   url,
   language: "en",
   fetchedAt: "2026-10-30T00:00:00.000Z",
-  structure: { version: 1, links: [], headings: [] },
+  structure: { version: 1, links: [], headings: [], blocks: [] },
   codeRanges: [{ start: 10, end: 22, block: true }],
 });
 const gate = () => {
@@ -410,10 +410,12 @@ test("the byte budget and expired leases preserve existing versions without sile
   assert.equal(denied.storage.reads, 0);
 });
 
-test("explicit revalidation of legacy formatting fetches HTML once and retains the prior immutable version", async () => {
+for (const legacyStructure of [false, true])
+test(`explicit revalidation repairs ${legacyStructure ? "heading-only" : "plain"} formatting and retains the prior immutable version`, async () => {
   let calls = 0;
   const legacy = body();
-  delete legacy.structure;
+  if (legacyStructure) delete legacy.structure.blocks;
+  else delete legacy.structure;
   const f = fixture({
     load: async (_url, previous) => {
       calls++;

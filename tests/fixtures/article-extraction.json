@@ -57,5 +57,14 @@
     "codes": [
       "  const likes = 10;\n"
     ]
+  },
+  {
+    "name": "nested lists and data table",
+    "url": "https://publisher.example.org/guide",
+    "html": "<article><h1>Service account guide</h1><p>An account has independent permissions and authentication settings. An account has independent permissions and authentication settings. An account has independent permissions and authentication settings. An account has independent permissions and authentication settings. An account has independent permissions and authentication settings. An account has independent permissions and authentication settings. An account has independent permissions and authentication settings. An account has independent permissions and authentication settings. </p><ol start=\"3\"><li>Prepare <code>svc-power</code><ul><li>Keep the key private</li><li>Check the <a href=\"/reference\">reference</a></li></ul></li><li value=\"7\">Run <code>echo ready</code></li></ol><table><caption>Permissions</caption><thead><tr><th>Layer</th><th>Setting</th><th>Result</th></tr></thead><tbody><tr><th rowspan=\"2\">Account</th><td><a href=\"/policy\">Limited role</a></td><td>No admin access</td></tr><tr><td colspan=\"2\">Key authentication only</td></tr><tr><th>Empty value</th><td></td><td>Retained</td></tr></tbody></table><p>Use the preserved source when checking a configuration. Use the preserved source when checking a configuration. Use the preserved source when checking a configuration. Use the preserved source when checking a configuration. Use the preserved source when checking a configuration. Use the preserved source when checking a configuration. Use the preserved source when checking a configuration. Use the preserved source when checking a configuration. </p></article>",
+    "codes": [
+      "svc-power",
+      "echo ready"
+    ]
   }
 ]
