@@ -77,9 +77,10 @@ test(
       await mf.dispose();
       await rm(dir, { recursive: true, force: true });
     });
-    const call = async (path, principal = "alice") => {
+    const call = async (path, principal = "alice", body) => {
       const response = await mf.dispatchFetch("https://catalog.test" + path, {
         headers: { "X-Test-Principal": principal },
+        ...(body ? { method: "POST", body: JSON.stringify(body) } : {}),
       });
       return { status: response.status, value: await response.json() };
     };
@@ -128,5 +129,47 @@ test(
     );
     assert.equal((await call("/private/read", "bob")).status, 404);
     assert.equal((await call("/shared/read", "eve")).status, 404);
+    assert.equal((await call("/shared/preview", "alice")).status, 404);
+    const lifecycleCommand = (action, expectedRevision, extra = {}) => ({
+      operationId: crypto.randomUUID(),
+      action,
+      expectedRevision,
+      reason: "Local runtime fixture only",
+      ...extra,
+    });
+    assert.equal(
+      (
+        await call(
+          "/shared/manage",
+          "operator",
+          lifecycleCommand("withdraw", 0),
+        )
+      ).status,
+      200,
+    );
+    assert.equal((await call("/shared/read", "alice")).status, 404);
+    const preview = await call("/shared/preview", "operator");
+    assert.equal(preview.value.versionCount, 1);
+    const purge = lifecycleCommand("purge", 1, {
+      expectedCatalogRevision: preview.value.catalogRevision,
+    });
+    const deleted = await call("/shared/manage", "operator", purge);
+    assert.equal(deleted.status, 200);
+    assert.equal(deleted.value.current.status, "deleted");
+    assert.deepEqual((await call("/shared/storage-keys", "operator")).value, [
+      "document:lifecycle:v1",
+    ]);
+    await mf.dispose();
+    mf = new Miniflare(convertV4MiniflareOptions(options));
+    assert.equal((await call("/shared/acquire", "bob")).status, 404);
+    const retry = await call("/shared/manage", "operator", purge);
+    assert.equal(retry.status, 200);
+    assert.equal(retry.value.replayed, true);
+    assert.deepEqual(retry.value.operation, deleted.value.operation);
+    assert.deepEqual(
+      (await call("/private/read")).value,
+      privateDoc.value.version,
+    );
+    assert.equal(outbound, 5);
   },
 );

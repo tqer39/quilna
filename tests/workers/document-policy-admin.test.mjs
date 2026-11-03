@@ -656,3 +656,251 @@ test("first edit of a legacy policy retains an honestly labelled baseline; histo
     502,
   );
 });
+
+const lifecycleCommand = (action, expectedRevision, extra = {}) => ({
+  action,
+  expectedRevision,
+  operationId: crypto.randomUUID(),
+  reason: "Synthetic lifecycle administration",
+  ...extra,
+});
+
+test("authenticated lifecycle routes withdraw, restore and permanently purge retained bodies across restart", async (t) => {
+  const f = await fixture(t);
+  const p = await create(f);
+  const target = {
+    audience: "shared",
+    policyId: p.id,
+    managementRevision: p.managementRevision,
+  };
+  const original = await f.call("acquire", { url, audience: "shared" });
+  assert.equal(original.status, 200);
+  const preview = await f.call("admin-document-preview", { target });
+  assert.equal(preview.status, 200, JSON.stringify(preview.value));
+  assert.equal(preview.value.versionCount, 1);
+  const change = (command) =>
+    f.call("admin-document-change", { target, command });
+  assert.equal((await change(lifecycleCommand("withdraw", 0))).status, 200);
+  assert.equal((await f.call("read", { url, audience: "shared" })).status, 404);
+  assert.equal((await change(lifecycleCommand("restore", 1))).status, 200);
+  assert.equal((await f.call("read", { url, audience: "shared" })).status, 200);
+  assert.equal((await change(lifecycleCommand("withdraw", 2))).status, 200);
+  const purge = lifecycleCommand("purge", 3, {
+    expectedCatalogRevision: preview.value.catalogRevision,
+  });
+  const deleted = await change(purge);
+  assert.equal(deleted.status, 200, JSON.stringify(deleted.value));
+  assert.equal(deleted.value.current.status, "deleted");
+  assert.equal(deleted.value.current.bytes, 0);
+  await f.restart();
+  const retry = await change(purge);
+  assert.equal(retry.status, 200);
+  assert.equal(retry.value.replayed, true);
+  assert.equal(
+    (await f.call("acquire", { url, audience: "shared" })).status,
+    404,
+  );
+  assert.equal(f.fetches(), 1);
+});
+
+test("lifecycle management requires manager, matching account, CSRF and a strict target without creating new sources", async (t) => {
+  const f = await fixture(t);
+  const target = { audience: "private", url };
+  for (const opts of [
+    { user: "bob" },
+    { csrf: "wrong" },
+    { account: null },
+    { account: bob },
+  ]) {
+    const response = await f.call("admin-document-preview", { target }, opts);
+    assert.notEqual(response.status, 200);
+  }
+  assert.equal(
+    (
+      await f.call("admin-document-preview", {
+        target: { ...target, owner: bob },
+      })
+    ).status,
+    400,
+  );
+  assert.equal(
+    (await f.call("admin-document-preview", { target, action: "change" }))
+      .status,
+    400,
+  );
+  assert.equal(
+    (
+      await f.call("admin-document-change", {
+        target,
+        command: lifecycleCommand("withdraw", 0),
+      })
+    ).status,
+    404,
+  );
+  assert.equal(f.fetches(), 0);
+  const off = await fixture(t, { enabled: false });
+  assert.equal(
+    (await off.call("admin-document-preview", { target })).status,
+    404,
+  );
+});
+
+test("a manager can withdraw a historic scope after reader permission is revoked but cannot restore it", async (t) => {
+  const f = await fixture(t);
+  const p = await create(f);
+  assert.equal(
+    (await f.call("acquire", { url, audience: "shared" })).status,
+    200,
+  );
+  const target = { audience: "shared", policyId: p.id, managementRevision: 1 };
+  assert.equal(
+    (await f.call("admin-update", update(p, { enabled: false, members: [] })))
+      .status,
+    200,
+  );
+  const withdraw = await f.call("admin-document-change", {
+    target,
+    command: lifecycleCommand("withdraw", 0),
+  });
+  assert.equal(withdraw.status, 200, JSON.stringify(withdraw.value));
+  assert.equal(
+    (
+      await f.call("admin-document-change", {
+        target,
+        command: lifecycleCommand("restore", 1),
+      })
+    ).status,
+    404,
+  );
+  const preview = await f.call("admin-document-preview", { target });
+  assert.equal(preview.status, 200);
+  assert.equal(preview.value.status, "withdrawn");
+  assert.equal(preview.value.versionCount, 1);
+  assert.equal(f.fetches(), 1);
+});
+
+test("an explicit retention deadline triggers the real source object's alarm without a reader request", async (t) => {
+  const f = await fixture(t);
+  const p = await create(f);
+  assert.equal(
+    (await f.call("acquire", { url, audience: "shared" })).status,
+    200,
+  );
+  const target = { audience: "shared", policyId: p.id, managementRevision: 1 };
+  const response = await f.call("admin-document-change", {
+    target,
+    command: lifecycleCommand("retention", 0, {
+      expiresAt: new Date(Date.now() - 1000).toISOString(),
+    }),
+  });
+  assert.equal(response.status, 200, JSON.stringify(response.value));
+  const limit = Date.now() + 5000;
+  let result;
+  do {
+    result = await f.call("admin-document-preview", { target });
+    assert.equal(result.status, 200);
+    if (result.value.status === "deleted") break;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  } while (Date.now() < limit);
+  assert.equal(result.value.status, "deleted");
+  assert.equal(result.value.bytes, 0);
+  assert.equal(result.value.operations.length, 2);
+  await f.restart();
+  assert.equal(
+    (await f.call("acquire", { url, audience: "shared" })).status,
+    404,
+  );
+  assert.equal(f.fetches(), 1);
+});
+
+test("reservation recovery requires permanent deletion and preserves other policy generations", async (t) => {
+  const f = await fixture(t);
+  const p = await create(f);
+  const source = { url, audience: "shared" };
+  assert.equal((await f.call("acquire", source)).status, 200);
+  const next = await f.call(
+    "admin-update",
+    update(p, {
+      evidence: "A new synthetic publisher permission generation",
+      aliases: [],
+    }),
+  );
+  assert.equal(next.status, 200);
+  assert.equal((await f.call("acquire", source)).status, 200);
+  const target1 = { audience: "shared", policyId: p.id, managementRevision: 1 };
+  const target2 = { ...target1, managementRevision: 2 };
+  const preview = (target) => f.call("admin-document-preview", { target });
+  const initial = (await preview(target1)).value;
+  assert.equal(initial.reservation.scopeCount, 2);
+  const expected = {
+    token: initial.reservation.token,
+    revision: initial.reservation.revision,
+  };
+  const reconcile = (target, reservation) =>
+    f.call("admin-document-reconcile", { target, reservation });
+  assert.equal((await reconcile(target1, expected)).status, 409);
+  const purge = async (target, before) => {
+    assert.equal(
+      (
+        await f.call("admin-document-change", {
+          target,
+          command: lifecycleCommand("withdraw", before.revision),
+        })
+      ).status,
+      200,
+    );
+    assert.equal(
+      (
+        await f.call("admin-document-change", {
+          target,
+          command: lifecycleCommand("purge", before.revision + 1, {
+            expectedCatalogRevision: before.catalogRevision,
+          }),
+        })
+      ).status,
+      200,
+    );
+  };
+  await purge(target1, initial);
+  const one = await reconcile(target1, expected);
+  assert.equal(one.status, 200, JSON.stringify(one.value));
+  assert.equal(one.value.reservation.reserved, true);
+  assert.equal(one.value.reservation.scopeCount, 1);
+  assert.equal(one.value.reservation.containsTarget, false);
+  assert.equal((await f.call("read", source)).status, 200);
+  const second = (await preview(target2)).value;
+  await purge(target2, second);
+  const expected2 = {
+    token: second.reservation.token,
+    revision: second.reservation.revision,
+  };
+  const two = await reconcile(target2, expected2);
+  assert.equal(two.status, 200);
+  assert.equal(two.value.reservation.reserved, false);
+  await f.restart();
+  assert.equal(
+    (await reconcile(target2, expected2)).value.reservation.reserved,
+    false,
+  );
+  const p2 = next.value.policy;
+  assert.equal(
+    (
+      await f.call(
+        "admin-update",
+        update(p2, {
+          evidence: "A third synthetic publisher permission generation",
+          aliases: [],
+        }),
+      )
+    ).status,
+    200,
+  );
+  assert.equal((await f.call("acquire", source)).status, 200);
+  assert.equal((await reconcile(target1, expected)).status, 409);
+  assert.equal(
+    (await preview({ ...target1, managementRevision: 3 })).value.reservation
+      .scopeCount,
+    1,
+  );
+  assert.equal(f.fetches(), 3);
+});

@@ -616,7 +616,58 @@ async function runReaderScenario(browser, info, aliasMode) {
     const restoredRead = await retainedServerVersion(b, origin, articleURL);
     expect(restoredRead.version).toEqual(first.version);
     expect(articleFetches).toBe(3);
+    await openAdmin();
+    const lifecycle = admin.getByRole("region", {
+      name: "保存本文の管理",
+      exact: true,
+    });
+    await lifecycle
+      .getByRole("button", { name: "保存本文の状態を確認", exact: true })
+      .click();
+    await expect(lifecycle).toContainText("2版");
+    await lifecycle
+      .getByLabel("本文管理の理由", { exact: true })
+      .fill("Synthetic retention cleanup with offline copies preserved");
+    for (const action of ["本文の提供を停止", "保存本文を削除"]) {
+      await lifecycle
+        .getByRole("button", { name: action, exact: true })
+        .click();
+      await lifecycle
+        .getByRole("button", { name: "確認した本文操作を実行", exact: true })
+        .click();
+      await expect(
+        lifecycle.getByRole("heading", { name: "本文管理の確認" }),
+      ).toHaveCount(0);
+    }
+    await expect(lifecycle).toContainText("削除済み · 0版 · 0バイト");
+    await lifecycle
+      .getByRole("button", { name: "本文取得枠を回復", exact: true })
+      .click();
+    await lifecycle
+      .getByRole("button", { name: "確認した予約枠を回復", exact: true })
+      .click();
+    await expect(lifecycle).toContainText("本文取得の予約枠を回復しました");
+    await a.page.getByRole("button", { name: "閉じる", exact: true }).click();
     await f.restart();
+    const cleanupSession = await b.page.request.get(origin + "/api/session", {
+      headers: { Origin: origin },
+    });
+    const deniedRead = await b.page.request.post(
+      origin + "/api/documents/read",
+      {
+        headers: {
+          Origin: origin,
+          "X-CSRF-Token": (await cleanupSession.json()).csrfToken,
+          "X-Document-Account": b.account,
+        },
+        data: {
+          url: articleURL,
+          audience: "shared",
+          versionId: first.version.id,
+        },
+      },
+    );
+    expect(deniedRead.status()).toBe(404);
     fail = false;
     await a.page.reload();
     await a.page

@@ -9,6 +9,10 @@ import {
 } from "./document-access.mjs";
 import { documentIdentity } from "../src/source-document.ts";
 import { json, readBody } from "./http.mjs";
+import {
+  documentLifecycleAccess,
+  lifecycleRequest,
+} from "./document-lifecycle-access.mjs";
 
 const commandSchema = z
   .object({
@@ -18,16 +22,91 @@ const commandSchema = z
   })
   .strict();
 
+const managementSchema = commandSchema.extend({ request: lifecycleRequest });
+
 export class SourceDocument extends DurableObject {
+  async alarm() {
+    const retained = await this.ctx.storage.get("document:catalog:v1");
+    if (retained === undefined) {
+      await this.ctx.storage.deleteAlarm();
+      return;
+    }
+    if (!retained || typeof retained !== "object")
+      throw Error("document-invalid");
+    const { scope, sourceURL } = retained;
+    const id = await documentIdentity(scope, sourceURL);
+    if (this.ctx.id.toString() !== this.env.DOCUMENTS.idFromName(id).toString())
+      throw Error("document-invalid");
+    const catalog = new DocumentCatalog(this.ctx.storage, {
+      scope,
+      sourceURL,
+      authorize: async () => false,
+      load: async () => {
+        throw Error("document-unavailable");
+      },
+    });
+    await catalog.retentionAlarm();
+  }
+  async lifecycle(request) {
+    const {
+      owner,
+      scope,
+      request: input,
+    } = managementSchema.parse(await readBody(request));
+    if (input.action === "reconcile") throw Error("document-request");
+    const options = { restore: input.command?.action === "restore" };
+    const initial = await documentLifecycleAccess(
+      this.env,
+      owner,
+      input.target,
+      options,
+    );
+    if (initial.scope !== scope) throw Error("document-unavailable");
+    const sourceURL = initial.url;
+    const authorizeManagement = async (principal) => {
+      if (principal !== owner) return false;
+      const access = await documentLifecycleAccess(
+        this.env,
+        owner,
+        input.target,
+        options,
+      );
+      return access.scope === scope && access.url === sourceURL;
+    };
+    const id = await documentIdentity(scope, sourceURL);
+    if (this.ctx.id.toString() !== this.env.DOCUMENTS.idFromName(id).toString())
+      throw Error("document-unavailable");
+    const catalog = new DocumentCatalog(this.ctx.storage, {
+      scope,
+      sourceURL,
+      authorizeManagement,
+      authorize: async () => false,
+      load: async () => {
+        throw Error("document-unavailable");
+      },
+    });
+    const value =
+      input.action === "preview"
+        ? await catalog.lifecyclePreview(owner)
+        : await catalog.manageLifecycle(owner, input.command);
+    if (!(await authorizeManagement(owner)))
+      throw Error("document-unavailable");
+    return json(200, value);
+  }
   async fetch(request) {
     try {
       if (this.env.DOCUMENTS_ENABLED !== "true" || !this.env.DOCUMENTS)
         throw Error("document-unconfigured");
       if (
         request.method !== "POST" ||
-        request.url !== "https://document.internal/command"
+        ![
+          "https://document.internal/command",
+          "https://document.internal/lifecycle",
+        ].includes(request.url)
       )
         throw Error("document-unavailable");
+      if (request.url === "https://document.internal/lifecycle")
+        return await this.lifecycle(request);
       const {
         owner,
         scope,

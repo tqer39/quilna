@@ -14,18 +14,29 @@ export class CatalogFixture extends DurableObject {
       sourceURL: url,
       authorize: async (principal) =>
         principal === "alice" || (scope === "shared" && principal === "bob"),
+      authorizeManagement: async (principal) => principal === "operator",
       load: createArticleLoader(),
     });
     const principal = request.headers.get("X-Test-Principal");
     try {
+      if (path[2] === "storage-keys") {
+        if (principal !== "operator") throw Error("document-unavailable");
+        return Response.json(
+          [...(await this.ctx.storage.list())].map(([key]) => key),
+        );
+      }
       const result =
-        path[2] === "read"
-          ? await catalog.read(principal)
-          : path[2] === "history"
-            ? await catalog.history(principal)
-            : await catalog.acquire(principal, {
-                force: new URL(request.url).searchParams.has("force"),
-              });
+        path[2] === "preview"
+          ? await catalog.lifecyclePreview(principal)
+          : path[2] === "manage"
+            ? await catalog.manageLifecycle(principal, await request.json())
+            : path[2] === "read"
+              ? await catalog.read(principal)
+              : path[2] === "history"
+                ? await catalog.history(principal)
+                : await catalog.acquire(principal, {
+                    force: new URL(request.url).searchParams.has("force"),
+                  });
       return Response.json(result);
     } catch (error) {
       return Response.json(

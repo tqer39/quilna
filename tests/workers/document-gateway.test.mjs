@@ -36,12 +36,19 @@ test("source quota is atomic across simultaneous reservations, survives reconstr
   let gateway = new DocumentGateway(storage, {});
   const same = "https://publisher.example.org/same";
   await Promise.all(
-    Array.from({ length: 8 }, () => gateway.reserve("owner", same, "private")),
+    Array.from({ length: 8 }, () =>
+      gateway.reserve("owner", same, "private", "private:owner"),
+    ),
   );
   assert.equal(data.get("documents:source-count"), 1);
   const attempts = await Promise.allSettled(
     Array.from({ length: 1000 }, (_, i) =>
-      gateway.reserve("owner", `https://publisher.example.org/${i}`, "private"),
+      gateway.reserve(
+        "owner",
+        `https://publisher.example.org/${i}`,
+        "private",
+        "private:owner",
+      ),
     ),
   );
   assert.equal(attempts.filter((r) => r.status === "fulfilled").length, 999);
@@ -51,14 +58,19 @@ test("source quota is atomic across simultaneous reservations, survives reconstr
   );
   assert.equal(data.get("documents:source-count"), 1000);
   gateway = new DocumentGateway(storage, {});
-  await gateway.reserve("owner", same, "private");
+  await gateway.reserve("owner", same, "private", "private:owner");
   await assert.rejects(
-    gateway.reserve("owner", "https://publisher.example.org/new", "private"),
+    gateway.reserve(
+      "owner",
+      "https://publisher.example.org/new",
+      "private",
+      "private:owner",
+    ),
     /document-capacity/,
   );
   data.set("documents:source-count", null);
   await assert.rejects(
-    gateway.reserve("owner", same, "private"),
+    gateway.reserve("owner", same, "private", "private:owner"),
     /document-invalid/,
   );
   assert.equal(data.get("documents:source-count"), null);
