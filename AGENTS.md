@@ -20,5 +20,5 @@
 Read `.standards/rules.md` and run `mise run standards:prepare` before working.
 Run `mise run standards:verify` and `mise run standards:finish` before finishing.
 Edit canonical sources under `.standards`, then review and apply a generated plan.
-Record evidence of shared-rule problems with `dev-standards feedback`.
+Record evidence of shared-rule problems with `mise run standards:feedback`.
 Report checks that were not run accurately.
