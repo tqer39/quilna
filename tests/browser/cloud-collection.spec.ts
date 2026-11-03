@@ -132,6 +132,8 @@ test("cloud results import after reopening, preserve newer local content and tol
     acknowledgements = 0;
   let foregroundRequests = 0;
   await page.route("**/api/feeds/fetch", (route) => {
+    if (route.request().postDataJSON().icon === true)
+      return route.fulfill({ status: 404, json: {} });
     foregroundRequests++;
     return route.fulfill({
       status: 502,

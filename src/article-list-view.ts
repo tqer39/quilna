@@ -1,3 +1,6 @@
+import { siteIcon } from "./link-preview";
+import { readerIcon } from "./reader-icons";
+import { articleReadingTime } from "./reading-time";
 import { tagSummary } from "./article-tags";
 import { isLinkOnly } from "./article-content";
 import type { FeedArticle } from "./feed-parser";
@@ -72,10 +75,22 @@ export class ArticleListView {
     const row = {
       node: el("li"),
       meta: el("p", undefined, "rss-article-meta"),
+      publisherIcon: el("span"),
+      iconURL: null as string | null,
+      facts: el("span"),
+      duration: el("span", undefined, "rss-reading-duration"),
+      durationText: el("span"),
       title: el("button", undefined, "rss-article-title"),
       excerpt: el("p", undefined, "rss-excerpt"),
       tags: el("p", undefined, "rss-tag-summary"),
     };
+    row.duration.append(readerIcon("clock"), row.durationText);
+    row.meta.append(
+      row.publisherIcon,
+      row.facts,
+      document.createTextNode(" · "),
+      row.duration,
+    );
     row.title.type = "button";
     // Resolve the current record in the owner on click, not a captured snapshot.
     row.title.addEventListener("click", () => this.actions.open(id));
@@ -127,7 +142,13 @@ export class ArticleListView {
     const rows = new Map<string, ReturnType<ArticleListView["createRow"]>>();
     for (const article of state.items) {
       const row = this.rows.get(article.id) ?? this.createRow(article.id);
-      text(row.meta, state.metadata(article));
+      text(row.facts, state.metadata(article));
+      text(row.durationText, articleReadingTime(article));
+      const iconURL = article.feedUrl || article.url;
+      if (row.iconURL !== iconURL) {
+        row.iconURL = iconURL;
+        row.publisherIcon.replaceChildren(siteIcon(iconURL));
+      }
       text(row.title, article.content?.title || article.title);
       text(
         row.excerpt,
