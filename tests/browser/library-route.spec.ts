@@ -27,6 +27,9 @@ test("saved bibliography and citation URLs restore exact local records without p
   expect(new URL(citationURL).searchParams.get("excerpt")).toBe(citation.digest);
   const quote = page.getByRole("region", { name: "論文引用のプレビュー", exact: true });
   await expect(quote.locator("blockquote")).toHaveText(citation.text);
+  await page.getByRole("button", { name: "この書誌情報を保存", exact: true }).click();
+  await expect(page.getByRole("button", { name: "保存済み", exact: true })).toBeVisible();
+  await expect(page).toHaveURL(citationURL);
   await page.goBack();
   await expect(page.getByRole("heading", { name: paper.metadata.titles[0], exact: true })).toBeVisible();
   await page.goForward();
@@ -101,16 +104,19 @@ test("bibliography page cursors survive reload and Back and refuse corrupted URL
   expect(retained).toBe("damaged but retained");
 });
 
-test("a delayed URL record read cannot reopen a bibliography after Forward returns to the list", async ({ page }) => {
+for (const paginate of [false, true])
+test(`a pending URL detail survives paging=${paginate} and cannot reopen after returning to the list`, async ({ page }) => {
   await page.goto("/?view=papers");
-  const paper = await paperSnapshot(crossrefMetadata(fixture, fixture.message.DOI));
-  await page.evaluate(async (paper) => {
-    const path = "/src/paper-store.ts";
-    await (await import(path)).savePaper(paper);
-  }, paper);
+  const metadata = crossrefMetadata(fixture, fixture.message.DOI);
+  const papers = await Promise.all(Array.from({ length: 25 }, (_, i) => paperSnapshot({ ...metadata, titles: [`Pending source ${i}`] })));
+  await page.evaluate(async (papers) => {
+    const path = "/src/paper-store.ts", api = await import(path);
+    for (const paper of papers) await api.savePaper(paper);
+  }, papers);
   await page.reload();
-  await page.getByRole("button", { name: "書誌情報を開く", exact: true }).click();
+  await page.getByRole("button", { name: "書誌情報を開く", exact: true }).first().click();
   const key = new URL(page.url()).searchParams.get("paper")!;
+  const selectedTitle = await page.getByRole("region", { name: "書誌情報のプレビュー", exact: true }).getByRole("heading").first().textContent();
   await page.getByRole("button", { name: "保存一覧へ戻る", exact: true }).click();
   await page.evaluate((key) => {
     const original = IDBObjectStore.prototype.get;
@@ -136,12 +142,18 @@ test("a delayed URL record read cannot reopen a bibliography after Forward retur
   }, key);
   await page.goBack();
   await expect.poll(() => page.evaluate(() => (window as unknown as { paperRouteGate: { held: boolean } }).paperRouteGate.held)).toBe(true);
-  await page.goForward();
+  if (paginate) {
+    await page.getByRole("button", { name: "次の20件", exact: true }).click();
+    await expect(page.getByRole("region", { name: "書誌情報のプレビュー", exact: true }).getByRole("heading").first()).toHaveText(selectedTitle!);
+    expect(new URL(page.url()).searchParams.get("paper")).toBe(key);
+    expect(new URL(page.url()).searchParams.get("paperAfter")).toBeTruthy();
+    await page.getByRole("button", { name: "保存一覧へ戻る", exact: true }).click();
+  } else await page.goForward();
   await page.evaluate(async () => {
     (window as unknown as { paperRouteGate: { release: () => void } }).paperRouteGate.release();
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
   });
   expect(new URL(page.url()).searchParams.has("paper")).toBe(false);
   await expect(page.getByRole("region", { name: "書誌情報のプレビュー", exact: true })).toBeEmpty();
-  await expect(page.getByRole("button", { name: "書誌情報を開く", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "書誌情報を開く", exact: true }).first()).toBeVisible();
 });

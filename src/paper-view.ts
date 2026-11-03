@@ -78,6 +78,13 @@ export async function paperView(root: HTMLElement, client = new PaperClient()) {
     else url.searchParams.delete(key);
     pushReaderURL(url);
     routeRevision++;
+    // Paging during a pending detail read still keeps that detail in the URL.
+    // Restart its restore so cancellation cannot leave an empty preview behind.
+    if (
+      !preview.hasChildNodes() &&
+      (url.searchParams.has("paper") || url.searchParams.has("excerpt"))
+    )
+      void restoreRoute();
   }
   function selectURL(paper = "", excerpt = "") {
     const url = new URL(location.href);
@@ -326,7 +333,12 @@ export async function paperView(root: HTMLElement, client = new PaperClient()) {
           activeSnapshot = result.snapshot;
           capturedAtDisplay.textContent = `Crossref · ${new Date(activeSnapshot.capturedAt).toLocaleString("ja-JP")}`;
           isSaved = true;
-          selectURL(paperKey(activeSnapshot));
+          const currentExcerpt =
+            new URL(location.href).searchParams.get("excerpt") || "";
+          selectURL(
+            currentExcerpt ? "" : paperKey(activeSnapshot),
+            currentExcerpt,
+          );
           save.textContent = "保存済み";
           state.textContent = result.reused
             ? "同じ書誌情報は保存済みです。最初の取得記録を保持しました。"
