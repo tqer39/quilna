@@ -69,10 +69,9 @@ export default defineConfig(() => {
           },
         },
         configureServer(server) {
-          if (
-            server.config.server.watch === null ||
-            !resolve(server.config.root).split(sep).includes("test-results")
-          )
+          if (server.config.server.watch === null) return;
+          registeringServer = server;
+          if (!resolve(server.config.root).split(sep).includes("test-results"))
             return;
           // Vite prepends a global test-results ignore before our rooted predicate.
           // Keep the other defaults, then re-add the root through Chokidar's public
@@ -82,7 +81,6 @@ export default defineConfig(() => {
             throw new Error("Vite watcher ignored options must be an array");
           const index = ignored.indexOf("**/test-results/**");
           if (index !== -1) {
-            registeringServer = server;
             ignored.splice(index, 1);
             server.watcher.add(server.config.root);
           }
@@ -98,6 +96,12 @@ export default defineConfig(() => {
           return {
             server: {
               watch: {
+                // Chokidar's FSEvents backend indexes files before asynchronously
+                // installing their listener. fs.watch installs synchronously, so
+                // getWatched can safely gate each source before Vite caches it.
+                // Disable the macOS polling fallback explicitly as well.
+                useFsEvents: false,
+                usePolling: false,
                 ignored(path) {
                   const child = relative(root, resolve(path));
                   if (
