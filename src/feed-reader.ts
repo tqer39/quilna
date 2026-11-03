@@ -2944,9 +2944,9 @@ export async function feedReader(root: HTMLElement) {
         ),
       );
   });
-  await connect();
   routeReady = true;
   restoringRoute = false;
+  await connect();
   restoreRoute();
   if (speech.supported) {
     // The reader owns this document. Keep the listener through bfcache restores;
