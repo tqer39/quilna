@@ -88,6 +88,7 @@ test("background article commits preserve an unfinished source URL selection and
     name: "Navigation newsを更新",
     exact: true,
   });
+  await page.getByLabel("Navigation newsの管理", { exact: true }).click();
   await refresh.focus();
   await change(page, false);
   await expect(refresh).toBeFocused();
