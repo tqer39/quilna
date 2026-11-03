@@ -34,6 +34,7 @@ export class DocumentReservations {
   constructor(storage) {
     this.storage = storage;
   }
+  /** Validate the count and exact reservation without repairing ambiguous legacy data. */
   async read(tx, key, owner, audience) {
     const count = await tx.get(countKey),
       raw = await tx.get(key);
@@ -58,6 +59,7 @@ export class DocumentReservations {
       throw Error("document-invalid");
     }
   }
+  /** Reserve a scope atomically, returning a rollback receipt only for a new scope. */
   async reserve(owner, url, audience, scope) {
     if (!validScope(owner, audience, scope)) throw Error("document-invalid");
     const key = await keyFor(owner, url, audience);
@@ -84,8 +86,12 @@ export class DocumentReservations {
       next.revision++;
       await tx.put(key, next);
       if (!record) await tx.put(countKey, count + 1);
+      // A legacy reservation predates this request, even when migrated here.
+      if (record !== true)
+        return { token: next.token, revision: next.revision };
     });
   }
+  /** Report known scopes separately from legacy shared inventory that remains unknown. */
   summary(record, scope) {
     // Legacy private reservations always had exactly this account's one scope.
     const legacyPrivate = record === true && scope.startsWith("private:");
@@ -104,6 +110,7 @@ export class DocumentReservations {
     };
   }
 
+  /** Read reservation metadata without allocating, releasing or resetting a slot. */
   async inspect(owner, url, audience, scope) {
     const key = await keyFor(owner, url, audience);
     return this.storage.transaction(async (tx) =>

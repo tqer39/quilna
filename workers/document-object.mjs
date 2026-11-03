@@ -25,6 +25,7 @@ const commandSchema = z
 const managementSchema = commandSchema.extend({ request: lifecycleRequest });
 
 export class SourceDocument extends DurableObject {
+  /** Execute the stored retention decision only in its exact document object. */
   async alarm() {
     const retained = await this.ctx.storage.get("document:catalog:v1");
     if (retained === undefined) {
@@ -47,6 +48,7 @@ export class SourceDocument extends DurableObject {
     });
     await catalog.retentionAlarm();
   }
+  /** Authenticate an internal management request and bind it to the actual object ID. */
   async lifecycle(request) {
     const {
       owner,
@@ -153,12 +155,25 @@ export class SourceDocument extends DurableObject {
           },
         }),
       });
-      const value =
-        input.action === "read"
-          ? await catalog.read(owner, input.versionId)
-          : input.action === "history"
-            ? await catalog.history(owner, input.after)
-            : await catalog.acquire(owner, { force: input.force ?? false });
+      let value;
+      try {
+        value =
+          input.action === "read"
+            ? await catalog.read(owner, input.versionId)
+            : input.action === "history"
+              ? await catalog.history(owner, input.after)
+              : await catalog.acquire(owner, { force: input.force ?? false });
+      } catch (error) {
+        if (
+          input.action === "acquire" &&
+          error.message === "document-unavailable"
+        ) {
+          const deletion = await catalog.permanentDeletion(owner);
+          if (deletion)
+            return json(404, { status: "document-unavailable", deletion });
+        }
+        throw error;
+      }
       if (!(await authorize(owner))) throw Error("document-unavailable");
       return json(value.status === "pending" ? 202 : 200, value);
     } catch (error) {

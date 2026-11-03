@@ -59,8 +59,9 @@ function fixture() {
 test("recovery never releases another generation and rejects a stale reservation preview", async () => {
   const f = fixture(),
     r = f.reservations;
-  await r.reserve(owner, url, "shared", scope(1));
-  const first = await r.inspect(owner, url, "shared", scope(1));
+  const first = await r.reserve(owner, url, "shared", scope(1));
+  assert.equal(typeof first.token, "string");
+  assert.equal(await r.reserve(owner, url, "shared", scope(1)), undefined);
   await r.reserve(owner, url, "shared", scope(2));
   const before = structuredClone(f.data);
   await assert.rejects(

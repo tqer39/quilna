@@ -93,6 +93,7 @@ export class DocumentCatalog {
     )
       throw Error("document-unavailable");
   }
+  /** Require the separate manager capability before reading lifecycle metadata. */
   async managementAccess(principal) {
     if (
       typeof principal !== "string" ||
@@ -105,6 +106,7 @@ export class DocumentCatalog {
     )
       throw Error("document-unavailable");
   }
+  /** Validate lifecycle state in the caller transaction and return its publication fence. */
   async available(tx, id) {
     const state = lifecycleState(await tx.get(lifecycleKey), id);
     if (state.status !== "active" || lifecycleExpired(state, this.now()))
@@ -116,6 +118,20 @@ export class DocumentCatalog {
     const id = await this.identity;
     await this.storage.transaction((tx) => this.available(tx, id));
   }
+  /** Return only internal deletion proof for an authorized source, never its audit. */
+  async permanentDeletion(principal) {
+    await this.access(principal);
+    const id = await this.identity;
+    const proof = await this.storage.transaction(async (tx) => {
+      const lifecycle = lifecycleState(await tx.get(lifecycleKey), id);
+      if (lifecycle.status !== "deleted") return null;
+      if ((await tx.get(key)) !== undefined) throw Error("document-invalid");
+      return { id, scope: this.scope, sourceURL: this.sourceURL };
+    });
+    await this.access(principal);
+    return proof;
+  }
+  /** Combine one consistent catalog/lifecycle snapshot without exposing body parts. */
   lifecycleSummary(lifecycle, catalog) {
     const expired = lifecycleExpired(lifecycle, this.now());
     return {
@@ -136,6 +152,7 @@ export class DocumentCatalog {
       operations: lifecycle.operations,
     };
   }
+  /** Read management state atomically and recheck authority before delivery. */
   async lifecyclePreview(principal) {
     await this.managementAccess(principal);
     const id = await this.identity;
@@ -147,6 +164,7 @@ export class DocumentCatalog {
     await this.managementAccess(principal);
     return result;
   }
+  /** Apply an authorized command only to an acquired source or retained tombstone. */
   async manageLifecycle(principal, input) {
     await this.managementAccess(principal);
     const command = lifecycleCommand.parse(input),
@@ -164,6 +182,7 @@ export class DocumentCatalog {
       return this.applyLifecycle(tx, id, lifecycle, catalog, command);
     });
   }
+  /** Commit the decision, body deletion and alarm together; replays never mutate. */
   async applyLifecycle(tx, id, lifecycle, catalog, command) {
     const result = changeLifecycle(
       lifecycle,
@@ -192,6 +211,7 @@ export class DocumentCatalog {
     }
     return { ...result, current: this.lifecycleSummary(lifecycle, catalog) };
   }
+  /** Reconcile the current deadline so a stale wakeup cannot delete extended content. */
   async retentionAlarm() {
     const id = await this.identity;
     return this.storage.transaction(async (tx) => {

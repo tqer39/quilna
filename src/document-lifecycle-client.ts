@@ -29,17 +29,20 @@ export type LifecyclePreview = Omit<LifecycleState, "schema"> & {
   catalogRevision: number;
   versionCount: number;
   bytes: number;
-  reservation: ReservationSummary;
+  reservation: ReservationSummary | { status: "unavailable" };
 };
 const object = (v: unknown): v is Record<string, unknown> =>
   !!v && typeof v === "object" && !Array.isArray(v);
 const count = (v: unknown, max: number): v is number =>
   Number.isSafeInteger(v) && (v as number) >= 0 && (v as number) <= max;
 
+/** Keep unavailable accounting distinct from a validated reserved/unreserved summary. */
 function validReservation(
   value: unknown,
   context: LifecycleContext,
-): value is ReservationSummary {
+): value is LifecyclePreview["reservation"] {
+  if (object(value) && value.status === "unavailable")
+    return Object.keys(value).length === 1;
   if (
     !object(value) ||
     typeof value.reserved !== "boolean" ||
@@ -123,6 +126,7 @@ export async function lifecyclePreview(
   };
 }
 
+/** Compare acknowledged commands semantically, independent of JSON field order. */
 export function sameLifecycleCommand(a: LifecycleCommand, b: LifecycleCommand) {
   return (
     a.operationId === b.operationId &&

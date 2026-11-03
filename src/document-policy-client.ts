@@ -368,7 +368,11 @@ export class DocumentPolicyClient {
       const preview = await lifecyclePreview(result, context);
       signal.throwIfAborted();
       if (this.account !== bound) throw changed();
-      if (preview.status !== "deleted" || preview.reservation.containsTarget)
+      if (
+        preview.status !== "deleted" ||
+        "status" in preview.reservation ||
+        preview.reservation.containsTarget
+      )
         throw invalid();
       return preview;
     } catch (error) {

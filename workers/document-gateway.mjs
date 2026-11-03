@@ -28,6 +28,7 @@ export class DocumentGateway {
       scope,
     );
   }
+  /** Resolve an administrative target and preserve body outcomes when accounting is unavailable. */
   async lifecycle(owner, action, data) {
     try {
       if (!this.enabled) throw Error("document-unconfigured");
@@ -93,13 +94,19 @@ export class DocumentGateway {
           access.scope,
           input.reservation,
         );
-      } else
-        reservation = await reservations.inspect(
-          owner,
-          access.url,
-          access.audience,
-          access.scope,
-        );
+      } else {
+        try {
+          reservation = await reservations.inspect(
+            owner,
+            access.url,
+            access.audience,
+            access.scope,
+          );
+        } catch {
+          // Accounting failure cannot erase an independently committed body decision.
+          reservation = { status: "unavailable" };
+        }
+      }
       return json(
         200,
         input.action === "change"
@@ -143,8 +150,10 @@ export class DocumentGateway {
         input.url,
         input.audience,
       );
-      if (action === "acquire")
-        await this.reserve(owner, access.url, input.audience, access.scope);
+      const reservation =
+        action === "acquire"
+          ? await this.reserve(owner, access.url, input.audience, access.scope)
+          : undefined;
       const id = await documentIdentity(access.scope, access.url);
       const response = await this.env.DOCUMENTS.get(
         this.env.DOCUMENTS.idFromName(id),
@@ -170,8 +179,29 @@ export class DocumentGateway {
       );
       if (current.scope !== access.scope || current.url !== access.url)
         throw Error("document-unavailable");
+      const { deletion, ...publicValue } = value;
+      if (
+        reservation &&
+        response.status === 404 &&
+        value.status === "document-unavailable" &&
+        deletion?.id === id &&
+        deletion.scope === access.scope &&
+        deletion.sourceURL === access.url
+      ) {
+        // Undo only this request's new scope. A concurrent revision or storage
+        // failure preserves the reservation for explicit management recovery.
+        await new DocumentReservations(this.storage)
+          .releaseDeleted(
+            owner,
+            access.url,
+            input.audience,
+            access.scope,
+            reservation,
+          )
+          .catch(() => {});
+      }
       return json(response.status, {
-        ...value,
+        ...publicValue,
         account: owner,
         ...(access.url !== sourceURL(input.url)
           ? {

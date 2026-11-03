@@ -904,3 +904,43 @@ test("reservation recovery requires permanent deletion and preserves other polic
   );
   assert.equal(f.fetches(), 3);
 });
+
+for (const audience of ["shared", "private"]) {
+  test(`${audience}: acquiring a permanently deleted source does not consume a recovered reservation`, async (t) => {
+    const f = await fixture(t);
+    const p = await create(f);
+    const source = { url, audience };
+    assert.equal((await f.call("acquire", source)).status, 200);
+    const target =
+      audience === "shared"
+        ? { audience, policyId: p.id, managementRevision: 1 }
+        : { audience, url };
+    const before = (await f.call("admin-document-preview", { target })).value;
+    for (const command of [
+      lifecycleCommand("withdraw", 0),
+      lifecycleCommand("purge", 1, {
+        expectedCatalogRevision: before.catalogRevision,
+      }),
+    ])
+      assert.equal(
+        (await f.call("admin-document-change", { target, command })).status,
+        200,
+      );
+    const released = await f.call("admin-document-reconcile", {
+      target,
+      reservation: {
+        token: before.reservation.token,
+        revision: before.reservation.revision,
+      },
+    });
+    assert.equal(released.status, 200);
+    assert.equal(released.value.reservation.reserved, false);
+    const denied = await f.call("acquire", source);
+    assert.equal(denied.status, 404);
+    assert.equal(Object.hasOwn(denied.value, "deletion"), false);
+    const after = await f.call("admin-document-preview", { target });
+    assert.equal(after.status, 200);
+    assert.equal(after.value.reservation.reserved, false);
+    assert.equal(f.fetches(), 1);
+  });
+}

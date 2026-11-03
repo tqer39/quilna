@@ -44,6 +44,23 @@ async function fixture() {
   return { state, preview };
 }
 describe("lifecycle response validation", () => {
+  it("distinguishes unavailable accounting from an unreserved source", async () => {
+    const f = await fixture();
+    const value = { ...f.preview(), reservation: { status: "unavailable" } };
+    await expect(lifecyclePreview(value, context)).resolves.toMatchObject({
+      reservation: { status: "unavailable" },
+      status: "active",
+    });
+    for (const reservation of [
+      { status: "unknown" },
+      { status: "unavailable", reserved: false },
+      null,
+    ])
+      await expect(
+        lifecyclePreview({ ...value, reservation }, context),
+      ).rejects.toThrow();
+  });
+
   it("binds the source, scope and computed document ID and validates the audit's state", async () => {
     const f = await fixture();
     await expect(lifecyclePreview(f.preview(), context)).resolves.toMatchObject(

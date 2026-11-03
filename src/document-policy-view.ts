@@ -156,6 +156,14 @@ export function documentPolicySettings(client = new DocumentPolicyClient()) {
       )
     );
   }
+  /** Keep an unconfirmed operation mounted until its result can be reconciled. */
+  function canReplaceLifecycle(container: HTMLElement) {
+    if (!container.querySelector('[data-lifecycle-pending="true"]'))
+      return true;
+    notice.textContent =
+      "本文操作の結果を先に確認してください。同じ操作の再試行か、保存本文の状態確認で結果を確認できます。";
+    return false;
+  }
   function controls() {
     for (const b of Array.from(
       root.querySelectorAll<HTMLButtonElement>("button"),
@@ -471,6 +479,7 @@ export function documentPolicySettings(client = new DocumentPolicyClient()) {
             "この内容を保存",
             () =>
               void run(async (signal) => {
+                if (!canReplaceLifecycle(editor)) return;
                 const result = await client.save(input, saved, signal);
                 renderEditor(result);
                 next = null;
@@ -558,6 +567,7 @@ export function documentPolicySettings(client = new DocumentPolicyClient()) {
       history.setAttribute("aria-label", "共有設定の変更履歴");
       /** Replace the history page and detail pane, preserving the current draft. */
       const show = async (before: number | null, signal: AbortSignal) => {
+        if (!canReplaceLifecycle(detail)) return;
         const page = await client.history(saved.id, before, signal);
         entries.replaceChildren();
         detail.replaceChildren();
@@ -574,6 +584,7 @@ export function documentPolicySettings(client = new DocumentPolicyClient()) {
               `変更 #${entry.revision} を読む`,
               () =>
                 void run(async (s) => {
+                  if (!canReplaceLifecycle(detail)) return;
                   const result = await client.revision(
                     saved.id,
                     entry.revision,

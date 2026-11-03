@@ -59,6 +59,7 @@ export function documentLifecycleView(
   let recoveryWasDirty = false;
   const blockInputs = () => {
     fields.inert = !!pending || !!pendingRecovery;
+    root.dataset.lifecyclePending = String(fields.inert);
   };
   const show = (value: LifecyclePreview) => {
     preview = value;
@@ -92,14 +93,20 @@ export function documentLifecycleView(
     reservationControls.replaceChildren(
       el(
         "p",
-        !reservation.reserved
-          ? "この本文取得の予約枠は使用していません。"
-          : reservation.legacy
-            ? "旧形式の共有予約に確認できない世代が残っています。枠は自動で解放しません。"
-            : `本文取得の予約枠を使用中です。記録済みの対象は${reservation.scopeCount}世代です。`,
+        "status" in reservation
+          ? "予約枠の状態を確認できません。本文の状態とは別に、予約台帳の確認が必要です。"
+          : !reservation.reserved
+            ? "この本文取得の予約枠は使用していません。"
+            : reservation.legacy
+              ? "旧形式の共有予約に確認できない世代が残っています。枠は自動で解放しません。"
+              : `本文取得の予約枠を使用中です。記録済みの対象は${reservation.scopeCount}世代です。`,
       ),
     );
-    if (value.status === "deleted" && reservation.containsTarget) {
+    if (
+      value.status === "deleted" &&
+      !("status" in reservation) &&
+      reservation.containsTarget
+    ) {
       reservationControls.append(
         button("本文取得枠を回復", () => {
           if (pending || pendingRecovery) return;
@@ -144,6 +151,8 @@ export function documentLifecycleView(
         pendingRecovery,
         signal,
       );
+      if ("status" in current.reservation)
+        throw new PolicyError("予約枠の回復結果を確認できません。");
       show(current);
       pendingRecovery = null;
       blockInputs();

@@ -837,3 +837,46 @@ test("audit capacity reserves withdrawal and purge for an active source without 
   assert.equal(deleted.bytes, 0);
   await assert.rejects(f.restart().read("alice"), /document-unavailable/);
 });
+
+test("permanent deletion proof requires a tombstone, no catalog and current source authorization", async () => {
+  let allowed = true,
+    gated = false,
+    checks = 0;
+  const started = gate(),
+    finish = gate();
+  const f = fixture({
+    ...management,
+    authorize: async () => {
+      if (gated && ++checks === 2) {
+        started.resolve();
+        await finish.promise;
+      }
+      return allowed;
+    },
+  });
+  assert.equal(await f.catalog.permanentDeletion("alice"), null);
+  await f.catalog.acquire("alice");
+  const retained = structuredClone(f.storage.data.get(key));
+  await f.catalog.manageLifecycle("operator", command("withdraw", 0));
+  assert.equal(await f.catalog.permanentDeletion("alice"), null);
+  await f.catalog.manageLifecycle(
+    "operator",
+    command("purge", 1, { expectedCatalogRevision: retained.revision }),
+  );
+  const proof = await f.catalog.permanentDeletion("alice");
+  assert.deepEqual(Object.keys(proof).sort(), ["id", "scope", "sourceURL"]);
+  assert.equal(proof.sourceURL, url);
+  f.storage.data.set(key, retained);
+  await assert.rejects(
+    f.catalog.permanentDeletion("alice"),
+    /document-invalid/,
+  );
+  f.storage.data.delete(key);
+  gated = true;
+  const pending = f.catalog.permanentDeletion("alice");
+  const denied = assert.rejects(pending, /document-unavailable/);
+  await started.promise;
+  allowed = false;
+  finish.resolve();
+  await denied;
+});
