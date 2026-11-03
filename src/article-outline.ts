@@ -1,5 +1,6 @@
 import type { ArticleStructure } from "./article-structure";
 import { el } from "./ui";
+import { pushReaderURL } from "./reader-route";
 
 /** Navigation over retained source headings; never infer translated headings. */
 export class ArticleOutline {
@@ -75,9 +76,23 @@ export class ArticleOutline {
             "rss-text-link",
           );
           const id = `rss-section-${heading.start}`;
-          link.href = `?view=feeds#${id}`;
+          const url = new URL(location.href);
+          url.searchParams.set("view", "feeds");
+          url.searchParams.set("article", articleId);
+          url.hash = id;
+          link.href = url.href;
           link.addEventListener("click", (event) => {
+            if (
+              event.metaKey ||
+              event.ctrlKey ||
+              event.shiftKey ||
+              event.altKey
+            )
+              return;
             event.preventDefault();
+            const targetURL = new URL(location.href);
+            targetURL.hash = id;
+            pushReaderURL(targetURL);
             const target = this.body?.querySelector<HTMLElement>(`#${id}`);
             target?.focus({ preventScroll: true });
             target?.scrollIntoView({ block: "start" });

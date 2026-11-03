@@ -121,7 +121,7 @@ for (const design of ["Studio", "Editorial", "Focus"]) {
     await page.getByRole("link", { name: "本文を読む", exact: true }).click();
     await expect(page.locator("#rss-article-body")).toBeFocused();
     await expect(page.locator("#rss-current-title")).toHaveText(articleTitle);
-    expect(new URL(page.url()).hash).toBe("");
+    expect(new URL(page.url()).hash).toBe("#rss-article-body");
     await page.locator("#rss-current-title").scrollIntoViewIfNeeded();
     await page.screenshot({ path: info.outputPath(`${design}-reading.png`) });
     await page.reload();
@@ -129,6 +129,9 @@ for (const design of ["Studio", "Editorial", "Focus"]) {
       "data-reader-design",
       design.toLowerCase(),
     );
+    await page
+      .getByRole("button", { name: "← 記事一覧へ", exact: true })
+      .click();
     await page.getByRole("button", { name: /保存した記事 · 1/ }).click();
     await expect(
       page.getByRole("button", { name: articleTitle, exact: true }),

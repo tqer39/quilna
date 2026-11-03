@@ -604,10 +604,9 @@ for (const design of ["studio", "editorial", "focus"])
       await page.screenshot({ path: info.outputPath("document-history.png") });
       await page.reload();
       await expect(
-        page.getByRole("button", { name: "Cloud 1", exact: true }),
+        page.getByRole("heading", { name: "Cloud 1", exact: true }),
       ).toBeVisible();
       await page.context().setOffline(true);
-      await page.getByRole("button", { name: "Cloud 1", exact: true }).click();
       await expect(page.locator(".rss-source-text")).toContainText(
         "Cloud revision 1",
       );

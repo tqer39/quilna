@@ -120,9 +120,9 @@ for (const design of ["studio", "editorial", "focus"])
     await connect(page);
     await expect(panel(page).locator("img,script")).toHaveCount(0);
     await page.reload();
-    await page
-      .getByRole("button", { name: "Quote article a", exact: true })
-      .click();
+    await expect(
+      page.getByRole("heading", { name: "Quote article a", exact: true }),
+    ).toBeVisible();
     await openReaderTools(page);
     await page.locator("#rss-highlights summary").click();
     await page
@@ -356,9 +356,9 @@ test("deleted highlights retain linked snapshots reachable and removable from th
         await writeHighlight(h, h.revision, true);
   });
   await page.reload();
-  await page
-    .getByRole("button", { name: "Quote article a", exact: true })
-    .click();
+  await expect(
+    page.getByRole("heading", { name: "Quote article a", exact: true }),
+  ).toBeVisible();
   await openReaderTools(page);
   await page.locator("#rss-graph > details > summary").click();
   await page

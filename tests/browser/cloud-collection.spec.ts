@@ -83,7 +83,8 @@ test("cloud success time advances without a new snapshot and survives a later fe
   const localTime = await source
     .getByText(/^ブラウザ内の最終取得 /)
     .textContent();
-  await page.getByRole("button", { name: "設定", exact: true }).click();
+  if (new URL(page.url()).searchParams.get("screen") !== "settings")
+    await page.getByRole("button", { name: "設定", exact: true }).click();
   state.feeds[0].lastSuccess = time + 15 * 60_000;
   state.feeds[0].nextAt = time + 30 * 60_000;
   await page
@@ -105,7 +106,8 @@ test("cloud success time advances without a new snapshot and survives a later fe
 
   state.feeds[0].error = "feed-fetch-failed";
   state.feeds[0].failures = 1;
-  await page.getByRole("button", { name: "設定", exact: true }).click();
+  if (new URL(page.url()).searchParams.get("screen") !== "settings")
+    await page.getByRole("button", { name: "設定", exact: true }).click();
   await page
     .getByRole("button", {
       name: "クラウドの状態確認・記事を取り込む",
@@ -175,7 +177,8 @@ test("cloud results import after reopening, preserve newer local content and tol
     page.getByRole("button", { name: "Newer local article", exact: true }),
   ).toBeVisible();
   expect(acknowledgements).toBe(1);
-  await page.getByRole("button", { name: "設定", exact: true }).click();
+  if (new URL(page.url()).searchParams.get("screen") !== "settings")
+    await page.getByRole("button", { name: "設定", exact: true }).click();
   await expect(page.locator("#rss-cloud-status")).toContainText(
     "接続できません",
   );
@@ -235,7 +238,8 @@ test("cloud settings start and stop explicitly; stale revisions show a recoverab
   });
   await seed(page, address);
   await page.reload();
-  await page.getByRole("button", { name: "設定", exact: true }).click();
+  if (new URL(page.url()).searchParams.get("screen") !== "settings")
+    await page.getByRole("button", { name: "設定", exact: true }).click();
   await expect(page.locator("#rss-cloud-status")).toContainText(
     "公開HTTPSのサイト・RSSに対応",
   );
@@ -252,7 +256,8 @@ test("cloud settings start and stop explicitly; stale revisions show a recoverab
     "クラウドで30分ごと",
   );
   await page.reload();
-  await page.getByRole("button", { name: "設定", exact: true }).click();
+  if (new URL(page.url()).searchParams.get("screen") !== "settings")
+    await page.getByRole("button", { name: "設定", exact: true }).click();
   await expect(
     page.getByLabel("クラウドの収集間隔", { exact: true }),
   ).toHaveValue("30");
@@ -295,7 +300,8 @@ test("a local-only environment clearly reports unavailable cloud collection", as
     route.fulfill({ status: 404, json: { status: "auth-unconfigured" } }),
   );
   await page.goto("/?view=feeds");
-  await page.getByRole("button", { name: "設定", exact: true }).click();
+  if (new URL(page.url()).searchParams.get("screen") !== "settings")
+    await page.getByRole("button", { name: "設定", exact: true }).click();
   await expect(page.locator("#rss-cloud-status")).toContainText(
     "画面表示中の更新のみ",
   );
@@ -346,7 +352,8 @@ test("a failed browser save never acknowledges the cloud result", async ({
     },
   ];
   await page.reload();
-  await page.getByRole("button", { name: "設定", exact: true }).click();
+  if (new URL(page.url()).searchParams.get("screen") !== "settings")
+    await page.getByRole("button", { name: "設定", exact: true }).click();
   await expect(page.locator("#rss-cloud-status")).toContainText(
     "記事を保存できませんでした",
   );
@@ -414,7 +421,8 @@ test("a malformed snapshot stays recoverable without blocking healthy articles; 
   await expect(page.locator("#rss-auto-refresh-status")).toContainText(
     "1件の取得結果を取り込めません",
   );
-  await page.getByRole("button", { name: "設定", exact: true }).click();
+  if (new URL(page.url()).searchParams.get("screen") !== "settings")
+    await page.getByRole("button", { name: "設定", exact: true }).click();
   await expect(page.locator("#rss-cloud-failures")).toContainText(
     "RSS / Atomの形式を読み取れませんでした",
   );
@@ -523,7 +531,8 @@ test("five malformed snapshots do not starve the next batch, and a concurrently 
     size: xml.length,
   }));
   await page.reload();
-  await page.getByRole("button", { name: "設定", exact: true }).click();
+  if (new URL(page.url()).searchParams.get("screen") !== "settings")
+    await page.getByRole("button", { name: "設定", exact: true }).click();
   await expect(page.locator("#rss-cloud-status")).toContainText(
     "取り込めない取得結果：5件",
   );

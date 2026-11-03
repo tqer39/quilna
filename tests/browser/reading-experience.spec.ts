@@ -191,9 +191,9 @@ test("reading position survives reload without treating opening as reading; late
     .toBeGreaterThan(0);
   const p = (await read()).readingPositions.original;
   await page.reload();
-  await page
-    .getByRole("button", { name: "集中して読むための記事", exact: true })
-    .click();
+  await expect(
+    page.getByRole("heading", { name: "集中して読むための記事", exact: true }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "続きから読む", exact: true }).click();
   expect(await page.evaluate(() => scrollY)).toBeGreaterThan(500);
   expect((await read()).readingPositions.original.fingerprint).toBe(
@@ -283,7 +283,9 @@ test("legacy structure enrichment preserves identical text, translation and flag
     ),
   );
   await page.reload();
-  await page.getByRole("button", { name: "Legacy", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Legacy", exact: true }),
+  ).toBeVisible();
   await page.getByRole("button", { name: "リンク・見出しを取り直す" }).click();
   await expect(page.locator(".rss-source-text h2")).toHaveText("Guide section");
   const result = await page.evaluate(async () => {

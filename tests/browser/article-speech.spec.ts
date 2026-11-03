@@ -113,9 +113,9 @@ test("local voice choices persist by language and switching cancels speech", asy
   await page.getByRole("button", { name: "原文を読む", exact: true }).click();
   await expect(voice).toHaveValue("novelty");
   await page.reload();
-  await page
-    .getByRole("button", { name: "Speech article", exact: true })
-    .click();
+  await expect(
+    page.getByRole("heading", { name: "Speech article", exact: true }),
+  ).toBeVisible();
   await openReaderTools(page);
   await expect(voice).toHaveValue("novelty");
   await page
@@ -175,9 +175,9 @@ test.describe("browser locale defaults", () => {
       page.getByRole("button", { name: "読み上げを停止", exact: true }),
     ).toHaveCount(0);
     await page.reload();
-    await page
-      .getByRole("button", { name: "Speech article", exact: true })
-      .click();
+    await expect(
+      page.getByRole("heading", { name: "Speech article", exact: true }),
+    ).toBeVisible();
     await openReaderTools(page);
     await expect(voice).toHaveValue("natural");
     await page.getByRole("button", { name: "設定", exact: true }).click();

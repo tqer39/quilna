@@ -673,9 +673,9 @@ async function runReaderScenario(browser, info, aliasMode) {
     expect(deniedRead.status()).toBe(404);
     fail = false;
     await a.page.reload();
-    await a.page
-      .getByRole("button", { name: "Runtime original 2", exact: true })
-      .click();
+    await expect(
+      a.page.getByRole("heading", { name: "Runtime original 2", exact: true }),
+    ).toBeVisible();
     await expect(a.page.locator(".rss-source-text")).toContainText(
       "Runtime version 2",
     );
@@ -911,9 +911,9 @@ test("closed reader receives a durable RSS revision and retains the old body unt
     await page.locator(".rss-document-history summary").click();
     await expect(page.locator(".rss-document-version")).toHaveCount(2);
     await page.reload();
-    await page
-      .getByRole("button", { name: "Collected original 2", exact: true })
-      .click();
+    await expect(
+      page.getByRole("heading", { name: "Collected original 2", exact: true }),
+    ).toBeVisible();
     await expect(page.locator(".rss-source-text")).toContainText(
       "Collected version 2",
     );
