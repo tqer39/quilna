@@ -519,6 +519,7 @@ export async function feedReader(root: HTMLElement) {
     },
     import: () => openImport(),
   });
+  rootHeader.insertBefore(locationNavigation.destinations, actions);
   const importDialog = el("dialog", undefined, "rss-import-dialog");
   const importHeading = el("h2", "サイト・記事の取り込み");
   importHeading.id = "rss-import-title";

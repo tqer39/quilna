@@ -49,7 +49,10 @@ export class CollectionNavigation {
     string,
     {
       root: HTMLDivElement;
-      title: HTMLElement;
+      title: HTMLButtonElement;
+      management: HTMLDetailsElement;
+      summary: HTMLElement;
+      stateLabel: HTMLElement;
       details: HTMLDivElement;
       update: HTMLButtonElement;
       subscription: HTMLButtonElement;
@@ -141,6 +144,7 @@ export class CollectionNavigation {
     this.status.id = "rss-auto-refresh-status";
     this.status.setAttribute("role", "status");
     this.progress.setAttribute("role", "status");
+    this.createSource = (url) => button("", () => actions.source(url));
     this.createRefresh = (url) => button("", () => actions.refresh(url));
     this.createSubscription = (url) => ({
       subscription: button("", () =>
@@ -166,6 +170,7 @@ export class CollectionNavigation {
       this.feedList,
     );
   }
+  private readonly createSource: (url: string) => HTMLButtonElement;
   private readonly createRefresh: (url: string) => HTMLButtonElement;
   private readonly createSubscription: (url: string) => {
     subscription: HTMLButtonElement;
@@ -239,22 +244,42 @@ export class CollectionNavigation {
       if (!row) {
         row = {
           root: el("div", undefined, "rss-feed-state"),
-          title: el("strong"),
+          title: this.createSource(feed.url),
+          management: el("details", undefined, "rss-feed-management"),
+          summary: el("summary"),
+          stateLabel: el("p", undefined, "rss-feed-status"),
           details: el("div"),
           update: this.createRefresh(feed.url),
           ...this.createSubscription(feed.url),
           signature: "",
         };
-        row.root.append(
-          row.title,
+        row.title.className = "rss-feed-title";
+        row.management.append(
+          row.summary,
           row.details,
           row.update,
           row.subscription,
           row.retrySubscription,
         );
+        row.root.append(row.title, row.stateLabel, row.management);
         this.rows.set(feed.url, row);
       }
       text(row.title, feed.title);
+      row.title.setAttribute("aria-pressed", String(feed.url === state.source));
+      text(row.summary, "管理");
+      row.summary.setAttribute("aria-label", `${feed.title}の管理`);
+      text(
+        row.stateLabel,
+        feed.updating
+          ? "更新中"
+          : feed.cloudUnsubscribePending
+            ? "クラウド解除の確認待ち"
+            : feed.unsubscribed
+              ? "購読停止中"
+              : feed.retry
+                ? "取得に失敗・再試行できます"
+                : "購読中",
+      );
       const signature = JSON.stringify(feed.details);
       if (row.signature !== signature) {
         const nodes = feed.details.map((detail) => {

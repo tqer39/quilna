@@ -70,6 +70,33 @@ for (const design of ["studio", "editorial", "focus"])
     page,
   }, info) => {
     await seed(page, design);
+    await expect(
+      page
+        .locator(".rss-header")
+        .getByRole("navigation", { name: "主な移動先" }),
+    ).toBeVisible();
+    await expect(page.locator(".rss-location-bar")).toBeHidden();
+    const source = page.locator(".rss-feed-state");
+    await expect(source.locator(".rss-feed-management")).not.toHaveAttribute(
+      "open",
+      "",
+    );
+    await source
+      .getByRole("button", { name: "Location source", exact: true })
+      .click();
+    expect(new URL(page.url()).searchParams.get("source")).toBe(feed);
+    await source.getByLabel("Location sourceの管理", { exact: true }).click();
+    await expect(
+      source.getByRole("button", {
+        name: "Location sourceの購読を解除",
+        exact: true,
+      }),
+    ).toBeVisible();
+    await source.getByLabel("Location sourceの管理", { exact: true }).click();
+    await page.getByLabel("配信元", { exact: true }).selectOption("");
+    await page.screenshot({
+      path: info.outputPath(`${design}-compact-navigation.png`),
+    });
     await expect(current(page)).toHaveText("記事一覧");
     await destinations(page)
       .getByRole("link", { name: "保存した記事", exact: true })

@@ -20,6 +20,7 @@ test("an unsubscribed feed stays excluded from due collection after visibility c
     return r.fulfill({ json: { url: address, xml: xml() } });
   });
   await seed(page);
+  await page.getByLabel("Publisher 0の管理", { exact: true }).click();
   page.once("dialog", (dialog) => dialog.accept());
   await page
     .getByRole("button", { name: "Publisher 0の購読を解除", exact: true })
@@ -167,9 +168,11 @@ test("failed updates back off across reload and recovery clears failure without 
   });
   await seed(page);
   await wake(page, 16);
+  await page.getByLabel("Publisher 0の管理", { exact: true }).click();
   await expect(page.locator(".rss-feed-error")).toBeVisible();
   expect(requests).toBe(1);
   await page.reload();
+  await page.getByLabel("Publisher 0の管理", { exact: true }).click();
   await expect(page.locator(".rss-feed-error")).toBeVisible();
   expect(requests).toBe(1);
   await wake(page, 20);
@@ -201,6 +204,8 @@ test("multiple tabs share two fetch slots and recheck freshness under the per-fe
   const calls: string[] = [];
   const pending: (() => Promise<void>)[] = [];
   await context.route("**/api/feeds/fetch", async (route) => {
+    if (route.request().postDataJSON().icon === true)
+      return route.fulfill({ status: 404, json: {} });
     const url = route.request().postDataJSON().url;
     calls.push(url);
     active++;

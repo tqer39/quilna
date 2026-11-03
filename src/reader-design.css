@@ -1519,3 +1519,33 @@
   margin: 0;
   flex-shrink: 0;
 }
+
+/* Primary destinations belong to the header; article context stays with the reader. */
+.rss-location-bar[data-screen="list"] { display: none; }
+:root[data-reader-design] .rss-header { flex-wrap: wrap; gap: 12px; }
+.rss-header .rss-destinations { margin-inline-start: auto; }
+:root[data-reader-design] .rss-feed-state {
+  position: relative;
+  margin-top: 8px;
+  padding: 10px 0;
+}
+:root[data-reader-design] .rss-feed-state .rss-feed-title {
+  display: block;
+  width: 100%;
+  margin: 0;
+  padding: 4px 0;
+  border: 0;
+  box-shadow: none;
+  text-align: start;
+  background: transparent;
+  font-weight: 650;
+}
+.rss-feed-title[aria-pressed="true"] { color: var(--viewer-accent); }
+.rss-feed-status { font-size: 12px; color: var(--viewer-muted); margin: 2px 0 6px; }
+.rss-feed-management summary { cursor: pointer; font-size: 12px; color: var(--viewer-accent); }
+.rss-feed-management[open] { padding-bottom: 4px; }
+@media (max-width: 680px) {
+  .rss-header .rss-destinations { order: 3; width: 100%; }
+  .rss-header .rss-destination-links { display: grid; grid-template-columns: 1fr 1fr 1.5fr; }
+  .rss-header .rss-destination-links a { text-align: center; }
+}
