@@ -94,6 +94,7 @@ for (const design of ["studio", "editorial", "focus"])
     ).toBeVisible();
     await source.getByLabel("Location sourceの管理", { exact: true }).click();
     await page.getByLabel("配信元", { exact: true }).selectOption("");
+    await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({
       path: info.outputPath(`${design}-compact-navigation.png`),
     });
