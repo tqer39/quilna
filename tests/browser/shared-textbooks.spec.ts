@@ -271,12 +271,12 @@ test("two disposable recipient profiles preserve the exact file and have separat
     ).toBeVisible();
     expect(await exported(other)).toBe(raw);
     await other.reload();
-    await openBook(other);
+    await expect(other.getByRole("navigation", { name: "教材の目次" })).toBeVisible();
     await expect(
       other.getByText(/ファイルの保存が成功した · 別の選択肢/),
     ).toHaveCount(1);
     await page.reload();
-    await openBook(page);
+    await expect(page.getByRole("navigation", { name: "教材の目次" })).toBeVisible();
     await expect(page.getByText(/文章が出力された · 正答/)).toHaveCount(1);
     await expect(
       page.getByText(/ファイルの保存が成功した · 別の選択肢/),
@@ -978,3 +978,43 @@ for (const [zone, date, time] of [
     });
   });
 }
+
+test("retained textbook and heading URLs restore history without reopening a late answer read", async ({ page, browser }) => {
+  const external: string[] = [];
+  await page.route("https://**/*", (route) => {
+    external.push(route.request().url());
+    return route.abort();
+  });
+  await page.goto("/?view=textbooks");
+  await importBook(page);
+  await openBook(page);
+  const bookURL = page.url();
+  expect(new URL(bookURL).searchParams.get("book")).toBeTruthy();
+  const link = page.getByRole("navigation", { name: "教材の目次" }).getByRole("link").last();
+  const headingURL = await link.getAttribute("href");
+  await link.click();
+  await expect(page).toHaveURL(headingURL!);
+  const heading = page.locator(new URL(page.url()).hash);
+  await expect(heading).toBeFocused();
+  await page.goBack();
+  await expect(page).toHaveURL(bookURL);
+  await page.goForward();
+  await expect(heading).toBeFocused();
+  await page.reload();
+  await expect(heading).toBeFocused();
+  await page.getByRole("button", { name: "教材一覧へ戻る", exact: true }).click();
+  await holdAnswerCompletion(page, "readonly");
+  await page.goBack();
+  await expect.poll(() => page.evaluate(() => (window as unknown as { heldSharedCompletion: boolean }).heldSharedCompletion)).toBe(true);
+  await page.goForward();
+  await releaseAnswerCompletion(page);
+  await expect(page.getByRole("button", { name: `${title} · 版 7を読む`, exact: true })).toBeVisible();
+  await expect(page.getByRole("main", { name: "共有教材の読書" })).toBeHidden();
+  expect(external).toEqual([]);
+  const other = await browser.newContext();
+  try {
+    const tab = await other.newPage();
+    await tab.goto(headingURL!);
+    await expect(tab.getByRole("status")).toContainText("現在のライブラリにありません");
+  } finally { await other.close(); }
+});

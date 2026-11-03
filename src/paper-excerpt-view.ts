@@ -18,7 +18,7 @@ function external(text: string, url: string) {
 /** A disposable selected-paper workflow keeps late body/quote results outside newer selections. */
 export function paperExcerptView(
   paper: PaperSnapshot,
-  onSaved: () => Promise<void>,
+  onSaved: (record: PaperExcerpt, visible: boolean) => Promise<void>,
   options: { record?: PaperExcerpt; saved?: boolean } = {},
   client: Pick<PaperTextClient, "lookup"> = new PaperTextClient(),
 ) {
@@ -118,7 +118,7 @@ export function paperExcerptView(
         state.textContent = "論文引用を保存しています…";
         try {
           const result = await savePaperExcerpt(retained);
-          void onSaved();
+          void onSaved(result.record, active && save.isConnected);
           if (!active || !save.isConnected) return;
           retained = result.record;
           source = result.record.source;

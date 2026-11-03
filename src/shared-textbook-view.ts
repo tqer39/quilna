@@ -1,5 +1,6 @@
 import { hasAccountLibrary } from "./library-context";
 import { button, el } from "./ui";
+import { pushReaderURL, revealReaderAnchor } from "./reader-route";
 import {
   parseSharedTextbook,
   sharedTextbookMaximumBytes,
@@ -9,6 +10,7 @@ import {
 import {
   importSharedTextbook,
   listSharedTextbooks,
+  readSharedTextbook,
   readSharedAnswers,
   answerSharedTextbook,
   type SharedAnswer,
@@ -188,6 +190,58 @@ export async function sharedTextbookView(root: HTMLElement) {
     readEpoch = 0,
     listEpoch = 0,
     pending = 0;
+  let routeEpoch = 0,
+    selectedBook = "",
+    readerTrigger: HTMLElement | undefined;
+  function bookURL(id = "", hash = "") {
+    const url = new URL(location.href);
+    url.searchParams.set("view", "textbooks");
+    if (id) url.searchParams.set("book", id);
+    else url.searchParams.delete("book");
+    url.hash = hash;
+    return url;
+  }
+  function showLibrary(navigate = true, focus = true) {
+    routeEpoch++;
+    readEpoch++;
+    selectedBook = "";
+    if (navigate) pushReaderURL(bookURL());
+    document.title = "受け取った教材 | Quilna";
+    reader.replaceChildren();
+    reader.hidden = true;
+    library.hidden = false;
+    if (focus)
+      (readerTrigger?.isConnected
+        ? readerTrigger
+        : list.querySelector<HTMLElement>("button")
+      )?.focus();
+  }
+  /** Resolve only this library's retained edition, never a remote source. */
+  async function restoreRoute() {
+    const url = location.href,
+      id = new URL(url).searchParams.get("book") || "";
+    if (id && id === selectedBook) {
+      if (!revealReaderAnchor())
+        window.scrollTo(0, Number(history.state?.readerScroll) || 0);
+      return;
+    }
+    showLibrary(false, false);
+    const ticket = routeEpoch;
+    if (!id) {
+      window.scrollTo(0, Number(history.state?.readerScroll) || 0);
+      return;
+    }
+    try {
+      const book = await readSharedTextbook(id);
+      if (ticket !== routeEpoch || url !== location.href) return;
+      if (!book) throw Error("このURLの教材は現在のライブラリにありません。");
+      await showBook(book, undefined, false);
+    } catch (error) {
+      if (ticket === routeEpoch && url === location.href)
+        notice.textContent = message(error);
+    }
+  }
+  window.addEventListener("popstate", () => void restoreRoute());
   window.addEventListener("beforeunload", (event) => {
     if (pending) {
       event.preventDefault();
@@ -238,22 +292,22 @@ export async function sharedTextbookView(root: HTMLElement) {
   }
 
   /** Keep late answer reads from replacing another edition; unreadable answers never block the text. */
-  async function showBook(book: SharedTextbook, trigger?: HTMLElement) {
+  async function showBook(
+    book: SharedTextbook,
+    trigger?: HTMLElement,
+    navigate = true,
+  ) {
+    routeEpoch++;
+    selectedBook = book.id;
+    readerTrigger = trigger;
+    if (navigate) pushReaderURL(bookURL(book.id));
     document.title = `${book.draft.title} · 版 ${book.record.version} | Quilna`;
     const epoch = ++readEpoch;
     library.hidden = true;
     reader.hidden = false;
     /** Invalidate late reader work before restoring the originating library control. */
     const returnToLibrary = () => {
-      readEpoch++;
-      document.title = "受け取った教材 | Quilna";
-      reader.replaceChildren();
-      reader.hidden = true;
-      library.hidden = false;
-      (trigger?.isConnected
-        ? trigger
-        : list.querySelector<HTMLElement>("button")
-      )?.focus();
+      showLibrary();
     };
     /** Create the persistent library return control for both loading and completed readers. */
     const navigation = () => {
@@ -336,9 +390,12 @@ export async function sharedTextbookView(root: HTMLElement) {
       title.id = `shared-section-${content.id}`;
       title.tabIndex = -1;
       const jump = el("a", content.title);
-      jump.href = `#${title.id}`;
+      jump.href = bookURL(book.id, title.id).href;
       jump.addEventListener("click", (e) => {
+        if (e.button || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey)
+          return;
         e.preventDefault();
+        pushReaderURL(new URL(jump.href));
         title.scrollIntoView({ block: "start" });
         title.focus({ preventScroll: true });
       });
@@ -513,6 +570,7 @@ export async function sharedTextbookView(root: HTMLElement) {
       reader.append(section);
     }
     heading.focus();
+    revealReaderAnchor();
   }
 
   input.addEventListener("change", () => {
@@ -587,4 +645,5 @@ export async function sharedTextbookView(root: HTMLElement) {
     });
   });
   await showList();
+  await restoreRoute();
 }

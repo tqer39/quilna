@@ -54,6 +54,21 @@ async function stored(key: IDBValidKey, value: unknown) {
   if (record.digest !== key) throw failed();
   return record;
 }
+/** Resolve an exact retained citation without fetching its source again. */
+export async function readPaperExcerpt(key: string) {
+  const db = await open();
+  try {
+    const value = await new Promise<unknown>((resolve, reject) => {
+      const tx = db.transaction("excerpts"),
+        request = tx.objectStore("excerpts").get(key);
+      tx.oncomplete = () => resolve(request.result);
+      tx.onabort = tx.onerror = () => reject(failed());
+    });
+    return value === undefined ? undefined : stored(key, value);
+  } finally {
+    db.close();
+  }
+}
 /** Atomically retain at most 100 citation records without eviction; identical recaptures reuse the original record and dates. */
 export async function savePaperExcerpt(input: PaperExcerpt) {
   const record = await parsePaperExcerpt(JSON.stringify(input)),
