@@ -99,6 +99,9 @@ export function createHandler({
               "admin-revision",
               "admin-create",
               "admin-update",
+              "admin-document-preview",
+              "admin-document-change",
+              "admin-document-reconcile",
             ].includes(action)
           )
         )

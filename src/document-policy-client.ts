@@ -1,3 +1,13 @@
+import {
+  lifecycleCommand,
+  type LifecycleCommand,
+} from "./document-lifecycle.mjs";
+import {
+  lifecyclePreview,
+  sameLifecycleCommand,
+  type LifecycleContext,
+  type ReservationSummary,
+} from "./document-lifecycle-client";
 import { documentUUID } from "./source-document";
 import { sourceURL } from "./feed-discovery";
 
@@ -288,6 +298,87 @@ export class DocumentPolicyClient {
     );
     await this.connect(signal);
     return result;
+  }
+  async previewDocument(context: LifecycleContext, signal: AbortSignal) {
+    const bound = this.account;
+    const result = await this.command(
+      "document-preview",
+      { target: context.target },
+      signal,
+    );
+    try {
+      const preview = await lifecyclePreview(result, context);
+      signal.throwIfAborted();
+      if (this.account !== bound) throw changed();
+      return preview;
+    } catch (error) {
+      if (error instanceof PolicyError) throw error;
+      throw invalid();
+    }
+  }
+  async changeDocument(
+    context: LifecycleContext,
+    command: LifecycleCommand,
+    signal: AbortSignal,
+  ) {
+    const bound = this.account;
+    const input = lifecycleCommand.parse(command);
+    const result = await this.command(
+      "document-change",
+      { target: context.target, command: input },
+      signal,
+    );
+    try {
+      const current = await lifecyclePreview(result.current, context);
+      signal.throwIfAborted();
+      if (this.account !== bound) throw changed();
+      const recorded = current.operations.find(
+        (o) => o.command.operationId === input.operationId,
+      );
+      if (
+        typeof result.replayed !== "boolean" ||
+        !object(result.operation) ||
+        !recorded ||
+        !sameLifecycleCommand(recorded.command, input) ||
+        result.operation.at !== recorded.at ||
+        !sameLifecycleCommand(
+          lifecycleCommand.parse(result.operation.command),
+          input,
+        )
+      )
+        throw invalid();
+      return { current, replayed: result.replayed };
+    } catch (error) {
+      if (error instanceof PolicyError) throw error;
+      throw invalid();
+    }
+  }
+  async reconcileDocument(
+    context: LifecycleContext,
+    reservation: Pick<ReservationSummary, "token" | "revision">,
+    signal: AbortSignal,
+  ) {
+    const bound = this.account;
+    const result = await this.command(
+      "document-reconcile",
+      { target: context.target, reservation },
+      signal,
+    );
+    try {
+      const preview = await lifecyclePreview(result, context);
+      signal.throwIfAborted();
+      if (this.account !== bound) throw changed();
+      if (
+        preview.status !== "deleted" ||
+        "status" in preview.reservation ||
+        preview.reservation.containsTarget
+      )
+        throw invalid();
+      return preview;
+    } catch (error) {
+      if (error instanceof PolicyError) throw error;
+      throw invalid();
+    }
   }
   async list(after: string | null, signal: AbortSignal) {
     const result = await this.command("list", after ? { after } : {}, signal);

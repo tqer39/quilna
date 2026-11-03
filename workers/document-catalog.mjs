@@ -11,6 +11,14 @@ import {
   verifyDocumentIdentity,
 } from "../src/source-document.ts";
 
+import {
+  lifecycleKey,
+  lifecycleCommand,
+  lifecycleState,
+  changeLifecycle,
+  lifecycleExpired,
+} from "../src/document-lifecycle.mjs";
+
 const integer = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const retained = z
   .object({
@@ -46,12 +54,23 @@ const sizeOf = (value) => new TextEncoder().encode(value).byteLength;
 // internal core, not an HTTP endpoint: callers must supply trusted authorization
 // and acquisition adapters. Never pass a request's body as the loader result.
 export class DocumentCatalog {
-  constructor(storage, { scope, sourceURL, authorize, load, now = Date.now }) {
+  constructor(
+    storage,
+    {
+      scope,
+      sourceURL,
+      authorize,
+      authorizeManagement = async () => false,
+      load,
+      now = Date.now,
+    },
+  ) {
     if (
       typeof scope !== "string" ||
       !scope ||
       scope.length > 200 ||
       typeof authorize !== "function" ||
+      typeof authorizeManagement !== "function" ||
       typeof load !== "function"
     )
       throw Error("document-unconfigured");
@@ -60,6 +79,7 @@ export class DocumentCatalog {
       scope,
       sourceURL: cloudFeedURL(sourceURL).href,
       authorize,
+      authorizeManagement,
       load,
       now,
     });
@@ -73,6 +93,150 @@ export class DocumentCatalog {
     )
       throw Error("document-unavailable");
   }
+  /** Require the separate manager capability before reading lifecycle metadata. */
+  async managementAccess(principal) {
+    if (
+      typeof principal !== "string" ||
+      !principal ||
+      (await this.authorizeManagement(
+        principal,
+        this.scope,
+        this.sourceURL,
+      )) !== true
+    )
+      throw Error("document-unavailable");
+  }
+  /** Validate lifecycle state in the caller transaction and return its publication fence. */
+  async available(tx, id) {
+    const state = lifecycleState(await tx.get(lifecycleKey), id);
+    if (state.status !== "active" || lifecycleExpired(state, this.now()))
+      throw Error("document-unavailable");
+    return state.revision;
+  }
+  async deliveryAccess(principal) {
+    await this.access(principal);
+    const id = await this.identity;
+    await this.storage.transaction((tx) => this.available(tx, id));
+  }
+  /** Return only internal deletion proof for an authorized source, never its audit. */
+  async permanentDeletion(principal) {
+    await this.access(principal);
+    const id = await this.identity;
+    const proof = await this.storage.transaction(async (tx) => {
+      const lifecycle = lifecycleState(await tx.get(lifecycleKey), id);
+      if (lifecycle.status !== "deleted") return null;
+      if ((await tx.get(key)) !== undefined) throw Error("document-invalid");
+      return { id, scope: this.scope, sourceURL: this.sourceURL };
+    });
+    await this.access(principal);
+    return proof;
+  }
+  /** Combine one consistent catalog/lifecycle snapshot without exposing body parts. */
+  lifecycleSummary(lifecycle, catalog) {
+    const expired = lifecycleExpired(lifecycle, this.now());
+    return {
+      id: lifecycle.id,
+      scope: this.scope,
+      sourceURL: this.sourceURL,
+      revision: lifecycle.revision,
+      status: lifecycle.status,
+      expiresAt: lifecycle.expiresAt,
+      expired,
+      cleanupPending:
+        expired &&
+        lifecycle.status !== "deleted" &&
+        catalog.versions.length > 0,
+      catalogRevision: catalog.revision,
+      versionCount: catalog.versions.length,
+      bytes: catalog.bytes,
+      operations: lifecycle.operations,
+    };
+  }
+  /** Read management state atomically and recheck authority before delivery. */
+  async lifecyclePreview(principal) {
+    await this.managementAccess(principal);
+    const id = await this.identity;
+    const result = await this.storage.transaction(async (tx) => {
+      const lifecycle = lifecycleState(await tx.get(lifecycleKey), id);
+      const catalog = this.state(await tx.get(key), id);
+      return this.lifecycleSummary(lifecycle, catalog);
+    });
+    await this.managementAccess(principal);
+    return result;
+  }
+  /** Apply an authorized command only to an acquired source or retained tombstone. */
+  async manageLifecycle(principal, input) {
+    await this.managementAccess(principal);
+    const command = lifecycleCommand.parse(input),
+      id = await this.identity;
+    await this.managementAccess(principal);
+    return this.storage.transaction(async (tx) => {
+      const rawLifecycle = await tx.get(lifecycleKey),
+        rawCatalog = await tx.get(key);
+      // Management cannot create new retained sources outside acquisition's
+      // reservation limit. Existing leases and deletion tombstones remain valid.
+      if (rawLifecycle === undefined && rawCatalog === undefined)
+        throw Error("document-unavailable");
+      const lifecycle = lifecycleState(rawLifecycle, id);
+      let catalog = this.state(rawCatalog, id);
+      return this.applyLifecycle(tx, id, lifecycle, catalog, command);
+    });
+  }
+  /** Commit the decision, body deletion and alarm together; replays never mutate. */
+  async applyLifecycle(tx, id, lifecycle, catalog, command) {
+    const result = changeLifecycle(
+      lifecycle,
+      command,
+      catalog.revision,
+      this.now(),
+    );
+    if (!result.replayed) {
+      if (command.action === "purge") {
+        for (const version of catalog.versions)
+          for (let part = 0; part < version.parts; part++)
+            await tx.delete(partKey(version.id, part));
+        await tx.delete(key);
+        catalog = this.state(undefined, id);
+      } else if (catalog.lease) {
+        catalog.lease = null;
+        await tx.put(key, catalog);
+      }
+      await tx.put(lifecycleKey, lifecycle);
+      // Persist the wake-up atomically with the explicit retention decision.
+      if (lifecycle.expiresAt !== null && lifecycle.status !== "deleted")
+        await tx.setAlarm(
+          Math.max(this.now(), Date.parse(lifecycle.expiresAt)),
+        );
+      else await tx.deleteAlarm();
+    }
+    return { ...result, current: this.lifecycleSummary(lifecycle, catalog) };
+  }
+  /** Reconcile the current deadline so a stale wakeup cannot delete extended content. */
+  async retentionAlarm() {
+    const id = await this.identity;
+    return this.storage.transaction(async (tx) => {
+      const lifecycle = lifecycleState(await tx.get(lifecycleKey), id);
+      const catalog = this.state(await tx.get(key), id);
+      if (lifecycle.status === "deleted" || lifecycle.expiresAt === null) {
+        await tx.deleteAlarm();
+        return;
+      }
+      if (!lifecycleExpired(lifecycle, this.now())) {
+        await tx.setAlarm(Date.parse(lifecycle.expiresAt));
+        return;
+      }
+      // This executes a previously authorized retention decision, not a new grant.
+      // Re-read the current deadline/revisions in the same transaction as deletion.
+      return this.applyLifecycle(tx, id, lifecycle, catalog, {
+        operationId: crypto.randomUUID(),
+        action: "purge",
+        expectedRevision: lifecycle.revision,
+        expectedCatalogRevision: catalog.revision,
+        reason: "Scheduled cleanup after the explicit retention deadline",
+      });
+    });
+  }
+
   state(value, id) {
     const state = schema.parse(
       value === undefined
@@ -158,6 +322,7 @@ export class DocumentCatalog {
   async release(token) {
     const id = await this.identity;
     await this.storage.transaction(async (tx) => {
+      lifecycleState(await tx.get(lifecycleKey), id);
       const state = this.state(await tx.get(key), id);
       if (state.lease?.token === token) {
         state.lease = null;
@@ -171,6 +336,7 @@ export class DocumentCatalog {
     if (typeof force !== "boolean") throw Error("document-request");
     const id = await this.identity;
     const work = await this.storage.transaction(async (tx) => {
+      const lifecycleRevision = await this.available(tx, id);
       const state = this.state(await tx.get(key), id),
         now = this.now();
       if (state.lease && state.lease.expiresAt > now)
@@ -184,19 +350,19 @@ export class DocumentCatalog {
         Date.parse(state.checkedAt) > now - 86_400_000 &&
         Date.parse(state.checkedAt) <= now
       )
-        return { state, current };
+        return { state, current, lifecycleRevision };
       state.lease = { token: crypto.randomUUID(), expiresAt: now + 30_000 };
       await tx.put(key, state);
-      return { state, current, token: state.lease.token };
+      return { state, current, token: state.lease.token, lifecycleRevision };
     });
     if (work.pending) {
-      await this.access(principal);
+      await this.deliveryAccess(principal);
       return { status: "pending", retryAt: work.pending };
     }
     try {
       await this.verified(work.current);
       if (!work.token) {
-        await this.access(principal);
+        await this.deliveryAccess(principal);
         return this.result(work.state, work.current, true);
       }
       // No network or digest work inside storage transactions. The persisted
@@ -264,7 +430,9 @@ export class DocumentCatalog {
         parts = Math.ceil(serialized.length / 16000);
       if (size > 4_000_000 || parts > 250) throw Error("document-capacity");
       await this.access(principal);
-      return await this.storage.transaction(async (tx) => {
+      const result = await this.storage.transaction(async (tx) => {
+        if ((await this.available(tx, id)) !== work.lifecycleRevision)
+          throw Error("document-conflict");
         const state = this.state(await tx.get(key), id);
         if (
           state.lease?.token !== work.token ||
@@ -303,9 +471,12 @@ export class DocumentCatalog {
         state.lease = null;
         if (validators) state.validators = validators;
         else delete state.validators;
+        await this.available(tx, id);
         await tx.put(key, schema.parse(state));
         return this.result(state, retainedVersion, exists);
       });
+      await this.deliveryAccess(principal);
+      return result;
     } catch (error) {
       if (work.token) await this.release(work.token).catch(() => {});
       throw error;
@@ -315,17 +486,19 @@ export class DocumentCatalog {
     await this.access(principal);
     const id = await this.identity;
     const version = await this.storage.transaction(async (tx) => {
+      await this.available(tx, id);
       const state = this.state(await tx.get(key), id);
       return this.stored(tx, state, versionId ?? state.currentVersionId);
     });
     await this.verified(version);
-    await this.access(principal);
+    await this.deliveryAccess(principal);
     return version;
   }
   async history(principal, after) {
     await this.access(principal);
     const id = await this.identity;
     const result = await this.storage.transaction(async (tx) => {
+      await this.available(tx, id);
       const state = this.state(await tx.get(key), id),
         versions = [...state.versions].reverse();
       const start =
@@ -336,7 +509,7 @@ export class DocumentCatalog {
         .map(({ id, createdAt }) => ({ id, createdAt }));
       return { versions: page, more: start + page.length < versions.length };
     });
-    await this.access(principal);
+    await this.deliveryAccess(principal);
     return result;
   }
 }

@@ -1,3 +1,4 @@
+import { documentLifecycleView } from "./document-lifecycle-view";
 import { button, el } from "./ui";
 import { sourceURL } from "./feed-discovery";
 import {
@@ -66,6 +67,8 @@ export function documentPolicySettings(client = new DocumentPolicyClient()) {
     editor.replaceChildren();
     recovery.replaceChildren();
     list.replaceChildren();
+    privatePanel.replaceChildren();
+    privateAddress.value = "";
     notice.textContent =
       "編集を破棄しました。接続するアカウントを確認してください。";
   });
@@ -86,7 +89,38 @@ export function documentPolicySettings(client = new DocumentPolicyClient()) {
     notice.textContent =
       "本文を提供できる根拠を確認した出典だけ登録してください。初期状態は無効です。";
   });
+  const privateAddress = el("input"),
+    privateLabel = el("label", "自分用本文の記事URL"),
+    privatePanel = el("div");
+  privateAddress.type = "url";
+  privateAddress.maxLength = 2048;
+  privateLabel.append(privateAddress);
+  const privateOpen = button("自分用本文の管理を開く", () => {
+    if (busy || !bound || (privatePanel.childElementCount > 0 && !discard()))
+      return;
+    try {
+      const url = sourceURL(privateAddress.value);
+      if (!url.startsWith("https://")) throw Error();
+      privatePanel.replaceChildren(
+        documentLifecycleView(
+          client,
+          {
+            target: { audience: "private", url },
+            scope: `private:${bound}`,
+            url,
+          },
+          run,
+        ),
+      );
+    } catch {
+      notice.textContent =
+        "自分用として取得した公開HTTPSの記事URLを入力してください。";
+    }
+  });
   workspace.append(
+    privateLabel,
+    privateOpen,
+    privatePanel,
     identityLabel,
     el(
       "p",
@@ -111,13 +145,24 @@ export function documentPolicySettings(client = new DocumentPolicyClient()) {
     notice,
     workspace,
   );
+  function hasDraft() {
+    return dirty || !!root.querySelector('[data-lifecycle-dirty="true"]');
+  }
   function discard() {
     return (
-      !dirty ||
+      !hasDraft() ||
       window.confirm(
         "編集中の内容を破棄しますか？ 保存済みの共有設定は変更しません。",
       )
     );
+  }
+  /** Keep an unconfirmed operation mounted until its result can be reconciled. */
+  function canReplaceLifecycle(container: HTMLElement) {
+    if (!container.querySelector('[data-lifecycle-pending="true"]'))
+      return true;
+    notice.textContent =
+      "本文操作の結果を先に確認してください。同じ操作の再試行か、保存本文の状態確認で結果を確認できます。";
+    return false;
   }
   function controls() {
     for (const b of Array.from(
@@ -434,6 +479,7 @@ export function documentPolicySettings(client = new DocumentPolicyClient()) {
             "この内容を保存",
             () =>
               void run(async (signal) => {
+                if (!canReplaceLifecycle(editor)) return;
                 const result = await client.save(input, saved, signal);
                 renderEditor(result);
                 next = null;
@@ -500,12 +546,28 @@ export function documentPolicySettings(client = new DocumentPolicyClient()) {
     form.append(fields, review, reread, preview);
     editor.append(form);
     if (saved) {
+      editor.append(
+        documentLifecycleView(
+          client,
+          {
+            target: {
+              audience: "shared",
+              policyId: saved.id,
+              managementRevision: saved.managementRevision,
+            },
+            scope: `shared:${saved.id}:${saved.policyRevision}`,
+            url: saved.url,
+          },
+          run,
+        ),
+      );
       const history = el("section"),
         entries = el("div"),
         detail = el("div");
       history.setAttribute("aria-label", "共有設定の変更履歴");
       /** Replace the history page and detail pane, preserving the current draft. */
       const show = async (before: number | null, signal: AbortSignal) => {
+        if (!canReplaceLifecycle(detail)) return;
         const page = await client.history(saved.id, before, signal);
         entries.replaceChildren();
         detail.replaceChildren();
@@ -522,6 +584,7 @@ export function documentPolicySettings(client = new DocumentPolicyClient()) {
               `変更 #${entry.revision} を読む`,
               () =>
                 void run(async (s) => {
+                  if (!canReplaceLifecycle(detail)) return;
                   const result = await client.revision(
                     saved.id,
                     entry.revision,
@@ -568,6 +631,21 @@ export function documentPolicySettings(client = new DocumentPolicyClient()) {
                       ),
                     );
                   detail.append(
+                    documentLifecycleView(
+                      client,
+                      {
+                        target: {
+                          audience: "shared",
+                          policyId: p.id,
+                          managementRevision: p.managementRevision,
+                        },
+                        scope: `shared:${p.id}:${p.policyRevision}`,
+                        url: p.url,
+                      },
+                      run,
+                    ),
+                  );
+                  detail.append(
                     button(
                       "この記録から下書きを作る",
                       () =>
@@ -613,7 +691,7 @@ export function documentPolicySettings(client = new DocumentPolicyClient()) {
     controls();
   }
   window.addEventListener("beforeunload", (event) => {
-    if (dirty) {
+    if (hasDraft()) {
       event.preventDefault();
       event.returnValue = "";
     }

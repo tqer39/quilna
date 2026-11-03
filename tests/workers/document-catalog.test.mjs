@@ -39,13 +39,27 @@ class Storage {
   puts = 0;
   failAt = Infinity;
   reads = 0;
+  alarm = null;
   transaction(update) {
     const operation = this.queue.then(async () => {
       const next = structuredClone(this.data);
+      let alarm = this.alarm;
       const result = await update({
+        setAlarm: async (time) => {
+          if (++this.puts === this.failAt) throw Error("disk-full");
+          alarm = time;
+        },
+        deleteAlarm: async () => {
+          if (++this.puts === this.failAt) throw Error("disk-full");
+          alarm = null;
+        },
         get: async (key) => {
           this.reads++;
           return structuredClone(next.get(key));
+        },
+        delete: async (key) => {
+          if (++this.puts === this.failAt) throw Error("disk-full");
+          return next.delete(key);
         },
         put: async (key, value) => {
           if (++this.puts === this.failAt) throw Error("disk-full");
@@ -53,6 +67,7 @@ class Storage {
         },
       });
       this.data = next;
+      this.alarm = alarm;
       return result;
     });
     this.queue = operation.catch(() => {});
@@ -418,4 +433,450 @@ test("explicit revalidation of legacy formatting fetches HTML once and retains t
     (await f.catalog.read("alice", first.version.id)).content,
     legacy,
   );
+});
+
+const management = { authorizeManagement: async (p) => p === "operator" };
+const command = (action, expectedRevision, extra = {}) => ({
+  operationId: crypto.randomUUID(),
+  action,
+  expectedRevision,
+  reason: "Synthetic source lifecycle decision",
+  ...extra,
+});
+
+test("lifecycle management is separate from reading and preserves versions on withdrawal/restore", async () => {
+  const f = fixture(management);
+  const retained = await f.catalog.acquire("alice");
+  const before = structuredClone(f.storage.data),
+    reads = f.storage.reads;
+  await assert.rejects(
+    f.catalog.lifecyclePreview("alice"),
+    /document-unavailable/,
+  );
+  await assert.rejects(
+    f.catalog.manageLifecycle("alice", command("withdraw", 0)),
+    /document-unavailable/,
+  );
+  assert.equal(f.storage.reads, reads);
+  assert.deepEqual(f.storage.data, before);
+  const initial = await f.catalog.lifecyclePreview("operator");
+  assert.equal(initial.revision, 0);
+  assert.equal(initial.catalogRevision, retained.document.revision);
+  assert.equal(initial.versionCount, 1);
+  await f.catalog.manageLifecycle("operator", command("withdraw", 0));
+  for (const action of [
+    () => f.restart().read("alice"),
+    () => f.catalog.history("alice"),
+    () => f.catalog.acquire("alice"),
+  ])
+    await assert.rejects(action(), /document-unavailable/);
+  await f.restart().manageLifecycle("operator", command("restore", 1));
+  assert.deepEqual(await f.catalog.read("alice"), retained.version);
+  assert.equal(f.calls(), 1);
+});
+
+test("lifecycle fences a loader even when withdrawal is restored before the delayed result", async () => {
+  const started = gate(),
+    finish = gate();
+  const f = fixture({
+    ...management,
+    load: async () => {
+      started.resolve();
+      await finish.promise;
+      return { content: body() };
+    },
+  });
+  const pending = f.catalog.acquire("alice");
+  const rejected = assert.rejects(
+    pending,
+    /document-conflict|document-unavailable/,
+  );
+  await started.promise;
+  await f.catalog.manageLifecycle("operator", command("withdraw", 0));
+  await f.catalog.manageLifecycle("operator", command("restore", 1));
+  finish.resolve();
+  await rejected;
+  assert.equal((await f.catalog.lifecyclePreview("operator")).versionCount, 0);
+});
+
+test("retention expiry denies cached reads without silently deleting stored evidence", async () => {
+  const f = fixture(management);
+  const old = await f.catalog.acquire("alice");
+  await f.catalog.manageLifecycle(
+    "operator",
+    command("retention", 0, { expiresAt: "2026-10-30T01:00:01.000Z" }),
+  );
+  f.advance(1000);
+  for (const action of [
+    () => f.catalog.read("alice"),
+    () => f.catalog.history("alice"),
+    () => f.catalog.acquire("alice"),
+  ])
+    await assert.rejects(action(), /document-unavailable/);
+  const preview = await f.catalog.lifecyclePreview("operator");
+  assert.equal(preview.expired, true);
+  assert.equal(preview.cleanupPending, true);
+  assert.equal(preview.versionCount, 1);
+  await assert.rejects(
+    f.catalog.manageLifecycle("operator", command("restore", 1)),
+    /document-conflict/,
+  );
+  await f.catalog.manageLifecycle(
+    "operator",
+    command("retention", 1, { expiresAt: null }),
+  );
+  assert.deepEqual(await f.restart().read("alice"), old.version);
+});
+
+test("purge is revision-bound, atomic, idempotent after restart, and cannot recreate bodies", async () => {
+  let n = 1;
+  const f = fixture({
+    ...management,
+    load: async () => ({ content: body(n++) }),
+  });
+  const old = await f.catalog.acquire("alice");
+  const oldPreview = await f.catalog.lifecyclePreview("operator");
+  await f.catalog.acquire("alice", { force: true });
+  await f.catalog.manageLifecycle("operator", command("withdraw", 0));
+  await assert.rejects(
+    f.catalog.manageLifecycle(
+      "operator",
+      command("purge", 1, {
+        expectedCatalogRevision: oldPreview.catalogRevision,
+      }),
+    ),
+    /document-conflict/,
+  );
+  const preview = await f.catalog.lifecyclePreview("operator");
+  const purge = command("purge", 1, {
+    expectedCatalogRevision: preview.catalogRevision,
+  });
+  const before = structuredClone(f.storage.data);
+  f.storage.failAt = f.storage.puts + 2;
+  await assert.rejects(
+    f.catalog.manageLifecycle("operator", purge),
+    /disk-full/,
+  );
+  assert.deepEqual(f.storage.data, before);
+  f.storage.failAt = Infinity;
+  const result = await f.catalog.manageLifecycle("operator", purge);
+  assert.equal(result.current.status, "deleted");
+  assert.equal(result.current.versionCount, 0);
+  assert.equal(
+    [...f.storage.data.keys()].filter((k) => k.startsWith("document:version:"))
+      .length,
+    0,
+  );
+  const deleted = structuredClone(f.storage.data);
+  const retry = await f.restart().manageLifecycle("operator", purge);
+  assert.equal(retry.replayed, true);
+  assert.deepEqual(retry.operation, result.operation);
+  assert.deepEqual(f.storage.data, deleted);
+  await assert.rejects(
+    f.catalog.manageLifecycle("operator", {
+      ...purge,
+      reason: "Different operation",
+    }),
+    /document-conflict/,
+  );
+  await assert.rejects(
+    f.catalog.manageLifecycle("operator", command("restore", 2)),
+    /document-unavailable/,
+  );
+  await assert.rejects(f.catalog.acquire("alice"), /document-unavailable/);
+  await assert.rejects(
+    f.catalog.read("alice", old.version.id),
+    /document-unavailable/,
+  );
+  assert.deepEqual(f.storage.data, deleted);
+});
+
+test("a lifecycle change during final authorization blocks a previously loaded response", async () => {
+  const entered = gate(),
+    finish = gate();
+  let gated = false,
+    reads = 0;
+  const f = fixture({
+    ...management,
+    authorize: async () => {
+      if (gated && ++reads === 2) {
+        entered.resolve();
+        await finish.promise;
+      }
+      return true;
+    },
+  });
+  await f.catalog.acquire("alice");
+  gated = true;
+  const pending = f.catalog.read("alice");
+  const rejected = assert.rejects(pending, /document-unavailable/);
+  await entered.promise;
+  await f.catalog.manageLifecycle("operator", command("withdraw", 0));
+  finish.resolve();
+  await rejected;
+});
+
+test("expiry and purge fence a delayed successful load while preserving the deletion record", async () => {
+  for (const purge of [false, true]) {
+    const started = gate(),
+      finish = gate();
+    let delay = false;
+    const f = fixture({
+      ...management,
+      load: async () => {
+        if (delay) {
+          started.resolve();
+          await finish.promise;
+        }
+        return { content: body(delay ? 2 : 1) };
+      },
+    });
+    await f.catalog.acquire("alice");
+    await f.catalog.manageLifecycle(
+      "operator",
+      command("retention", 0, { expiresAt: "2026-10-30T01:00:01.000Z" }),
+    );
+    delay = true;
+    const pending = f.catalog.acquire("alice", { force: true });
+    const rejected = assert.rejects(
+      pending,
+      /document-unavailable|document-conflict/,
+    );
+    await started.promise;
+    f.advance(1000);
+    if (purge) {
+      const preview = await f.catalog.lifecyclePreview("operator");
+      await f.catalog.manageLifecycle(
+        "operator",
+        command("purge", 1, {
+          expectedCatalogRevision: preview.catalogRevision,
+        }),
+      );
+    }
+    finish.resolve();
+    await rejected;
+    const preview = await f.restart().lifecyclePreview("operator");
+    assert.equal(preview.status, purge ? "deleted" : "active");
+    assert.equal(preview.versionCount, purge ? 0 : 1);
+    if (purge) assert.equal(f.storage.data.has(key), false);
+  }
+});
+
+test("lifecycle is default-deny for managers and corrupt or future state is never reset", async () => {
+  const denied = fixture();
+  await assert.rejects(
+    denied.catalog.lifecyclePreview("alice"),
+    /document-unavailable/,
+  );
+  assert.equal(denied.storage.reads, 0);
+  const f = fixture(management);
+  await f.catalog.acquire("alice");
+  await f.catalog.manageLifecycle("operator", command("withdraw", 0));
+  const valid = structuredClone(f.storage.data);
+  for (const value of [
+    null,
+    {},
+    { ...valid.get("document:lifecycle:v1"), schema: 99 },
+    { ...valid.get("document:lifecycle:v1"), status: "active" },
+  ]) {
+    f.storage.data = structuredClone(valid);
+    f.storage.data.set("document:lifecycle:v1", value);
+    const before = structuredClone(f.storage.data);
+    await assert.rejects(f.restart().read("alice"), /document-invalid/);
+    await assert.rejects(
+      f.restart().manageLifecycle("operator", command("restore", 1)),
+      /document-invalid/,
+    );
+    assert.deepEqual(f.storage.data, before);
+  }
+});
+
+test("management revision conflicts and audit exhaustion preserve all previous decisions", async () => {
+  const f = fixture(management);
+  const acquired = await f.catalog.acquire("alice");
+  const outcomes = await Promise.allSettled([
+    f.catalog.manageLifecycle("operator", command("withdraw", 0)),
+    f.catalog.manageLifecycle("operator", command("withdraw", 0)),
+  ]);
+  assert.equal(outcomes.filter((r) => r.status === "fulfilled").length, 1);
+  assert.match(
+    outcomes.find((r) => r.status === "rejected").reason.message,
+    /document-conflict/,
+  );
+  for (let n = 1; n < 63; n++)
+    await f.catalog.manageLifecycle(
+      "operator",
+      command(n % 2 ? "restore" : "withdraw", n),
+    );
+  const before = structuredClone(f.storage.data);
+  await assert.rejects(
+    f.catalog.manageLifecycle("operator", command("withdraw", 63)),
+    /document-capacity/,
+  );
+  assert.deepEqual(f.storage.data, before);
+  await f.catalog.manageLifecycle(
+    "operator",
+    command("purge", 63, {
+      expectedCatalogRevision: acquired.document.revision,
+    }),
+  );
+  assert.equal(
+    (await f.restart().lifecyclePreview("operator")).operations.length,
+    64,
+  );
+});
+
+test("management cannot create retained records for a source that was never acquired", async () => {
+  const f = fixture(management);
+  await f.catalog.lifecyclePreview("operator");
+  assert.equal(f.storage.data.size, 0);
+  for (const action of ["withdraw", "restore", "retention", "purge"]) {
+    const extra =
+      action === "retention"
+        ? { expiresAt: null }
+        : action === "purge"
+          ? { expectedCatalogRevision: 0 }
+          : {};
+    await assert.rejects(
+      f.catalog.manageLifecycle("operator", command(action, 0, extra)),
+      /document-unavailable/,
+    );
+    assert.equal(f.storage.data.size, 0);
+    assert.equal(f.storage.puts, 0);
+  }
+});
+
+test("retention wakeups follow the current decision and commit deletion once with retry-safe rollback", async () => {
+  const f = fixture(management);
+  await f.catalog.acquire("alice");
+  const deadline = "2026-10-30T01:00:01.000Z";
+  const retention = command("retention", 0, { expiresAt: deadline });
+  const before = structuredClone(f.storage.data);
+  f.storage.failAt = f.storage.puts + 2;
+  await assert.rejects(
+    f.catalog.manageLifecycle("operator", retention),
+    /disk-full/,
+  );
+  assert.deepEqual(f.storage.data, before);
+  assert.equal(f.storage.alarm, null);
+  f.storage.failAt = Infinity;
+  await f.catalog.manageLifecycle("operator", retention);
+  assert.equal(f.storage.alarm, Date.parse(deadline));
+  f.advance(1000);
+  const later = "2026-10-30T01:00:03.000Z";
+  await f.catalog.manageLifecycle(
+    "operator",
+    command("retention", 1, { expiresAt: later }),
+  );
+  // A queued old alarm must not delete after a deadline extension.
+  await f.restart().retentionAlarm();
+  assert.equal(f.storage.alarm, Date.parse(later));
+  assert.equal((await f.catalog.lifecyclePreview("operator")).versionCount, 1);
+  await f.catalog.manageLifecycle(
+    "operator",
+    command("retention", 2, { expiresAt: null }),
+  );
+  await f.restart().retentionAlarm();
+  assert.equal(f.storage.alarm, null);
+  assert.equal((await f.catalog.lifecyclePreview("operator")).versionCount, 1);
+  await f.catalog.manageLifecycle(
+    "operator",
+    command("retention", 3, { expiresAt: later }),
+  );
+  f.advance(2000);
+  const due = structuredClone(f.storage.data);
+  f.storage.failAt = f.storage.puts + 2;
+  await assert.rejects(f.catalog.retentionAlarm(), /disk-full/);
+  assert.deepEqual(f.storage.data, due);
+  assert.equal(f.storage.alarm, Date.parse(later));
+  f.storage.failAt = Infinity;
+  await f.restart().retentionAlarm();
+  assert.deepEqual([...f.storage.data.keys()], ["document:lifecycle:v1"]);
+  assert.equal(f.storage.alarm, null);
+  const deleted = structuredClone(f.storage.data);
+  await f.restart().retentionAlarm();
+  assert.deepEqual(f.storage.data, deleted);
+  assert.equal(
+    (await f.catalog.lifecyclePreview("operator")).status,
+    "deleted",
+  );
+});
+
+test("audit capacity reserves withdrawal and purge for an active source without expiry", async () => {
+  const f = fixture(management);
+  await f.catalog.acquire("alice");
+  for (let n = 0; n < 62; n++)
+    await f.catalog.manageLifecycle(
+      "operator",
+      command("retention", n, { expiresAt: null }),
+    );
+  const before = structuredClone(f.storage.data);
+  for (const action of ["restore", "retention"])
+    await assert.rejects(
+      f.catalog.manageLifecycle(
+        "operator",
+        command(action, 62, action === "retention" ? { expiresAt: null } : {}),
+      ),
+      /document-capacity/,
+    );
+  assert.deepEqual(f.storage.data, before);
+  await f.restart().read("alice");
+  await f.catalog.manageLifecycle("operator", command("withdraw", 62));
+  const preview = await f.restart().lifecyclePreview("operator");
+  await f.catalog.manageLifecycle(
+    "operator",
+    command("purge", 63, { expectedCatalogRevision: preview.catalogRevision }),
+  );
+  const deleted = await f.restart().lifecyclePreview("operator");
+  assert.equal(deleted.status, "deleted");
+  assert.equal(deleted.operations.length, 64);
+  assert.deepEqual(
+    deleted.operations.slice(0, 62),
+    before.get("document:lifecycle:v1").operations,
+  );
+  assert.equal(deleted.bytes, 0);
+  await assert.rejects(f.restart().read("alice"), /document-unavailable/);
+});
+
+test("permanent deletion proof requires a tombstone, no catalog and current source authorization", async () => {
+  let allowed = true,
+    gated = false,
+    checks = 0;
+  const started = gate(),
+    finish = gate();
+  const f = fixture({
+    ...management,
+    authorize: async () => {
+      if (gated && ++checks === 2) {
+        started.resolve();
+        await finish.promise;
+      }
+      return allowed;
+    },
+  });
+  assert.equal(await f.catalog.permanentDeletion("alice"), null);
+  await f.catalog.acquire("alice");
+  const retained = structuredClone(f.storage.data.get(key));
+  await f.catalog.manageLifecycle("operator", command("withdraw", 0));
+  assert.equal(await f.catalog.permanentDeletion("alice"), null);
+  await f.catalog.manageLifecycle(
+    "operator",
+    command("purge", 1, { expectedCatalogRevision: retained.revision }),
+  );
+  const proof = await f.catalog.permanentDeletion("alice");
+  assert.deepEqual(Object.keys(proof).sort(), ["id", "scope", "sourceURL"]);
+  assert.equal(proof.sourceURL, url);
+  f.storage.data.set(key, retained);
+  await assert.rejects(
+    f.catalog.permanentDeletion("alice"),
+    /document-invalid/,
+  );
+  f.storage.data.delete(key);
+  gated = true;
+  const pending = f.catalog.permanentDeletion("alice");
+  const denied = assert.rejects(pending, /document-unavailable/);
+  await started.promise;
+  allowed = false;
+  finish.resolve();
+  await denied;
 });

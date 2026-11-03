@@ -1,3 +1,8 @@
+import { documentIdentity } from "../../src/source-document";
+import {
+  lifecycleState,
+  changeLifecycle,
+} from "../../src/document-lifecycle.mjs";
 import { test, expect, type Page } from "@playwright/test";
 import type { DocumentPolicy } from "../../src/document-policy-client";
 const account = "a".repeat(64),
@@ -24,7 +29,19 @@ function saved(): DocumentPolicy {
  * failures and account changes without granting real access or calling a service.
  */
 async function fixture(page: Page, initial: DocumentPolicy | null = null) {
+  const documentId = await documentIdentity(`shared:${id}:1`, url);
   const state = {
+    lifecycle: lifecycleState(undefined, documentId),
+    reservation: {
+      reserved: true,
+      token: crypto.randomUUID() as string | null,
+      revision: 1,
+      scopeCount: 1,
+      legacy: false,
+      containsTarget: true,
+    },
+    recoveries: [] as Record<string, unknown>[],
+    lifecycleChanges: [] as Record<string, unknown>[],
     policy: initial,
     history: initial ? [structuredClone(initial)] : ([] as DocumentPolicy[]),
     enabled: true,
@@ -53,6 +70,82 @@ async function fixture(page: Page, initial: DocumentPolicy | null = null) {
       "synthetic-csrf-token-for-policy",
     );
     const body = r.request().postDataJSON();
+    if (
+      ["document-preview", "document-change", "document-reconcile"].includes(
+        action,
+      )
+    ) {
+      const scope =
+        body.target.audience === "private"
+          ? `private:${account}`
+          : `shared:${id}:1`;
+      if (body.target.audience === "private") {
+        expect(body.target).toEqual({ audience: "private", url });
+        const privateId = await documentIdentity(scope, url);
+        if (!state.lifecycle.operations.length)
+          state.lifecycle = lifecycleState(undefined, privateId);
+        expect(state.lifecycle.id).toBe(privateId);
+      } else
+        expect(body.target).toEqual({
+          audience: "shared",
+          policyId: id,
+          managementRevision: initial!.managementRevision,
+        });
+      const summary = () => ({
+        ...state.lifecycle,
+        scope,
+        sourceURL: url,
+        expired:
+          state.lifecycle.expiresAt !== null &&
+          Date.parse(state.lifecycle.expiresAt) <= Date.now(),
+        cleanupPending:
+          state.lifecycle.status !== "deleted" &&
+          state.lifecycle.expiresAt !== null &&
+          Date.parse(state.lifecycle.expiresAt) <= Date.now(),
+        catalogRevision: state.lifecycle.status === "deleted" ? 0 : 1,
+        versionCount: state.lifecycle.status === "deleted" ? 0 : 1,
+        bytes: state.lifecycle.status === "deleted" ? 0 : 1234,
+        reservation:
+          state.mode === "reservation-unavailable"
+            ? { status: "unavailable" }
+            : structuredClone(state.reservation),
+      });
+      if (action === "document-preview") {
+        const value = summary();
+        if (state.mode === "lifecycle-wrong-scope")
+          value.scope = `private:${other}`;
+        if (state.mode === "lifecycle-logout") state.account = other;
+        return r.fulfill({ json: { account, ...value } });
+      }
+      if (action === "document-reconcile") {
+        expect(state.lifecycle.status).toBe("deleted");
+        state.recoveries.push(body.reservation);
+        state.reservation = {
+          reserved: false,
+          token: null,
+          revision: 0,
+          scopeCount: 0,
+          legacy: false,
+          containsTarget: false,
+        };
+        if (state.mode === "recovery-lost") return r.abort("failed");
+        return r.fulfill({ json: { account, ...summary() } });
+      }
+      state.lifecycleChanges.push(body.command);
+      if (state.mode === "lifecycle-conflict")
+        return r.fulfill({
+          status: 409,
+          json: { account, status: "document-conflict" },
+        });
+      const outcome = changeLifecycle(
+        state.lifecycle,
+        body.command,
+        summary().catalogRevision,
+        Date.now(),
+      );
+      if (state.mode === "lifecycle-lost") return r.abort("failed");
+      return r.fulfill({ json: { account, ...outcome, current: summary() } });
+    }
     if (action === "list")
       return r.fulfill({
         json: {
@@ -753,3 +846,381 @@ for (const design of ["studio", "editorial", "focus"]) {
     expect(state.saves).toBe(0);
   });
 }
+
+for (const design of ["studio", "editorial", "focus"]) {
+  test(`${design} lifecycle preview binds confirmation, preserves copies and shows permanent deletion`, async ({
+    page,
+  }, info) => {
+    await page.addInitScript(
+      (design) => localStorage.setItem("quilna.reader.design.v1", design),
+      design,
+    );
+    const { root, state } = await fixture(page, saved());
+    await page.setViewportSize({ width: 320, height: 800 });
+    await edit(root);
+    const panel = root.getByRole("region", {
+      name: "保存本文の管理",
+      exact: true,
+    });
+    await panel
+      .getByRole("button", { name: "保存本文の状態を確認", exact: true })
+      .click();
+    await expect(panel).toContainText("1版 · 1,234バイト");
+    await panel
+      .getByLabel("本文管理の理由", { exact: true })
+      .fill("配信条件を確認するため");
+    await panel
+      .getByRole("button", { name: "本文の提供を停止", exact: true })
+      .click();
+    await expect(
+      panel.getByRole("heading", { name: "本文管理の確認" }),
+    ).toBeVisible();
+    expect(state.lifecycleChanges).toHaveLength(0);
+    await panel
+      .getByRole("button", { name: "本文操作を取り消す", exact: true })
+      .click();
+    expect(state.lifecycleChanges).toHaveLength(0);
+    for (const action of [
+      "本文の提供を停止",
+      "本文の提供を再開",
+      "本文の提供を停止",
+    ]) {
+      await panel.getByRole("button", { name: action, exact: true }).click();
+      await panel
+        .getByRole("button", { name: "確認した本文操作を実行", exact: true })
+        .click();
+      await expect(
+        panel.getByRole("heading", { name: "本文管理の確認" }),
+      ).toHaveCount(0);
+    }
+    await panel
+      .getByRole("button", { name: "保存本文を削除", exact: true })
+      .click();
+    await expect(panel).toContainText(
+      "取得済みコピー、個人のメモや引用は残ります",
+    );
+    await panel
+      .getByRole("button", { name: "確認した本文操作を実行", exact: true })
+      .scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: `.local-state/lifecycle-ui/${design}-${info.project.name}.png`,
+    });
+    await panel
+      .getByRole("button", { name: "確認した本文操作を実行", exact: true })
+      .click();
+    await expect(panel).toContainText("削除済み · 0版 · 0バイト");
+    expect(state.lifecycleChanges).toHaveLength(4);
+    expect(state.lifecycleChanges.at(-1)).toMatchObject({
+      action: "purge",
+      expectedRevision: 3,
+      expectedCatalogRevision: 1,
+    });
+    expect(state.saves).toBe(0);
+    await panel
+      .getByRole("button", { name: "本文取得枠を回復", exact: true })
+      .click();
+    expect(state.recoveries).toHaveLength(0);
+    await panel
+      .getByRole("button", { name: "確認した予約枠を回復", exact: true })
+      .click();
+    await expect(panel).toContainText("本文取得の予約枠を回復しました");
+    expect(state.recoveries).toHaveLength(1);
+    const discardDialogs: string[] = [];
+    page.on("dialog", async (dialog) => {
+      discardDialogs.push(dialog.message());
+      await dialog.accept();
+    });
+    await root
+      .getByRole("button", { name: "編集を破棄して接続し直す", exact: true })
+      .click();
+    expect(discardDialogs).toEqual([]);
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth,
+      ),
+    ).toBe(true);
+  });
+}
+
+test("lifecycle lost response retries the same operation without creating another decision", async ({
+  page,
+}) => {
+  const { root, state } = await fixture(page, saved());
+  await edit(root);
+  const panel = root.getByRole("region", {
+    name: "保存本文の管理",
+    exact: true,
+  });
+  await panel
+    .getByRole("button", { name: "保存本文の状態を確認", exact: true })
+    .click();
+  await expect(panel).toContainText("1版 · 1,234バイト");
+  await panel.getByLabel("本文管理の理由", { exact: true }).fill("停止の確認");
+  state.mode = "lifecycle-lost";
+  await panel
+    .getByRole("button", { name: "本文の提供を停止", exact: true })
+    .click();
+  await panel
+    .getByRole("button", { name: "確認した本文操作を実行", exact: true })
+    .click();
+  await expect(
+    panel.getByRole("button", { name: "同じ操作を再確認・再試行" }),
+  ).toBeVisible();
+  expect(state.lifecycle.operations).toHaveLength(1);
+  state.mode = "ok";
+  await panel.getByRole("button", { name: "同じ操作を再確認・再試行" }).click();
+  await expect(panel).toContainText("記録済みの操作を確認しました");
+  expect(state.lifecycleChanges).toHaveLength(2);
+  expect(state.lifecycleChanges[1]).toEqual(state.lifecycleChanges[0]);
+  expect(state.lifecycle.operations).toHaveLength(1);
+});
+
+for (const failure of ["lifecycle-wrong-scope", "lifecycle-logout"]) {
+  test(`${failure} does not expose a management preview or enable a mutation`, async ({
+    page,
+  }) => {
+    const { root, state } = await fixture(page, saved());
+    await edit(root);
+    state.mode = failure;
+    const panel = root.getByRole("region", {
+      name: "保存本文の管理",
+      exact: true,
+    });
+    await panel
+      .getByRole("button", { name: "保存本文の状態を確認", exact: true })
+      .click();
+    await expect(root.getByRole("status")).toContainText(
+      failure === "lifecycle-logout" ? "ログイン" : "応答",
+    );
+    await expect(
+      panel.getByText("1版 · 1,234バイト", { exact: false }),
+    ).toHaveCount(0);
+    expect(state.lifecycleChanges).toHaveLength(0);
+    if (failure === "lifecycle-logout") await expect(panel).toBeHidden();
+  });
+}
+
+test("private lifecycle management binds the account and previews explicit deadline changes", async ({
+  page,
+}) => {
+  const { root, state } = await fixture(page);
+  state.reservation = {
+    reserved: true,
+    token: null,
+    revision: 0,
+    scopeCount: 1,
+    legacy: false,
+    containsTarget: true,
+  };
+  await connect(root);
+  await root.getByLabel("自分用本文の記事URL", { exact: true }).fill(url);
+  await root
+    .getByRole("button", { name: "自分用本文の管理を開く", exact: true })
+    .click();
+  const panel = root.getByRole("region", {
+    name: "保存本文の管理",
+    exact: true,
+  });
+  await panel
+    .getByRole("button", { name: "保存本文の状態を確認", exact: true })
+    .click();
+  await expect(panel).toContainText(`private:${account}`);
+  await panel
+    .getByLabel("本文管理の理由", { exact: true })
+    .fill("保存期間の明示");
+  const expiry = panel.getByLabel(
+    "本文の保持期限（端末の現地時刻・空欄で解除）",
+    { exact: true },
+  );
+  await expiry.fill("2030-01-01T00:00");
+  await panel
+    .getByRole("button", { name: "保持期限を変更", exact: true })
+    .click();
+  await expect(panel).toContainText("以降にサーバー本文を削除します");
+  expect(state.lifecycleChanges).toHaveLength(0);
+  await panel
+    .getByRole("button", { name: "確認した本文操作を実行", exact: true })
+    .click();
+  await expect(
+    panel.getByRole("heading", { name: "本文管理の確認" }),
+  ).toHaveCount(0);
+  expect(state.lifecycle.expiresAt).not.toBeNull();
+  await expiry.fill("");
+  await panel
+    .getByRole("button", { name: "保持期限を変更", exact: true })
+    .click();
+  await expect(panel).toContainText("本文の保持期限を解除します");
+  await panel
+    .getByRole("button", { name: "確認した本文操作を実行", exact: true })
+    .click();
+  await expect(panel).toContainText("保持期限: 未設定");
+  expect(state.lifecycleChanges).toHaveLength(2);
+  expect(state.lifecycle.expiresAt).toBeNull();
+});
+
+test("reservation recovery retries the same token after a lost response", async ({
+  page,
+}) => {
+  const { root, state } = await fixture(page, saved());
+  const command = (action: "withdraw" | "purge", expectedRevision: number) => ({
+    operationId: crypto.randomUUID(),
+    action,
+    expectedRevision,
+    reason: "Synthetic deleted source",
+    ...(action === "purge" ? { expectedCatalogRevision: 1 } : {}),
+  });
+  changeLifecycle(state.lifecycle, command("withdraw", 0), 1, Date.now());
+  changeLifecycle(state.lifecycle, command("purge", 1), 1, Date.now());
+  await edit(root);
+  const panel = root.getByRole("region", {
+    name: "保存本文の管理",
+    exact: true,
+  });
+  await panel
+    .getByRole("button", { name: "保存本文の状態を確認", exact: true })
+    .click();
+  await panel
+    .getByRole("button", { name: "本文取得枠を回復", exact: true })
+    .click();
+  state.mode = "recovery-lost";
+  await panel
+    .getByRole("button", { name: "確認した予約枠を回復", exact: true })
+    .click();
+  await expect(
+    panel.getByRole("button", {
+      name: "同じ予約枠の回復を再確認",
+      exact: true,
+    }),
+  ).toBeVisible();
+  state.mode = "ok";
+  await panel
+    .getByRole("button", { name: "同じ予約枠の回復を再確認", exact: true })
+    .click();
+  await expect(panel).toContainText("本文取得の予約枠を回復しました");
+  expect(state.recoveries).toHaveLength(2);
+  expect(state.recoveries[1]).toEqual(state.recoveries[0]);
+  expect(state.reservation.reserved).toBe(false);
+});
+
+for (const navigation of ["policy-save", "history-entry", "history-refresh"]) {
+  test(`${navigation} preserves a pending lifecycle operation until reconciliation`, async ({
+    page,
+  }) => {
+    const { root, state } = await fixture(page, saved());
+    await edit(root);
+    if (navigation !== "policy-save") {
+      await root
+        .getByRole("button", { name: "変更履歴を確認", exact: true })
+        .click();
+      await root
+        .getByRole("button", { name: "変更 #1 を読む", exact: true })
+        .click();
+    }
+    const panel =
+      navigation === "policy-save"
+        ? root.getByRole("region", { name: "保存本文の管理", exact: true })
+        : root
+            .getByRole("region", { name: "共有設定の変更履歴" })
+            .getByRole("region", { name: "保存本文の管理", exact: true });
+    await panel
+      .getByRole("button", { name: "保存本文の状態を確認", exact: true })
+      .click();
+    await panel
+      .getByLabel("本文管理の理由", { exact: true })
+      .fill("結果未確認の操作を保持");
+    state.mode = "lifecycle-lost";
+    await panel
+      .getByRole("button", { name: "本文の提供を停止", exact: true })
+      .click();
+    await panel
+      .getByRole("button", { name: "確認した本文操作を実行", exact: true })
+      .click();
+    const retry = panel.getByRole("button", {
+      name: "同じ操作を再確認・再試行",
+      exact: true,
+    });
+    await expect(retry).toBeVisible();
+    if (navigation === "policy-save") {
+      await preview(root);
+      await root
+        .getByRole("button", { name: "この内容を保存", exact: true })
+        .click();
+    } else {
+      await root
+        .getByRole("button", {
+          name:
+            navigation === "history-entry"
+              ? "変更 #1 を読む"
+              : "変更履歴を確認",
+          exact: true,
+        })
+        .click();
+    }
+    await expect(root.getByRole("status")).toContainText(
+      "本文操作の結果を先に確認",
+    );
+    await expect(retry).toBeVisible();
+    expect(state.saves).toBe(0);
+    state.mode = "ok";
+    await retry.click();
+    await expect(panel).toContainText("記録済みの操作を確認しました");
+    expect(state.lifecycleChanges).toHaveLength(2);
+    expect(state.lifecycleChanges[1]).toEqual(state.lifecycleChanges[0]);
+    expect(state.lifecycle.operations).toHaveLength(1);
+    if (navigation === "policy-save") {
+      await root
+        .getByRole("button", { name: "この内容を保存", exact: true })
+        .click();
+      await expect(root.getByRole("status")).toContainText(
+        "共有設定を保存しました",
+      );
+      expect(state.saves).toBe(1);
+    } else {
+      await root
+        .getByRole("button", { name: "変更履歴を確認", exact: true })
+        .click();
+      await expect(root.getByRole("status")).toContainText(
+        "変更履歴を読み込みました",
+      );
+    }
+  });
+}
+
+test("unavailable reservation accounting preserves confirmed body results without offering recovery", async ({
+  page,
+}) => {
+  const { root, state } = await fixture(page, saved());
+  await edit(root);
+  const panel = root.getByRole("region", {
+    name: "保存本文の管理",
+    exact: true,
+  });
+  state.mode = "reservation-unavailable";
+  await panel
+    .getByRole("button", { name: "保存本文の状態を確認", exact: true })
+    .click();
+  await expect(panel).toContainText("予約枠の状態を確認できません");
+  await panel
+    .getByLabel("本文管理の理由", { exact: true })
+    .fill("本文操作を予約台帳から分離");
+  for (const action of ["本文の提供を停止", "保存本文を削除"]) {
+    await panel.getByRole("button", { name: action, exact: true }).click();
+    await panel
+      .getByRole("button", { name: "確認した本文操作を実行", exact: true })
+      .click();
+    await expect(panel).toContainText("本文管理の操作を記録しました");
+  }
+  await expect(panel).toContainText("削除済み");
+  await expect(
+    panel.getByRole("button", { name: "本文取得枠を回復", exact: true }),
+  ).toHaveCount(0);
+  expect(state.lifecycle.operations).toHaveLength(2);
+  expect(state.reservation.reserved).toBe(true);
+  state.mode = "ok";
+  await panel
+    .getByRole("button", { name: "保存本文の状態を確認", exact: true })
+    .click();
+  await expect(
+    panel.getByRole("button", { name: "本文取得枠を回復", exact: true }),
+  ).toBeVisible();
+});
