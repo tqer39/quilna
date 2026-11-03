@@ -48,10 +48,11 @@ test("background article commits preserve an unfinished source URL selection and
         url: "https://example.org/news",
         title: "Navigation news",
         fetchedAt: "2026-10-30T00:00:00Z",
+        refreshFailure: { failures: 1, retryAt: Date.now() + 60000, error: "前回の取得に失敗しました。" },
       });
       tx.objectStore("articles").put({
         id: "navigation-article",
-        feedUrl: "https://example.org/news",
+        feedUrl: "",
         title: "Navigation article",
         body: "Stored source",
         url: "",
@@ -69,6 +70,12 @@ test("background article commits preserve an unfinished source URL selection and
   await expect(
     page.getByRole("button", { name: "Navigation article", exact: true }),
   ).toBeVisible();
+  const source = page.locator(".rss-feed-state");
+  await expect(source.locator(".rss-feed-status")).toHaveText("取得に失敗・再試行できます");
+  await expect(source.locator("details")).not.toHaveAttribute("open", "");
+  await expect(page.locator(".rss-article-meta .rss-site-icon svg")).toBeVisible();
+  await expect(page.locator(".rss-reading-duration")).toHaveText(/(読了目安|配信された概要の目安) \d+分/);
+  await expect(page.locator(".rss-reading-duration svg")).toBeVisible();
   const field = page.getByLabel("サイト・RSSのURL");
   await field.fill("https://example.org/unfinished");
   await field.evaluate((node: HTMLInputElement) =>

@@ -76,7 +76,7 @@ export class ArticleListView {
       node: el("li"),
       meta: el("p", undefined, "rss-article-meta"),
       publisherIcon: el("span"),
-      iconURL: "",
+      iconURL: null as string | null,
       facts: el("span"),
       duration: el("span", undefined, "rss-reading-duration"),
       durationText: el("span"),

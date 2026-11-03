@@ -276,7 +276,7 @@ export class CollectionNavigation {
             ? "クラウド解除の確認待ち"
             : feed.unsubscribed
               ? "購読停止中"
-              : feed.retry
+              : feed.retry || feed.details.some((detail) => detail.error)
                 ? "取得に失敗・再試行できます"
                 : "購読中",
       );
