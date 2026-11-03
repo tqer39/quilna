@@ -1,5 +1,9 @@
 name: Dev Standards
-on: [push, pull_request]
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  workflow_dispatch:
 permissions:
   contents: read
 jobs:
@@ -30,7 +34,7 @@ jobs:
               assert expected['exists'] and target.read_bytes() == expected['content'].encode(), name
           PYTHON
       - name: Check canonical sources with pinned CLI
-        run: mise exec go@1.27.3 -- go run github.com/tqer39/dev-standards/cmd/dev-standards@v0.4.5 check --repo .
+        run: mise exec go@1.27.3 -- go run github.com/tqer39/dev-standards/cmd/dev-standards@v0.4.6 check --repo .
       - run: npm ci --ignore-scripts --prefix .
       - run: mise run lint
       - run: mise run format:check
