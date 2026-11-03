@@ -10,8 +10,8 @@ export default defineConfig({
     trace: "retain-on-failure",
   },
   webServer: {
-    command: "npm run dev -- --port 5197 --strictPort",
-    url: "http://127.0.0.1:5197",
+    command: "node scripts/browser-dev-server.mjs 5197",
+    wait: { stdout: /QUILNA_BROWSER_SERVER_READY 5197\b/ },
     reuseExistingServer: false,
   },
   projects: [
