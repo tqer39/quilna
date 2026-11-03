@@ -7,25 +7,18 @@
 This repository adopts [dev-standards](https://github.com/tqer39/dev-standards) with a `node-npm` primary component and explicitly declared Go/Swift companion packages.
 See the [language decision](decisions/0001-language.md) for the boundaries of each check.
 Mixed-package support and duplicate verification-task rejection were merged into `main` in [source PR #13](https://github.com/tqer39/dev-standards/pull/13).
-`.standards/cli-source.json` pins the adopted `0.4.2` source to the merge commit. Build that commit; the setup does not depend on a release tag or the PR branch.
+The current CLI version is pinned by `.standards/lock.json`. `standards:install` obtains that exact Go module version and installs the ignored local CLI cache. The original adoption source remains recorded in `.standards/adoption-source.json`; it does not select the version for future setup.
 
-For a fresh checkout, clone the source separately and build its CLI using the pinned Go toolchain:
+For a fresh checkout, run:
 
 ```bash
-git clone --branch main https://github.com/tqer39/dev-standards.git ../dev-standards
-cd ../dev-standards
-git checkout --detach da61121476f3e6758a3e729e010d30d190408bc3
 mise trust
-mise run build
-cd ../quilna
-../dev-standards/bin/dev-standards sync
-mise trust
+mise run standards:install
 mise run bootstrap
 mise run standards:prepare
 ```
 
-Use your actual checkout directory instead of `../quilna` when it differs.
-Check `.standards/lock.json` against the source CLI's `version` output before syncing; a mismatched bundle is not an implicit update.
+Go module download and checksum verification require network access. After automatic updates, setup follows the updated lock instead of reinstalling an older source commit.
 The CLI cache is private and ignored by Git. The Node.js and Go pins remain in mise; Swift/Xcode must be available on macOS.
 Combined verification currently runs on macOS because of the Swift companion.
 The existing browser/Go Linux jobs and Apple CI remain unchanged.
@@ -38,6 +31,8 @@ mise run standards:finish
 
 `standards:verify` runs browser lint, formatting checks, unit/server tests and build, then Go formatting/vet/race tests and Swift package tests/macOS build.
 It does not run browser E2E, Workers tests, iOS builds, native UI acceptance, or performance benchmarks.
+Startup/isolation unit probes use OS-assigned loopback ports, so other checkouts can keep their development servers running. Production browser configurations keep their existing ports and continue refusing unrelated servers.
+
 Existing tasks and CI retain those checks. Browser formatting is scoped to `src/`, `server/`, and `workers/`; Markdown remains checked by the existing documentation and Markdown lint rules.
 Codex hooks request configuration/verification checks; a new checkout still needs the CLI cache and the app's normal project/hook trust configuration.
 

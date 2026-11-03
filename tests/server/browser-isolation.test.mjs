@@ -11,11 +11,41 @@ import { fileURLToPath } from "node:url";
 const exec = promisify(execFile);
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
-for (const [config, port] of [
+async function availablePort() {
+  const server = createServer();
+  await new Promise((accept, reject) => {
+    server.once("error", reject);
+    server.listen(0, "127.0.0.1", accept);
+  });
+  const port = server.address().port;
+  await new Promise((accept) => server.close(accept));
+  return port;
+}
+
+// Keep the production startup policy; isolate only the fixture's TCP endpoint.
+function isolatedConfig(config, defaultPort, port) {
+  return `
+import original from ${JSON.stringify(join(root, config))};
+if (!original.webServer.command.includes(" ${defaultPort}") ||
+    !original.webServer.wait.stdout.source.includes("${defaultPort}")) {
+  throw new Error("Unexpected production server policy");
+}
+const configuration = { ...original,
+  use: { ...original.use, baseURL: "http://127.0.0.1:${port}" },
+  webServer: { ...original.webServer,
+    command: original.webServer.command.replace(" ${defaultPort}", " ${port}"),
+    wait: { ...original.webServer.wait, stdout: new RegExp(
+      original.webServer.wait.stdout.source.replaceAll("${defaultPort}", "${port}"),
+      original.webServer.wait.stdout.flags) } } };
+`;
+}
+
+for (const [config, defaultPort] of [
   ["playwright.config.ts", 5197],
   ["playwright.search.config.ts", 5199],
 ]) {
   test(`${config} runs only after its own Quilna server is ready`, async () => {
+    const port = await availablePort();
     const parent = join(root, ".local-state/browser-startup-success");
     await mkdir(parent, { recursive: true });
     const directory = await mkdtemp(join(parent, "probe-"));
@@ -24,11 +54,11 @@ for (const [config, port] of [
       await writeFile(
         join(directory, "config.ts"),
         `
-import original from ${JSON.stringify(join(root, config))};
-export default { ...original, testDir: ${JSON.stringify(directory)},
+${isolatedConfig(config, defaultPort, port)}
+export default { ...configuration, testDir: ${JSON.stringify(directory)},
   testMatch: "probe.spec.ts", reporter: "dot", projects: [{ name: "probe" }],
   outputDir: ${JSON.stringify(join(directory, "results"))},
-  webServer: { ...original.webServer, cwd: ${JSON.stringify(root)} } };
+  webServer: { ...configuration.webServer, cwd: ${JSON.stringify(root)} } };
 `,
       );
       await writeFile(
@@ -71,7 +101,7 @@ test("the ready server serves Quilna", async () => {
   });
 }
 
-for (const [config, port] of [
+for (const [config, defaultPort] of [
   ["playwright.config.ts", 5197],
   ["playwright.search.config.ts", 5199],
 ]) {
@@ -81,6 +111,7 @@ for (const [config, port] of [
     const directory = await mkdtemp(join(parent, "probe-"));
     const marker = join(directory, "test-executed");
     let requests = 0;
+    let port;
     const server = createServer((_request, response) => {
       requests++;
       response.writeHead(200, { "Content-Type": "text/plain" });
@@ -89,18 +120,19 @@ for (const [config, port] of [
     try {
       await new Promise((accept, reject) => {
         server.once("error", reject);
-        server.listen(port, "127.0.0.1", accept);
+        server.listen(0, "127.0.0.1", accept);
       });
+      port = server.address().port;
       // Retain the real server policy. Only replace the test payload and output
       // so this negative probe needs no browser and cannot erase useful reports.
       await writeFile(
         join(directory, "config.ts"),
         `
-import original from ${JSON.stringify(join(root, config))};
-export default { ...original, testDir: ${JSON.stringify(directory)},
+${isolatedConfig(config, defaultPort, port)}
+export default { ...configuration, testDir: ${JSON.stringify(directory)},
   testMatch: "probe.spec.ts", reporter: "dot", projects: [{ name: "probe" }],
   outputDir: ${JSON.stringify(join(directory, "results"))},
-  webServer: { ...original.webServer, cwd: ${JSON.stringify(root)} } };
+  webServer: { ...configuration.webServer, cwd: ${JSON.stringify(root)} } };
 `,
       );
       await writeFile(
@@ -156,7 +188,7 @@ test("must not execute against an unrelated server", () => {
   });
 }
 
-for (const [config, port] of [
+for (const [config, defaultPort] of [
   ["playwright.config.ts", 5197],
   ["playwright.search.config.ts", 5199],
 ]) {
@@ -164,6 +196,7 @@ for (const [config, port] of [
     `${config} refuses a port claimed after the startup probe`,
     { timeout: 20000 },
     async () => {
+      const port = await availablePort();
       const parent = join(root, ".local-state/browser-startup-race");
       await mkdir(parent, { recursive: true });
       const directory = await mkdtemp(join(parent, "probe-"));
@@ -194,13 +227,13 @@ child.on("exit", code => process.exit(code ?? 1));
         await writeFile(
           join(directory, "config.ts"),
           `
-import original from ${JSON.stringify(join(root, config))};
-export default { ...original, testDir: ${JSON.stringify(directory)},
+${isolatedConfig(config, defaultPort, port)}
+export default { ...configuration, testDir: ${JSON.stringify(directory)},
   testMatch: "probe.spec.ts", reporter: "dot", projects: [{ name: "probe" }],
   outputDir: ${JSON.stringify(join(directory, "results"))},
-  webServer: { ...original.webServer, cwd: ${JSON.stringify(root)},
+  webServer: { ...configuration.webServer, cwd: ${JSON.stringify(root)},
     command: ${JSON.stringify(`node "${join(directory, "launch.mjs")}"`)},
-    env: { QUILNA_PROBE_COMMAND: original.webServer.command } } };
+    env: { QUILNA_PROBE_COMMAND: configuration.webServer.command } } };
 `,
         );
         await writeFile(
