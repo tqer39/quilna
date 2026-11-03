@@ -752,6 +752,30 @@ test("an unsolicited unchanged response cannot invent an original", async ({
   expect((await snapshots(page))[0].content).toBeUndefined();
 });
 
+test("explicit refresh repairs legacy formatting without replacing its retained version", async ({ page }) => {
+  await blank(page);
+  const requests: Record<string, unknown>[] = [];
+  await page.route("**/api/feeds/fetch", r => {
+    requests.push(r.request().postDataJSON());
+    return r.fulfill({ json: { url: articleURL, html: html().replace('</article>', '<ul><li>Retained list item</li></ul><table><tr><th>Key</th><th>Value</th></tr><tr><td>Mode</td><td>Ready</td></tr></table></article>') } });
+  });
+  const result = await page.evaluate(async url => {
+    const path = '/src/source-document-store.ts', api = await import(path);
+    const oldContent = { text: 'Old flattened source', title: 'Document', url, language: 'en', fetchedAt: new Date().toISOString(), codeRanges: [], structure: {version: 1, links: [], headings: []} };
+    const old = await api.retainDocument(url, oldContent, {validators: {url, etag: '"unchanged-source"'}});
+    const cached = await api.acquireDocument(url);
+    const updated = await api.acquireDocument(url, {force: true});
+    const retained = await api.readDocumentVersion(old.document.id, old.version.id);
+    return {old, cached, updated, retained};
+  }, articleURL);
+  expect(requests).toHaveLength(1);
+  expect(requests[0].validators).toBeUndefined();
+  expect(result.cached.content.document.versionId).toBe(result.old.version.id);
+  expect(result.updated.content.document.versionId).not.toBe(result.old.version.id);
+  expect(result.updated.content.structure.blocks.map((b: {tag: string}) => b.tag)).toEqual(['ul', 'table']);
+  expect(result.retained).toEqual(result.old.version);
+});
+
 test("large validator requests fall back to a full fetch within the existing body limit", async ({
   page,
 }) => {
