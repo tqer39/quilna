@@ -6,6 +6,19 @@ export default defineConfig({
   plugins: [
     {
       name: "local-artifact-watch",
+      configureServer(server) {
+        // Vite prepends a global test-results ignore before our rooted predicate.
+        // Keep the other defaults, then re-add the root through Chokidar's public
+        // API so its cached matcher is rebuilt using the corrected options.
+        const ignored = server.watcher.options.ignored;
+        if (!Array.isArray(ignored))
+          throw new Error("Vite watcher ignored options must be an array");
+        const index = ignored.indexOf("**/test-results/**");
+        if (index !== -1) {
+          ignored.splice(index, 1);
+          server.watcher.add(server.config.root);
+        }
+      },
       config(config) {
         const root = resolve(config.root ?? process.cwd());
         const artifacts = new Set([

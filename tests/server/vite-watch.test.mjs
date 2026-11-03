@@ -7,7 +7,7 @@ import { createServer } from "vite";
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
-for (const ancestor of [".local-state", "playwright-report"])
+for (const ancestor of [".local-state", "test-results", "playwright-report"])
   test(
     `${ancestor} ancestor: a nested Vite root refreshes source while ignoring its own validation artifacts`,
     { timeout: 20000 },
@@ -16,6 +16,7 @@ for (const ancestor of [".local-state", "playwright-report"])
       await mkdir(parent, { recursive: true });
       const root = await mkdtemp(join(parent, "project-"));
       const source = join(root, "main.js");
+      await mkdir(join(root, "src"));
       await writeFile(
         join(root, "index.html"),
         '<script type="module" src="/main.js"></script>',
@@ -91,6 +92,13 @@ for (const ancestor of [".local-state", "playwright-report"])
           ".local-state",
           "test-results",
           "playwright-report",
+          ".git",
+          "node_modules",
+          "node_modules/.vite",
+          "dist",
+          "src/.local-state",
+          "src/test-results",
+          "src/playwright-report",
         ]) {
           await mkdir(join(root, directory), { recursive: true });
           await writeFile(join(root, directory, "evidence.json"), "{}");
