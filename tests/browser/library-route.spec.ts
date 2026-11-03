@@ -157,3 +157,24 @@ test(`a pending URL detail survives paging=${paginate} and cannot reopen after r
   await expect(page.getByRole("region", { name: "書誌情報のプレビュー", exact: true })).toBeEmpty();
   await expect(page.getByRole("button", { name: "書誌情報を開く", exact: true }).first()).toBeVisible();
 });
+
+test("returning from the back/forward cache restores the saved detail named by the URL", async ({ page }) => {
+  await page.goto("/?view=papers");
+  const paper = await paperSnapshot({ ...crossrefMetadata(fixture, fixture.message.DOI), titles: ["戻るキャッシュから復元する書誌"] });
+  await page.evaluate(async (paper) => {
+    const path = "/src/paper-store.ts";
+    await (await import(path)).savePaper(paper);
+  }, paper);
+  await page.reload();
+  await page.getByRole("button", { name: "書誌情報を開く", exact: true }).click();
+  const heading = page.getByRole("heading", { name: paper.metadata.titles[0], exact: true });
+  await expect(heading).toBeVisible();
+  // Playwright disables the real cache, so replay the events a cached page receives.
+  await page.evaluate(() => {
+    window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: true }));
+    document.documentElement.style.removeProperty("display");
+  });
+  await expect(page.getByRole("region", { name: "書誌情報のプレビュー", exact: true })).toBeEmpty();
+  await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })));
+  await expect(heading).toBeVisible();
+});
