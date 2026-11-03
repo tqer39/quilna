@@ -801,3 +801,39 @@ test("retention wakeups follow the current decision and commit deletion once wit
     "deleted",
   );
 });
+
+test("audit capacity reserves withdrawal and purge for an active source without expiry", async () => {
+  const f = fixture(management);
+  await f.catalog.acquire("alice");
+  for (let n = 0; n < 62; n++)
+    await f.catalog.manageLifecycle(
+      "operator",
+      command("retention", n, { expiresAt: null }),
+    );
+  const before = structuredClone(f.storage.data);
+  for (const action of ["restore", "retention"])
+    await assert.rejects(
+      f.catalog.manageLifecycle(
+        "operator",
+        command(action, 62, action === "retention" ? { expiresAt: null } : {}),
+      ),
+      /document-capacity/,
+    );
+  assert.deepEqual(f.storage.data, before);
+  await f.restart().read("alice");
+  await f.catalog.manageLifecycle("operator", command("withdraw", 62));
+  const preview = await f.restart().lifecyclePreview("operator");
+  await f.catalog.manageLifecycle(
+    "operator",
+    command("purge", 63, { expectedCatalogRevision: preview.catalogRevision }),
+  );
+  const deleted = await f.restart().lifecyclePreview("operator");
+  assert.equal(deleted.status, "deleted");
+  assert.equal(deleted.operations.length, 64);
+  assert.deepEqual(
+    deleted.operations.slice(0, 62),
+    before.get("document:lifecycle:v1").operations,
+  );
+  assert.equal(deleted.bytes, 0);
+  await assert.rejects(f.restart().read("alice"), /document-unavailable/);
+});

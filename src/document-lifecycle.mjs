@@ -111,10 +111,12 @@ export function changeLifecycle(state, command, catalogRevision, now) {
       command.expectedCatalogRevision !== catalogRevision)
   )
     throw Error("document-conflict");
-  // Reserve the last audit slot for cleanup; history capacity cannot trap retained bodies.
+  // Reserve withdrawal and purge slots so an active document can still be removed.
   if (
     state.operations.length >= 64 ||
-    (command.action !== "purge" && state.operations.length >= 63)
+    (command.action !== "purge" && state.operations.length >= 63) ||
+    (!["withdraw", "purge"].includes(command.action) &&
+      state.operations.length >= 62)
   )
     throw Error("document-capacity");
   const operation = { command, at: new Date(now).toISOString() };
