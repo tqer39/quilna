@@ -11,7 +11,11 @@ import {
 import { listPapers, savePaper, paperKey } from "./paper-store";
 import { paperExcerptView } from "./paper-excerpt-view";
 import { paperExcerptLibrary } from "./paper-excerpt-library";
-import { parsePaperExcerpt, paperExcerptLimit, type PaperExcerpt } from "./paper-text-format";
+import {
+  parsePaperExcerpt,
+  paperExcerptLimit,
+  type PaperExcerpt,
+} from "./paper-text-format";
 
 /** Render a date without adding a missing month/day or confusing it with full-text revision time. */
 function displayDate(value: PaperSnapshot["metadata"]["dates"]["published"]) {
@@ -91,19 +95,38 @@ export async function paperView(root: HTMLElement, client = new PaperClient()) {
   );
   const imported = el("section");
   imported.append(el("h2", "書誌ファイルから確認"), fileLabel, file);
-  const search = paperSearchView(client, (doi) => {
-    input.value = doi;
-    changed();
-    form.requestSubmit();
-  }, changed);
-  const excerptFile = el("input"), excerptLabel = el("label", "保存した論文引用ファイルを確認");
+  const search = paperSearchView(
+    client,
+    (doi) => {
+      input.value = doi;
+      changed();
+      form.requestSubmit();
+    },
+    changed,
+  );
+  const excerptFile = el("input"),
+    excerptLabel = el("label", "保存した論文引用ファイルを確認");
   excerptFile.id = "paper-excerpt-file";
   excerptFile.type = "file";
   excerptFile.accept = ".json,application/json";
   excerptLabel.htmlFor = excerptFile.id;
-  imported.append(el("h3", "論文引用ファイルから確認"), excerptLabel, excerptFile);
-  const excerpts = paperExcerptLibrary((record) => show(record.source.paper, false, record, true));
-  main.append(search.root, form, imported, notice, preview, library, excerpts.root);
+  imported.append(
+    el("h3", "論文引用ファイルから確認"),
+    excerptLabel,
+    excerptFile,
+  );
+  const excerpts = paperExcerptLibrary((record) =>
+    show(record.source.paper, false, record, true),
+  );
+  main.append(
+    search.root,
+    form,
+    imported,
+    notice,
+    preview,
+    library,
+    excerpts.root,
+  );
   root.replaceChildren(header, main);
 
   /** Changing the pending input invalidates even a transport that ignores cancellation. */
@@ -125,7 +148,12 @@ export async function paperView(root: HTMLElement, client = new PaperClient()) {
   });
   window.addEventListener("pagehide", changed);
   /** Show selected facts as text, including explicit uncertainty and deposited relationship records. */
-  function show(p: PaperSnapshot, saved = false, excerpt?: PaperExcerpt, excerptSaved = false) {
+  function show(
+    p: PaperSnapshot,
+    saved = false,
+    excerpt?: PaperExcerpt,
+    excerptSaved = false,
+  ) {
     excerptView?.dispose();
     excerptView = null;
     search.cancel();
@@ -271,9 +299,13 @@ export async function paperView(root: HTMLElement, client = new PaperClient()) {
       save,
       download,
     );
-    excerptView = paperExcerptView(p, excerpts.refresh, { record: excerpt, saved: excerptSaved });
+    excerptView = paperExcerptView(p, excerpts.refresh, {
+      record: excerpt,
+      saved: excerptSaved,
+    });
     preview.append(excerptView.root);
-    if (excerpt) excerptView.focus(); else heading.focus();
+    if (excerpt) excerptView.focus();
+    else heading.focus();
   }
   /** Give each library action a stable focus identity independent of row order. */
   function libraryButton(key: string, text: string, action: () => void) {
@@ -406,23 +438,36 @@ export async function paperView(root: HTMLElement, client = new PaperClient()) {
   });
   excerptFile.addEventListener("change", async () => {
     changed();
-    const current = revision, selected = excerptFile.files?.[0];
+    const current = revision,
+      selected = excerptFile.files?.[0];
     excerptFile.value = "";
     if (!selected) return;
     try {
-      if (selected.size > paperExcerptLimit) throw Error("論文引用ファイルは3,000,000バイト以内で選んでください。");
-      const record = await parsePaperExcerpt(new TextDecoder("utf-8", { fatal: true }).decode(await selected.arrayBuffer()));
+      if (selected.size > paperExcerptLimit)
+        throw Error("論文引用ファイルは3,000,000バイト以内で選んでください。");
+      const record = await parsePaperExcerpt(
+        new TextDecoder("utf-8", { fatal: true }).decode(
+          await selected.arrayBuffer(),
+        ),
+      );
       if (current !== revision) return;
       show(record.source.paper, false, record);
-      notice.textContent = "論文引用ファイルを確認しました。提供元への通信は行っていません。保存・共有の前に本文・引用・利用条件を確認してください。";
+      notice.textContent =
+        "論文引用ファイルを確認しました。提供元への通信は行っていません。保存・共有の前に本文・引用・利用条件を確認してください。";
     } catch (error) {
-      if (current === revision) notice.textContent = error instanceof TypeError ? "論文引用ファイルを確認できません。UTF-8の対応するJSONファイルを選んでください。保存済みの記録は保持しています。" : (error as Error).message;
+      if (current === revision)
+        notice.textContent =
+          error instanceof TypeError
+            ? "論文引用ファイルを確認できません。UTF-8の対応するJSONファイルを選んでください。保存済みの記録は保持しています。"
+            : (error as Error).message;
     }
   });
   main.append(
     el(
       "p",
-      hasAccountLibrary() ? "書誌情報と論文引用はこのブラウザの現在のログイン専用のライブラリに保存します。別の端末とは同期しません。記事のバックアップとは別です。必要な記録は書誌ファイルとして保存できます。同じDOIの変更された登録情報は別の記録として残します。" : "書誌情報と論文引用はこのブラウザのプロフィールに保存します。ログインごとの分離や同期はありません。別の人とはプロフィールを分けてください。記事のバックアップとは別です。必要な記録は書誌ファイルとして保存できます。同じDOIの変更された登録情報は別の記録として残します。",
+      hasAccountLibrary()
+        ? "書誌情報と論文引用はこのブラウザの現在のログイン専用のライブラリに保存します。別の端末とは同期しません。記事のバックアップとは別です。必要な記録は書誌ファイルとして保存できます。同じDOIの変更された登録情報は別の記録として残します。"
+        : "書誌情報と論文引用はこのブラウザのプロフィールに保存します。ログインごとの分離や同期はありません。別の人とはプロフィールを分けてください。記事のバックアップとは別です。必要な記録は書誌ファイルとして保存できます。同じDOIの変更された登録情報は別の記録として残します。",
     ),
   );
   await Promise.all([refresh(), excerpts.refresh()]);

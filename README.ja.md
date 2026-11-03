@@ -84,6 +84,8 @@ tmux kill-session -t adaptive-textbook-caa
 
 ## 検証
 
+共通開発ルールとローカルの Claude/Codex 計測は、[開発ツールの手順](docs/development-tooling.ja.md)を参照してください。
+
 ブラウザ版の実装言語は引き続きTypeScriptです。`mise run typecheck:tsrs`で任意のRust製コンパイラー検査を実行できます。[試行結果と互換性の制約](docs/typescript-tools.ja.md)を参照してください。
 
 [継続保守の手順](docs/security-maintenance.ja.md)で、Renovate、全依存の監査、実行環境・証明書の更新、日次検査を説明しています。

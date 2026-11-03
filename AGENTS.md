@@ -14,3 +14,11 @@
   Documentation-only changes do not require native builds, model calls, or performance benchmarks.
 - Keep this file short. Put detailed documentation policy in `docs/rules/documentation.md`;
   do not duplicate that policy in separate agent-specific instruction files.
+
+## Shared development standards
+
+Read `.standards/rules.md` and run `mise run standards:prepare` before working.
+Run `mise run standards:verify` and `mise run standards:finish` before finishing.
+Edit canonical sources under `.standards`, then review and apply a generated plan.
+Record evidence of shared-rule problems with `mise run standards:feedback`.
+Report checks that were not run accurately.

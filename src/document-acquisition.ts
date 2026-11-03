@@ -9,7 +9,9 @@ import {
   documentUUID,
 } from "./source-document";
 
-export const documentPreferenceKey = libraryName("quilna.document-acquisition.v1");
+export const documentPreferenceKey = libraryName(
+  "quilna.document-acquisition.v1",
+);
 export type DocumentPreference =
   { mode: "browser" } | { mode: "private" | "shared"; account: string };
 const accountHash = (v: unknown): v is string =>

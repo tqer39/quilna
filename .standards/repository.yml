@@ -1,0 +1,54 @@
+{
+  "schemaVersion": 1,
+  "standard": {
+    "repository": "tqer39/dev-standards",
+    "version": "0.4.2"
+  },
+  "platforms": [
+    "macos"
+  ],
+  "components": [
+    {
+      "name": "main",
+      "path": ".",
+      "profile": "node-npm"
+    }
+  ],
+  "companions": [
+    {
+      "path": "harness",
+      "profile": "go",
+      "verifyTask": "project:verify:harness"
+    },
+    {
+      "path": "apple",
+      "profile": "swift",
+      "verifyTask": "project:verify:apple"
+    }
+  ],
+  "ai": {
+    "targets": [
+      "codexcli"
+    ],
+    "language": "en"
+  },
+  "gitignore": {
+    "templates": [
+      "node",
+      "linux",
+      "macos",
+      "windows"
+    ],
+    "local": ".standards/gitignore.local"
+  },
+  "update": {
+    "channel": "stable",
+    "allowMajor": false,
+    "rollout": "standard"
+  },
+  "ci": {
+    "prBudgetSeconds": 600,
+    "minimumSamples": 20,
+    "breachWindows": 2
+  }
+}

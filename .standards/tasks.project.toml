@@ -1,0 +1,6 @@
+# Existing companion verification; these tasks always execute.
+["project:verify:harness"]
+run = "bash scripts/check-harness.sh"
+
+["project:verify:apple"]
+run = ["mise run apple:test", "mise run apple:build"]
