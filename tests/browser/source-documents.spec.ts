@@ -210,10 +210,9 @@ for (const design of ["studio", "editorial", "focus"])
     await history.getByRole("button", { name: "保存履歴を再読み込み" }).focus();
     await page.screenshot({ path: info.outputPath("document-history.png") });
     await page.reload();
-    await page
-      .getByRole("button", { name: "Document 1", exact: true })
-      .first()
-      .click();
+    await expect(
+      page.getByRole("heading", { name: "Document 1", exact: true }),
+    ).toBeVisible();
     await expect(page.locator(".rss-source-text")).toContainText(
       "Version 1 explains",
     );
@@ -701,7 +700,9 @@ test("conditional refresh retains exact original and translation, survives reloa
     db.close();
   });
   await page.reload();
-  await page.getByRole("button", { name: "Document 1", exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: "Document 1", exact: true }),
+  ).toBeVisible();
   const history = page.locator(".rss-document-history");
   await openReaderTools(page);
   await history.locator("summary").click();

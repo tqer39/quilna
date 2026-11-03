@@ -85,6 +85,7 @@ test("a site or article URL discovers choices without embedding HTML; only the c
     "true",
   );
   await page.reload();
+  await page.getByRole("button", { name: "← 記事一覧へ", exact: true }).click();
   await page.getByRole("button", { name: /保存した記事 · 1/ }).click();
   await expect(
     page.getByRole("button", { name: "保存して読み返す記事", exact: true }),
@@ -362,6 +363,7 @@ test("RSS collection, reading, saved snapshot, refresh deduplication and reopen 
     fullPage: true,
   });
   await page.reload();
+  await page.getByRole("button", { name: "← 記事一覧へ", exact: true }).click();
   await page.getByRole("button", { name: /保存した記事 · 1/ }).click();
   await expect(
     page.getByRole("button", { name: "保存して読み返す記事", exact: true }),
@@ -534,6 +536,11 @@ test("a failed article save stays unsaved until explicit retry commits it", asyn
   );
   await expect(page.locator("#rss-save-article")).toBeEnabled();
   await page.reload();
+  await expect(page.locator("#rss-save-article")).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+  await page.getByRole("button", { name: "← 記事一覧へ", exact: true }).click();
   await expect(
     page.getByRole("button", { name: /保存した記事 · 1/ }),
   ).toBeVisible();

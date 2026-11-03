@@ -88,7 +88,8 @@ const panel = (page: Page) =>
     exact: true,
   });
 async function settings(page: Page) {
-  await page.getByRole("button", { name: "設定", exact: true }).click();
+  if (new URL(page.url()).searchParams.get("screen") !== "settings")
+    await page.getByRole("button", { name: "設定", exact: true }).click();
   await panel(page).locator("summary").click();
 }
 async function enrich(page: Page) {

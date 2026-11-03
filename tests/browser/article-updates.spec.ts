@@ -248,9 +248,7 @@ for (const design of ["studio", "editorial", "focus"])
       page.getByRole("button", { name: "更新された本文を読む" }),
     ).toBeHidden();
     await page.reload();
-    await page
-      .getByRole("button", { name: "Updated source", exact: true })
-      .click();
+  await expect(page.getByRole("heading", { name: "Updated source", exact: true })).toBeVisible();
     await expect(page.locator(".rss-source-text")).toContainText(
       "New version with corrected",
     );

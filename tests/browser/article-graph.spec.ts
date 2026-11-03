@@ -246,9 +246,9 @@ test("quote relation preserves evidence, moves to exact source and refuses a dif
     db.close();
   });
   await page.reload();
-  await page
-    .getByRole("button", { name: "Graph article a", exact: true })
-    .click();
+  await expect(
+    page.getByRole("heading", { name: "Graph article a", exact: true }),
+  ).toBeVisible();
   await openGraph(page);
   await node(page, "source evidence").click();
   await evidence(page)
@@ -487,9 +487,9 @@ test("missing articles retain safe source references and a deleted quote focus r
     db.close();
   });
   await page.reload();
-  await page
-    .getByRole("button", { name: "Graph article a", exact: true })
-    .click();
+  await expect(
+    page.getByRole("heading", { name: "Graph article a", exact: true }),
+  ).toBeVisible();
   await openGraph(page);
   await node(page, "Graph article b").click();
   await expect(

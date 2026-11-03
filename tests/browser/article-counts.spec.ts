@@ -132,5 +132,7 @@ test("menu counts follow committed cross-tab replacements, source changes and fu
   });
   await counts(1, 0, 1, 1);
   await page.reload();
+  await counts(1, 0, 1, 1);
+  await page.getByLabel("配信元", { exact: true }).selectOption("");
   await counts(2, 1, 1, 1);
 });

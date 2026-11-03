@@ -4,6 +4,12 @@ import {
   librarySignedOut,
 } from "./library-context";
 import { ReaderLocation } from "./reader-location";
+import {
+  readReaderRoute,
+  readerRouteURL,
+  pushReaderURL,
+  revealReaderAnchor,
+} from "./reader-route";
 import { ArticleOutline } from "./article-outline";
 import { ArticleAutoUpdate } from "./article-auto-update";
 import {
@@ -101,11 +107,25 @@ import {
 export async function feedReader(root: HTMLElement) {
   document.title = "情報収集 | Quilna";
   const designSettings = readerDesignSettings();
+  function updateReadingLink(link: HTMLAnchorElement) {
+    const destination = new URL(location.href);
+    destination.searchParams.set("view", "feeds");
+    if (selected) destination.searchParams.set("article", selected);
+    else destination.searchParams.delete("article");
+    destination.hash = link.dataset.readerTarget!;
+    link.href = destination.href;
+  }
   function readingJump(label: string, targetId: string) {
     const link = el("a", label, "rss-text-link");
-    link.href = `?view=feeds#${targetId}`;
+    link.dataset.readerTarget = targetId;
+    updateReadingLink(link);
     link.addEventListener("click", (event) => {
+      if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey)
+        return;
       event.preventDefault();
+      const url = new URL(location.href);
+      url.hash = targetId;
+      pushReaderURL(url);
       const target = document.getElementById(targetId);
       for (
         let parent = target?.parentElement;
@@ -122,13 +142,20 @@ export async function feedReader(root: HTMLElement) {
   let db: IDBDatabase | null = null;
   let feeds: Feed[] = [],
     articles: FeedArticle[] = [];
-  const initialFilter = new URLSearchParams(location.search).get("filter");
-  let selected: string | null = null,
-    filter =
-      initialFilter === "saved" || initialFilter === "unread"
-        ? initialFilter
-        : "all",
-    source = "",
+  const initialRoute = readReaderRoute();
+  let restoringRoute = true;
+  let routeReady = false;
+  let pendingAnchor: {
+    url: string;
+    hash: string;
+    fallback: number;
+    attempted: boolean;
+  } | null = null;
+  let lastRoute = initialRoute;
+  let replaceRoute = false;
+  let selected: string | null = initialRoute.article,
+    filter = initialRoute.filter,
+    source = initialRoute.source,
     input = "";
   let navigationRevision = 0;
   let problemRevision = 0;
@@ -137,11 +164,16 @@ export async function feedReader(root: HTMLElement) {
     connecting = true;
   const searchIndex = new ArticleSearch();
   let searchPreparation: Promise<boolean> | null = null;
-  let searchQuery = "",
+  let searchQuery = initialRoute.query,
     searchProblem = "",
-    pageNumber = 0;
-  let paginationKey = "";
-  let tagFilter = "";
+    pageNumber = initialRoute.page;
+  let paginationKey = JSON.stringify([
+    initialRoute.query.trim(),
+    source,
+    filter,
+    initialRoute.tag,
+  ]);
+  let tagFilter = initialRoute.tag;
   const tagCounts = new Map<string, number>();
   const emptyCounts = { all: 0, unread: 0, saved: 0, pending: 0 };
   // null is the whole library; an empty feed URL is a standalone article.
@@ -153,7 +185,7 @@ export async function feedReader(root: HTMLElement) {
   let tagBatchController: AbortController | null = null;
   let tagProgress = "";
   let composing = false;
-  let displayedQuery = "";
+  let displayedQuery = initialRoute.query;
   const pageSize = 50;
   let epoch = 0;
   const importing = new Set<string>();
@@ -220,13 +252,25 @@ export async function feedReader(root: HTMLElement) {
   settings.setAttribute("aria-labelledby", "rss-settings-title");
   const settingsTitle = el("h2", "設定・保存先");
   settingsTitle.id = "rss-settings-title";
-  const settingsOpen = button("設定", () => settings.showModal());
-  const settingsClose = button("閉じる", () => settings.close());
+  const settingsOpen = button("設定", () => {
+    settings.showModal();
+    updateLocation();
+  });
+  const closeSettings = () => {
+    settings.close();
+    updateLocation();
+  };
+  const settingsClose = button("閉じる", closeSettings);
+  settings.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    closeSettings();
+  });
   settingsClose.className = "rss-settings-close";
   const settingsHeader = el("div", undefined, "rss-settings-header");
   const settingsBody = el("div", undefined, "rss-settings-body");
   settingsHeader.append(settingsTitle, settingsClose);
   settings.append(settingsHeader, settingsBody);
+  settings.addEventListener("close", () => updateLocation());
   settingsBody.append(
     designSettings,
     el(
@@ -479,7 +523,15 @@ export async function feedReader(root: HTMLElement) {
   const importHeading = el("h2", "サイト・記事の取り込み");
   importHeading.id = "rss-import-title";
   importDialog.setAttribute("aria-labelledby", importHeading.id);
-  const importClose = button("元の画面へ戻る", () => importDialog.close());
+  const closeImport = () => {
+    importDialog.close();
+    updateLocation();
+  };
+  const importClose = button("元の画面へ戻る", closeImport);
+  importDialog.addEventListener("cancel", (event) => {
+    event.preventDefault();
+    closeImport();
+  });
   const importHeader = el("div", undefined, "rss-settings-header");
   const importBody = el("div", undefined, "rss-settings-body");
   importHeader.append(importHeading, importClose);
@@ -650,7 +702,9 @@ export async function feedReader(root: HTMLElement) {
       navigationRevision++;
       displayedQuery = searchQuery;
       pageNumber = 0;
+      replaceRoute = true;
       render();
+      replaceRoute = false;
     }
   };
   searchField.addEventListener("compositionend", () => {
@@ -715,6 +769,25 @@ export async function feedReader(root: HTMLElement) {
     }
   }
   function updateLocation() {
+    if (routeReady && !restoringRoute) {
+      const next = {
+        article: selected,
+        filter,
+        source,
+        query: searchQuery,
+        tag: tagFilter,
+        page: pageNumber,
+        screen: settings.open ? "settings" : importDialog.open ? "import" : "",
+      };
+      if (JSON.stringify(next) !== JSON.stringify(lastRoute)) {
+        const sameArticle = next.article && next.article === lastRoute.article;
+        pushReaderURL(
+          readerRouteURL(next, sameArticle ? location.hash : ""),
+          replaceRoute,
+        );
+        lastRoute = next;
+      }
+    }
     const article = selected
       ? articles[articlePositions.get(selected) ?? -1]
       : undefined;
@@ -728,8 +801,65 @@ export async function feedReader(root: HTMLElement) {
       importing: importDialog.open,
     });
   }
-  if (new URLSearchParams(location.search).get("screen") === "import")
-    openImport();
+  if (initialRoute.screen === "import") openImport();
+  if (initialRoute.screen === "settings") settings.showModal();
+
+  function revealPendingAnchor() {
+    const pending = pendingAnchor;
+    if (!pending) return;
+    if (pending.url !== location.href) {
+      pendingAnchor = null;
+      return;
+    }
+    requestAnimationFrame(() => {
+      if (pendingAnchor !== pending || pending.url !== location.href) return;
+      if (revealReaderAnchor(pending.hash)) pendingAnchor = null;
+      else if (!pending.attempted) {
+        window.scrollTo(0, pending.fallback);
+        pending.attempted = true;
+      }
+    });
+  }
+  function restoreRoute() {
+    pendingAnchor = {
+      url: location.href,
+      hash: location.hash,
+      fallback: Number(history.state?.readerScroll) || 0,
+      attempted: false,
+    };
+    restoringRoute = true;
+    navigationRevision++;
+    const route = readReaderRoute();
+    const sourceHeading = /^#rss-section-\d+$/.test(location.hash);
+    if (sourceHeading) translatedView = false;
+    selected = route.article;
+    filter = route.filter;
+    source = route.source;
+    searchQuery = displayedQuery = route.query;
+    tagFilter = route.tag;
+    pageNumber = route.page;
+    paginationKey = JSON.stringify([
+      route.query.trim(),
+      source,
+      filter,
+      tagFilter,
+    ]);
+    if (route.screen === "settings") {
+      if (!settings.open) settings.showModal();
+    } else if (settings.open) settings.close();
+    if (route.screen === "import") openImport();
+    else finishImport();
+    lastRoute = route;
+    render();
+    restoringRoute = false;
+    const article = selected
+      ? articles[articlePositions.get(selected) ?? -1]
+      : undefined;
+    if (article && !article.read) void change(article, "read", true);
+    if (article && !sourceHeading) autoTranslateSelected();
+    revealPendingAnchor();
+  }
+  window.addEventListener("popstate", restoreRoute);
 
   function canCollect() {
     return (
@@ -2068,9 +2198,9 @@ export async function feedReader(root: HTMLElement) {
       : undefined;
     const article =
       selectedPosition === undefined ? undefined : articles[selectedPosition];
-    if (readerIdentity !== selected) {
+    if (readerIdentity !== (article?.id ?? null)) {
       cancelReading();
-      readerIdentity = selected;
+      readerIdentity = article?.id ?? null;
       const active = article;
       originalLanguage =
         articleLanguage(active?.content?.language) ||
@@ -2196,7 +2326,6 @@ export async function feedReader(root: HTMLElement) {
     const discoveryHost = discoveryInDialog ? importBody : main;
     if (discoveryPanel.parentNode !== discoveryHost)
       discoveryHost.append(discoveryPanel);
-    updateLocation();
     if (article) {
       main.classList.add("rss-reading");
       layout.classList.toggle("rss-focused", readerFocused);
@@ -2770,7 +2899,7 @@ export async function feedReader(root: HTMLElement) {
         page: pageNumber,
         pageSize,
       });
-      pageNumber = result.page;
+      if (!preparing && !connecting) pageNumber = result.page;
       listView.update({
         items: result.items,
         metadata: (item) =>
@@ -2793,21 +2922,24 @@ export async function feedReader(root: HTMLElement) {
         pagination: result.count > pageSize,
         previousDisabled: pageNumber === 0,
         nextDisabled: (pageNumber + 1) * pageSize >= result.count,
-        empty: result.count
-          ? ""
-          : query
-            ? preparing
-              ? "検索準備中です。検索を解除すると記事を読めます。"
-              : "一致する記事はありません。語句や絞り込みを変更してください。"
-            : connecting
-              ? "保存した記事を読み込んでいます…"
-              : !feeds.length
-                ? "気になるサイトを追加すると、ここに記事が届きます。サイトのURLから探すか、公開フィードから試してください。"
-                : filter === "saved"
-                  ? "まだ保存した記事はありません。記事を開いて「この記事を保存」を押してください。"
-                  : filter === "unread"
-                    ? "未読の記事はありません。"
-                    : "まだ記事がありません。配信元を更新してください。",
+        empty:
+          selected && !connecting
+            ? "このURLの記事は現在のライブラリにありません。記事を保存したブラウザ・アカウントで開いてください。"
+            : result.count
+              ? ""
+              : query
+                ? preparing
+                  ? "検索準備中です。検索を解除すると記事を読めます。"
+                  : "一致する記事はありません。語句や絞り込みを変更してください。"
+                : connecting
+                  ? "保存した記事を読み込んでいます…"
+                  : !feeds.length
+                    ? "気になるサイトを追加すると、ここに記事が届きます。サイトのURLから探すか、公開フィードから試してください。"
+                    : filter === "saved"
+                      ? "まだ保存した記事はありません。記事を開いて「この記事を保存」を押してください。"
+                      : filter === "unread"
+                        ? "未読の記事はありません。"
+                        : "まだ記事がありません。配信元を更新してください。",
       });
     }
     // Persistent reader panels are detached and reattached during a refresh.
@@ -2825,6 +2957,11 @@ export async function feedReader(root: HTMLElement) {
       if (selection && restored instanceof HTMLInputElement)
         restored.setSelectionRange(selection[0], selection[1]);
     }
+    updateLocation();
+    root
+      .querySelectorAll<HTMLAnchorElement>("a[data-reader-target]")
+      .forEach(updateReadingLink);
+    revealPendingAnchor();
   }
   channel?.addEventListener("message", (event) => {
     const id =
@@ -2841,7 +2978,10 @@ export async function feedReader(root: HTMLElement) {
         ),
       );
   });
+  routeReady = true;
+  restoringRoute = false;
   await connect();
+  restoreRoute();
   if (speech.supported) {
     // The reader owns this document. Keep the listener through bfcache restores;
     // navigation destroys it with the document, while pagehide already stops speech.

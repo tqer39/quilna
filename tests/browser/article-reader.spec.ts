@@ -32,10 +32,9 @@ async function add(page: Page, pending = false) {
 }
 async function reopen(page: Page) {
   await page.reload();
-  await page.getByRole("button", { name: /保存した記事 · 1/ }).click();
-  await page
-    .getByRole("button", { name: "Collected article", exact: true })
-    .click();
+  await expect(
+    page.getByRole("heading", { name: "Collected article", exact: true }),
+  ).toBeVisible();
   await openReaderTools(page);
 }
 test("direct article imports safe text and saved original survives reload and a network outage", async ({
@@ -91,7 +90,9 @@ test("failed extraction preserves a saved link and retry recovers without duplic
     "本文なし・リンク情報のみ",
   );
   await page.reload();
-  await page.getByRole("button", { name: url, exact: true }).click();
+  await expect(
+    page.getByRole("heading", { name: url, exact: true }),
+  ).toBeVisible();
   await expect(
     page.getByRole("button", { name: "本文の取得を再試行" }),
   ).toBeVisible();
@@ -867,7 +868,9 @@ test("late import preserves current article and concurrent saved flags", async (
     await route.fulfill({ json: { url, html } });
   });
   await page.reload();
-  await page.getByRole("button", { name: url, exact: true }).click();
+  await page
+    .getByRole("button", { name: "本文を取り込む", exact: true })
+    .click();
   await expect.poll(() => !!release).toBe(true);
   await page.getByRole("button", { name: "← 記事一覧へ", exact: true }).click();
   await page
@@ -902,6 +905,7 @@ test("late import preserves current article and concurrent saved flags", async (
     page.getByRole("heading", { name: "Other article", exact: true }),
   ).toBeVisible();
   await page.getByRole("button", { name: "← 記事一覧へ", exact: true }).click();
+  await page.getByRole("button", { name: /すべての記事 · 2/ }).click();
   await page
     .getByRole("button", { name: "Collected article", exact: true })
     .click();

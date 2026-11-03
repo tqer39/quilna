@@ -69,9 +69,13 @@ async function fixture(page: Page, waitReady = true) {
       .click();
 }
 async function open(page: Page) {
-  await page
-    .getByRole("button", { name: "Highlight article a", exact: true })
-    .click();
+  if (new URL(page.url()).searchParams.get("article") !== "a")
+    await page
+      .getByRole("button", { name: "Highlight article a", exact: true })
+      .click();
+  await expect(
+    page.getByRole("heading", { name: "Highlight article a", exact: true }),
+  ).toBeVisible();
   await expect(
     page.getByRole("button", {
       name: "引用の候補を探す",

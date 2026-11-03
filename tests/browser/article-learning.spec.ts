@@ -220,9 +220,9 @@ for (const design of ["studio", "editorial", "focus"])
     expect(initial.source.quote).toBe("Evidence a.");
     expect(initial.source.note).toBe("メモ 0");
     await page.reload();
-    await page
-      .getByRole("button", { name: "Quote article a", exact: true })
-      .click();
+    await expect(
+      page.getByRole("heading", { name: "Quote article a", exact: true }),
+    ).toBeVisible();
     await openReaderTools(page);
     await panel(page).locator("summary").click();
     await expect(records(page)).toContainText(initial.reflection);
@@ -355,9 +355,9 @@ test("snapshots survive deleted highlights and changed source text without movin
     });
   });
   await page.reload();
-  await page
-    .getByRole("button", { name: "Quote article a", exact: true })
-    .click();
+  await expect(
+    page.getByRole("heading", { name: "Quote article a", exact: true }),
+  ).toBeVisible();
   await openReaderTools(page);
   await panel(page).locator("summary").click();
   await expect(records(page)).toContainText("Evidence a.");

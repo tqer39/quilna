@@ -50,9 +50,16 @@ async function fixture(page: Page, waitReady = true) {
   await open(page, "a", waitReady);
 }
 async function open(page: Page, id: string, waitReady = true) {
-  await page
-    .getByRole("button", { name: `Connection article ${id}`, exact: true })
-    .click();
+  if (new URL(page.url()).searchParams.get("article") !== id)
+    await page
+      .getByRole("button", { name: `Connection article ${id}`, exact: true })
+      .click();
+  await expect(
+    page.getByRole("heading", {
+      name: `Connection article ${id}`,
+      exact: true,
+    }),
+  ).toBeVisible();
   await openReaderTools(page);
   await page.locator("#rss-connections > details > summary").click();
   if (waitReady)

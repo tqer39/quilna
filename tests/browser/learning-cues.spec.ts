@@ -100,9 +100,10 @@ async function fixture(
   await open(page);
 }
 async function open(page: Page, id = "a") {
-  await page
-    .getByRole("button", { name: `Learning article ${id}`, exact: true })
-    .click();
+  if (new URL(page.url()).searchParams.get("article") !== id)
+    await page
+      .getByRole("button", { name: `Learning article ${id}`, exact: true })
+      .click();
   await expect(page.locator("#rss-current-title")).toHaveText(
     `Learning article ${id}`,
   );

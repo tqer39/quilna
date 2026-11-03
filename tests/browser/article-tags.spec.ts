@@ -86,6 +86,10 @@ test("imported articles get explained tags; corrections persist, filter and sear
     "自分のタグ：仕事・あとで読む",
   );
   await page.reload();
+  if (new URL(page.url()).searchParams.has("article"))
+    await page
+      .getByRole("button", { name: "← 記事一覧へ", exact: true })
+      .click();
   await page.getByLabel("保存領域の記事を検索").fill("仕事");
   await expect(page.locator("#rss-search-status")).toContainText("1件");
   await page.getByLabel("タグで絞り込み").selectOption("tag:あとで読む");
@@ -177,6 +181,10 @@ test("legacy backfill distinguishes unknown and missing content and preserves co
     state.tags.suggestions.map((item: { tag: string }) => item.tag),
   ).toEqual(["暮らし・健康"]);
   await page.reload();
+  if (new URL(page.url()).searchParams.has("article"))
+    await page
+      .getByRole("button", { name: "← 記事一覧へ", exact: true })
+      .click();
   await page.getByLabel("タグで絞り込み").selectOption("tag:自分の分類");
   await expect(
     page.getByRole("button", { name: "Nutrition and health", exact: true }),
