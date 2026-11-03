@@ -7,25 +7,18 @@
 このリポジトリは [dev-standards](https://github.com/tqer39/dev-standards) の主コンポーネントに `node-npm` を採用し、Go/Swift パッケージを companion として明示的に宣言します。
 各検査の範囲は[言語選定記録](decisions/0001-language.ja.md)を参照してください。
 混在パッケージの対応と検証タスクの重複拒否は、[本体 PR #13](https://github.com/tqer39/dev-standards/pull/13) で `main` にマージされました。
-採用する `0.4.2` のソースは `.standards/cli-source.json` でマージコミットに固定します。そのコミットをビルドし、リリースタグや PR ブランチには依存しません。
+現在の CLI の版は `.standards/lock.json` で固定します。`standards:install` は、その版の Go モジュールを取得し、Git で除外したローカル CLI キャッシュを配置します。初回導入のソース記録は `.standards/adoption-source.json` に保持し、以後のセットアップの版選択には使いません。
 
-新しい checkout では、ソースを別途 clone し、固定した Go ツールチェーンで CLI をビルドします。
+新しい checkout では次を実行します。
 
 ```bash
-git clone --branch main https://github.com/tqer39/dev-standards.git ../dev-standards
-cd ../dev-standards
-git checkout --detach da61121476f3e6758a3e729e010d30d190408bc3
 mise trust
-mise run build
-cd ../quilna
-../dev-standards/bin/dev-standards sync
-mise trust
+mise run standards:install
 mise run bootstrap
 mise run standards:prepare
 ```
 
-`../quilna` と異なる場合は、実際の checkout ディレクトリに置き換えてください。
-sync 前に `.standards/lock.json` とソース CLI の `version` 出力を照合してください。異なるバンドルを暗黙に更新する手順ではありません。
+Go モジュールの取得とチェックサム検証にはネットワーク接続が必要です。自動更新後のセットアップも更新済みロックに従い、以前のソースコミットを再導入しません。
 CLI キャッシュは非公開のローカルデータとして Git から除外します。Node.js と Go の版は mise に固定し、macOS に Swift/Xcode を用意します。
 Swift companion があるため、共通検証は現在 macOS で実行します。
 既存のブラウザ/Go の Linux ジョブと Apple CI は変更しません。
@@ -38,6 +31,8 @@ mise run standards:finish
 
 `standards:verify` はブラウザの lint・整形検査・単体/サーバーテスト・ビルド、続けて Go の整形/vet/race テストと Swift パッケージのテスト/macOS ビルドを実行します。
 ブラウザ E2E、Workers テスト、iOS ビルド、ネイティブ UI の受け入れ、性能ベンチマークは実行しません。
+起動・隔離の単体プローブは OS が割り当てるループバックポートを使い、別 checkout の開発サーバーと共存します。本来のブラウザ設定のポートと、他アプリのサーバーを拒否する条件は維持します。
+
 これらの検査は既存タスクと CI に保持します。ブラウザの整形対象は `src/`、`server/`、`workers/` で、Markdown は既存の文書検査・Markdown lint を継続します。
 Codex hooks は設定と検証の確認を要求します。新しい checkout では CLI キャッシュと、アプリ標準のプロジェクト/hook の信頼設定が必要です。
 
