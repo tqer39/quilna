@@ -28,6 +28,15 @@ for (const ancestor of [".local-state", "playwright-report"])
       });
       try {
         await server.listen();
+        // HTTP readiness does not establish filesystem watcher readiness.
+        const watchDeadline = Date.now() + 5000;
+        while (!server.watcher.getWatched()[root]?.includes("main.js")) {
+          assert.ok(
+            Date.now() < watchDeadline,
+            "fixture source must be watched before it is served or changed",
+          );
+          await new Promise((accept) => setTimeout(accept, 10));
+        }
         const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
         const module = () =>
           fetch(`${origin}/main.js`).then((response) => response.text());
