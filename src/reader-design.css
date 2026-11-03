@@ -1495,3 +1495,27 @@
   margin: 0;
   padding: 0;
 }
+
+/* Keep card interaction visible for pointer and keyboard readers. */
+:root[data-reader-design] .rss-article-list li:hover,
+:root[data-reader-design] .rss-article-list li:focus-within {
+  background: var(--viewer-soft);
+  border-color: var(--viewer-accent);
+}
+.rss-reading-duration {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+.rss-reading-duration svg {
+  width: 14px;
+  height: 14px;
+}
+
+.rss-reading-duration svg,
+.rss-site-icon svg {
+  margin: 0;
+  flex-shrink: 0;
+}

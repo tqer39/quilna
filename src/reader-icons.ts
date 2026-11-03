@@ -1,4 +1,4 @@
-export function readerIcon(kind: "copy" | "preview" | "site") {
+export function readerIcon(kind: "copy" | "preview" | "site" | "clock") {
   const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
   svg.setAttribute("viewBox", "0 0 24 24");
   svg.setAttribute("width", "18");
@@ -14,7 +14,9 @@ export function readerIcon(kind: "copy" | "preview" | "site") {
       ? "M9 9h11v11H9z M15 5V3H3v12h2"
       : kind === "preview"
         ? "M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12zm10-3a3 3 0 1 0 0 6 3 3 0 0 0 0-6"
-        : "M4 4h16v16H4z M4 9h16 M9 9v11",
+        : kind === "clock"
+          ? "M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18 M12 7v5l3 2"
+          : "M4 4h16v16H4z M4 9h16 M9 9v11",
   );
   svg.append(path);
   return svg;
