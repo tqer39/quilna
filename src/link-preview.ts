@@ -163,6 +163,7 @@ async function fetchPreview(safe: string, signal?: AbortSignal) {
 const titledTargets = new Set<HTMLAnchorElement>();
 let titleQueue = Promise.resolve();
 let titleRequests = 0;
+let titleCleanupQueued = false;
 const titleObserver =
   typeof IntersectionObserver === "undefined"
     ? null
@@ -190,7 +191,7 @@ const titleObserver =
                 anchor.classList.add("rss-titled-link");
                 anchor.setAttribute(
                   "aria-label",
-                  `${preview.title} — ${new URL(anchor.href).hostname}`,
+                  `${preview.title} — ${anchor.href}`,
                 );
               } catch {
                 // Keep the original URL usable when metadata cannot be retrieved.
@@ -279,14 +280,22 @@ export async function showLinkPreview(url: string, source?: HTMLElement) {
   }
 }
 export function decorateArticleLink(anchor: HTMLAnchorElement, url: string) {
-  if (anchor.textContent?.trim() === url && url.startsWith("https:")) {
-    queueMicrotask(() => {
-      for (const target of titledTargets)
-        if (!target.isConnected) {
-          titleObserver?.unobserve(target);
-          titledTargets.delete(target);
-        }
-    });
+  if (
+    !new URL(url).search &&
+    safeArticleLink(anchor.textContent?.trim() ?? "") === url &&
+    url.startsWith("https:")
+  ) {
+    if (!titleCleanupQueued) {
+      titleCleanupQueued = true;
+      queueMicrotask(() => {
+        titleCleanupQueued = false;
+        for (const target of titledTargets)
+          if (!target.isConnected) {
+            titleObserver?.unobserve(target);
+            titledTargets.delete(target);
+          }
+      });
+    }
     titledTargets.add(anchor);
     titleObserver?.observe(anchor);
   }

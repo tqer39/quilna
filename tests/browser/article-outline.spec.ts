@@ -242,3 +242,49 @@ test("translation and another article never reuse the original heading map", asy
   await expect(outline).toContainText("この記事には見出し情報がありません");
   await expect(outline.locator("a")).toHaveCount(0);
 });
+
+test("an article that fits the viewport starts at its first heading", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1200, height: 1600 });
+  await page.goto("/?view=feeds");
+  await page.evaluate(async () => {
+    const path = "/src/article-outline.ts";
+    const { ArticleOutline } = await import(path);
+    const text = "First\nSecond\nThird";
+    const headings = ["First", "Second", "Third"].map((label) => ({
+      start: text.indexOf(label),
+      end: text.indexOf(label) + label.length,
+      level: 2,
+    }));
+    const body = document.createElement("article");
+    for (const heading of headings) {
+      const h = document.createElement("h2");
+      h.id = `rss-section-${heading.start}`;
+      h.textContent = text.slice(heading.start, heading.end);
+      body.append(h);
+    }
+    const outline = new ArticleOutline();
+    document.body.replaceChildren(
+      outline.mount(
+        "short",
+        text,
+        { version: 1, headings, links: [] },
+        false,
+        body,
+      ),
+      body,
+    );
+  });
+  expect(
+    await page.evaluate(
+      () => document.documentElement.scrollHeight <= innerHeight,
+    ),
+  ).toBe(true);
+  await expect(
+    page.getByRole("link", { name: "First", exact: true }),
+  ).toHaveAttribute("aria-current", "location");
+  await expect(
+    page.getByRole("link", { name: "Third", exact: true }),
+  ).not.toHaveAttribute("aria-current", "location");
+});

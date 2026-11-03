@@ -48,7 +48,11 @@ export function codeTokens(text: string): Token[] {
     text
       .trim()
       .split(/\r?\n/)
-      .every((line) => /^(?:%[A-Z_]+%|[A-Za-z]:\\|\/)[^\n]*$/.test(line.trim()))
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .every((line) =>
+        /^(?:%[A-Za-z_][A-Za-z0-9_]*%\\|[A-Za-z]:\\)[^\n]*$/.test(line),
+      )
   )
     return plain;
   const cached = cache.get(text);

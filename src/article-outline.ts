@@ -134,9 +134,10 @@ export class ArticleOutline {
     const scrollMargin = firstHeading
       ? parseFloat(getComputedStyle(firstHeading).scrollMarginTop) || 0
       : 0;
+    const scrollHeight = document.documentElement.scrollHeight;
     const atBottom =
-      window.scrollY + window.innerHeight >=
-      document.documentElement.scrollHeight - 2;
+      scrollHeight > window.innerHeight + 2 &&
+      window.scrollY + window.innerHeight >= scrollHeight - 2;
     const top = atBottom
       ? window.innerHeight
       : Math.max(scrollMargin, toolbar?.getBoundingClientRect().bottom ?? 0) +
