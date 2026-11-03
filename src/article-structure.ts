@@ -23,6 +23,21 @@ export type ArticleBlock = {
   colspan?: number;
   rowspan?: number;
 };
+/** Permitted nesting, keyed by parent tag; "" is the article body. */
+export const articleBlockChildren: Record<string, readonly string[]> = {
+  "": ["ul", "ol", "table"],
+  ul: ["li"],
+  ol: ["li"],
+  li: ["ul", "ol", "table"],
+  table: ["thead", "tbody", "tfoot", "tr", "caption"],
+  thead: ["tr"],
+  tbody: ["tr"],
+  tfoot: ["tr"],
+  tr: ["th", "td"],
+  th: ["ul", "ol", "table"],
+  td: ["ul", "ol", "table"],
+  caption: [],
+};
 /** Bounded, nested ranges contain only allowlisted semantic elements, never HTML. */
 export function validArticleBlocks(
   text: string,
@@ -34,20 +49,6 @@ export function validArticleBlocks(
     { items: value, start: 0, end: text.length, depth: 0, parent: "" },
   ];
   let count = 0;
-  const allowed: Record<string, readonly string[]> = {
-    "": ["ul", "ol", "table"],
-    ul: ["li"],
-    ol: ["li"],
-    li: ["ul", "ol", "table"],
-    table: ["thead", "tbody", "tfoot", "tr", "caption"],
-    thead: ["tr"],
-    tbody: ["tr"],
-    tfoot: ["tr"],
-    tr: ["th", "td"],
-    th: ["ul", "ol", "table"],
-    td: ["ul", "ol", "table"],
-    caption: [],
-  };
   while (stack.length) {
     const frame = stack.pop()!;
     let end = frame.start;
@@ -57,7 +58,7 @@ export function validArticleBlocks(
         frame.depth > 32 ||
         !block ||
         typeof block !== "object" ||
-        !allowed[frame.parent]?.includes(block.tag) ||
+        !articleBlockChildren[frame.parent]?.includes(block.tag) ||
         !Array.isArray(block.children) ||
         !Number.isSafeInteger(block.start) ||
         !Number.isSafeInteger(block.end) ||

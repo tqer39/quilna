@@ -1,7 +1,7 @@
 import type { ArticleCodeRange } from "./document-format";
 import {
   safeArticleLink,
-  articleBlockTags,
+  articleBlockChildren,
   type ArticleBlock,
   type ArticleStructure,
   validArticleBlocks,
@@ -101,7 +101,9 @@ export function serializeArticle(
     }
     const start = rawLength;
     let block: ArticleBlock | undefined;
-    if ((articleBlockTags as readonly string[]).includes(tag)) {
+    // Publisher markup is often invalid (a list directly inside a list, stray
+    // items). Skip those wrappers so their text stays readable in the flow.
+    if (articleBlockChildren[containers.at(-1)?.tag ?? ""]?.includes(tag)) {
       block = {
         tag: tag as ArticleBlock["tag"],
         start,
@@ -190,8 +192,6 @@ export function serializeArticle(
       children: convertBlocks(block.children),
     }));
   const layout = convertBlocks(blocks);
-  if (!validArticleBlocks(text, layout))
-    throw Error("記事のリスト・表の構造が複雑すぎるため取り込めませんでした。");
   return {
     text,
     codeRanges,
@@ -199,7 +199,8 @@ export function serializeArticle(
       version: 1,
       links: convert(links),
       headings: convert(headings),
-      blocks: layout,
+      // Structure beyond the limits must not cost the reader the article's text.
+      blocks: validArticleBlocks(text, layout) ? layout : [],
     },
   };
 }
