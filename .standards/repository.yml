@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "standard": {
     "repository": "tqer39/dev-standards",
-    "version": "0.4.5"
+    "version": "0.4.6"
   },
   "platforms": [
     "macos"
@@ -47,6 +47,9 @@
     "rollout": "standard"
   },
   "ci": {
+    "pushBranches": [
+      "main"
+    ],
     "prBudgetSeconds": 600,
     "minimumSamples": 20,
     "breachWindows": 2
