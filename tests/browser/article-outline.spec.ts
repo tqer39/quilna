@@ -119,7 +119,8 @@ for (const design of ["studio", "editorial", "focus"])
         const toolbar = await page
           .locator(".rss-reader-navigation")
           .boundingBox();
-        return heading!.y - (toolbar!.y + toolbar!.height);
+        if (!heading || !toolbar) return -Infinity;
+        return heading.y - (toolbar.y + toolbar.height);
       })
       .toBeGreaterThanOrEqual(12);
     await expect(duplicates.nth(1)).toHaveAttribute("aria-current", "location");

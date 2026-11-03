@@ -193,3 +193,99 @@ test("article and heading URLs survive reload and browser back/forward", async (
     page.getByRole("dialog", { name: "設定・保存先" }),
   ).not.toBeVisible();
 });
+
+test("late heading arrival, current jump links and RSS-only translations survive URL restoration", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("quilna.article.updates.v1", "false");
+    localStorage.setItem("quilna.feed.refresh.v1", "0");
+    localStorage.setItem(
+      "quilna.reader.preferences.v1",
+      JSON.stringify({ targetLanguage: "ja", automatic: true }),
+    );
+  });
+  await page.route("**/api/collection", (r) =>
+    r.fulfill({ status: 404, json: {} }),
+  );
+  const lead = "Long source paragraph.\n\n".repeat(100),
+    text = lead + "Late heading\n\nEnd.";
+  await page.goto(`/?view=feeds&article=late#rss-section-${lead.length}`);
+  await expect(
+    page.getByText("このURLの記事は現在のライブラリにありません。", {
+      exact: false,
+    }),
+  ).toBeVisible();
+  await page.evaluate(
+    async ({ text, start }) => {
+      const path = "/src/feed-store.ts",
+        { openFeedLibrary } = await import(path),
+        db = await openFeedLibrary();
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction("articles", "readwrite");
+        for (const id of ["late", "rss-only"])
+          tx.objectStore("articles").put({
+            id,
+            title: id,
+            url: id === "late" ? "https://example.org/late" : "",
+            feedUrl: "",
+            body: text,
+            published: null,
+            saved: true,
+            read: true,
+            fetchedAt: new Date().toISOString(),
+            ...(id === "late"
+              ? {
+                  content: {
+                    title: id,
+                    url: "https://example.org/late",
+                    text,
+                    language: "en",
+                    fetchedAt: new Date().toISOString(),
+                    structure: {
+                      version: 1,
+                      links: [],
+                      headings: [{ start, end: start + 12, level: 2 }],
+                    },
+                  },
+                }
+              : {
+                  translation: {
+                    text: "保存済みの日本語本文",
+                    sourceText: text,
+                    sourceLanguage: "en",
+                    targetLanguage: "ja",
+                  },
+                }),
+          });
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+      });
+      db.close();
+      const c = new BroadcastChannel("tsumiki.rss.v1");
+      c.postMessage("changed");
+      c.close();
+    },
+    { text, start: lead.length },
+  );
+  await expect(page.locator(`#rss-section-${lead.length}`)).toBeInViewport();
+  const jump = page.locator(".rss-header a[data-reader-target]");
+  expect(
+    new URL((await jump.getAttribute("href"))!).searchParams.get("article"),
+  ).toBe("late");
+  await page
+    .getByRole("navigation", { name: "主な移動先" })
+    .getByRole("link", { name: "記事一覧", exact: true })
+    .click();
+  expect(
+    new URL((await jump.getAttribute("href"))!).searchParams.has("article"),
+  ).toBe(false);
+  await page.goto("/?view=feeds&article=rss-only");
+  await expect(page.locator(".rss-source-text")).toContainText(
+    "保存済みの日本語本文",
+  );
+  await page.reload();
+  await expect(page.locator(".rss-source-text")).toContainText(
+    "保存済みの日本語本文",
+  );
+});

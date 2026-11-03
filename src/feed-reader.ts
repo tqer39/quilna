@@ -107,13 +107,18 @@ import {
 export async function feedReader(root: HTMLElement) {
   document.title = "情報収集 | Quilna";
   const designSettings = readerDesignSettings();
-  function readingJump(label: string, targetId: string) {
-    const link = el("a", label, "rss-text-link");
+  function updateReadingLink(link: HTMLAnchorElement) {
     const destination = new URL(location.href);
     destination.searchParams.set("view", "feeds");
     if (selected) destination.searchParams.set("article", selected);
-    destination.hash = targetId;
+    else destination.searchParams.delete("article");
+    destination.hash = link.dataset.readerTarget!;
     link.href = destination.href;
+  }
+  function readingJump(label: string, targetId: string) {
+    const link = el("a", label, "rss-text-link");
+    link.dataset.readerTarget = targetId;
+    updateReadingLink(link);
     link.addEventListener("click", (event) => {
       if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey)
         return;
@@ -140,6 +145,12 @@ export async function feedReader(root: HTMLElement) {
   const initialRoute = readReaderRoute();
   let restoringRoute = true;
   let routeReady = false;
+  let pendingAnchor: {
+    url: string;
+    hash: string;
+    fallback: number;
+    attempted: boolean;
+  } | null = null;
   let lastRoute = initialRoute;
   let replaceRoute = false;
   let selected: string | null = initialRoute.article,
@@ -793,7 +804,29 @@ export async function feedReader(root: HTMLElement) {
   if (initialRoute.screen === "import") openImport();
   if (initialRoute.screen === "settings") settings.showModal();
 
+  function revealPendingAnchor() {
+    const pending = pendingAnchor;
+    if (!pending) return;
+    if (pending.url !== location.href) {
+      pendingAnchor = null;
+      return;
+    }
+    requestAnimationFrame(() => {
+      if (pendingAnchor !== pending || pending.url !== location.href) return;
+      if (revealReaderAnchor(pending.hash)) pendingAnchor = null;
+      else if (!pending.attempted) {
+        window.scrollTo(0, pending.fallback);
+        pending.attempted = true;
+      }
+    });
+  }
   function restoreRoute() {
+    pendingAnchor = {
+      url: location.href,
+      hash: location.hash,
+      fallback: Number(history.state?.readerScroll) || 0,
+      attempted: false,
+    };
     restoringRoute = true;
     navigationRevision++;
     const route = readReaderRoute();
@@ -823,11 +856,8 @@ export async function feedReader(root: HTMLElement) {
       ? articles[articlePositions.get(selected) ?? -1]
       : undefined;
     if (article && !article.read) void change(article, "read", true);
-    if (article?.content && !sourceHeading) autoTranslateSelected();
-    requestAnimationFrame(() => {
-      if (!revealReaderAnchor())
-        window.scrollTo(0, Number(history.state?.readerScroll) || 0);
-    });
+    if (article && !sourceHeading) autoTranslateSelected();
+    revealPendingAnchor();
   }
   window.addEventListener("popstate", restoreRoute);
 
@@ -2928,6 +2958,11 @@ export async function feedReader(root: HTMLElement) {
         restored.setSelectionRange(selection[0], selection[1]);
     }
     updateLocation();
+    for (const link of root.querySelectorAll<HTMLAnchorElement>(
+      "a[data-reader-target]",
+    ))
+      updateReadingLink(link);
+    revealPendingAnchor();
   }
   channel?.addEventListener("message", (event) => {
     const id =
