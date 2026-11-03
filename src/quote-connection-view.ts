@@ -163,6 +163,7 @@ export class QuoteConnectionView {
   }
   begin(quote: ArticleHighlight) {
     if (this.busy || this.draft) {
+      this.root.closest(".rss-reading-extras")?.setAttribute("open", "");
       this.details.open = true;
       this.status.textContent =
         "現在の関連の保存または編集を終えてから、次の引用を選んでください。";
@@ -178,6 +179,7 @@ export class QuoteConnectionView {
       this.writeFailure = "";
       this.savedNotice = "";
       this.source.replaceChildren(this.quoteCard(quote));
+      this.root.closest(".rss-reading-extras")?.setAttribute("open", "");
       this.details.open = true;
       void this.load();
     }

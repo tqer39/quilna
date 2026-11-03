@@ -142,6 +142,7 @@ export class ArticleLearningView {
       this.expected = null;
       this.showDraft();
     }
+    this.root.closest(".rss-reading-extras")?.setAttribute("open", "");
     this.details.open = true;
     void this.load();
     this.root.scrollIntoView({ block: "center" });

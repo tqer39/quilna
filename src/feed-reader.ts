@@ -107,6 +107,13 @@ export async function feedReader(root: HTMLElement) {
     link.addEventListener("click", (event) => {
       event.preventDefault();
       const target = document.getElementById(targetId);
+      for (
+        let parent = target?.parentElement;
+        parent;
+        parent = parent.parentElement
+      )
+        if (parent instanceof HTMLDetailsElement) parent.open = true;
+      if (target instanceof HTMLDetailsElement) target.open = true;
       target?.focus({ preventScroll: true });
       target?.scrollIntoView({ block: "start" });
     });
@@ -573,6 +580,12 @@ export async function feedReader(root: HTMLElement) {
   );
   const outline = new ArticleOutline();
   let readerFocused = true;
+  const readingExtras = el("details", undefined, "rss-reading-extras");
+  readingExtras.id = "rss-reading-extras";
+  readingExtras.tabIndex = -1;
+  readingExtras.append(el("summary", "メモ・学び・読書の設定"));
+  const extraContents = el("div");
+  readingExtras.append(extraContents);
   const focusToggle = button("配信元", () => {
     readerFocused = !readerFocused;
     render();
@@ -580,12 +593,6 @@ export async function feedReader(root: HTMLElement) {
   focusToggle.id = "rss-focus-toggle";
   const readerNavigation = locationNavigation.reader;
   readerNavigation.setAttribute("aria-label", "記事の移動");
-  new ResizeObserver(() => {
-    root.style.setProperty(
-      "--rss-navigation-height",
-      `${locationNavigation.root.getBoundingClientRect().height + 16}px`,
-    );
-  }).observe(locationNavigation.root);
   const showOutline = button("目次", () => outline.show());
   showOutline.setAttribute("aria-label", "目次・見出しマップ");
   const returnToList = button("← 記事一覧へ", () => {
@@ -2419,11 +2426,7 @@ export async function feedReader(root: HTMLElement) {
         const jumpToTools = readingJump("翻訳・読み上げ", "rss-reading-tools");
         shortcuts.append(
           jumpToBody,
-          readingJump("ハイライト・メモ", "rss-highlights"),
-          readingJump("自分の学び", "rss-learning-records"),
-          readingJump("学ぶきっかけ", "rss-learning-cues"),
-          readingJump("情報のつながり", "rss-connections"),
-          readingJump("関係図", "rss-graph"),
+          readingJump("メモ・学び", "rss-reading-extras"),
           jumpToTools,
         );
         articleNode.append(shortcuts);
@@ -2660,8 +2663,8 @@ export async function feedReader(root: HTMLElement) {
             sourceText,
           ),
         );
-        articleNode.append(
-          readingLayout,
+        articleNode.append(readingLayout, highlights.selection);
+        extraContents.replaceChildren(
           panel,
           quoteConnections.mount(article.id),
           learningRecords.mount(article.id),
@@ -2682,8 +2685,10 @@ export async function feedReader(root: HTMLElement) {
         appendArticleText(sourceText, text, article.content?.codeRanges);
         articleNode.append(body, tagsPanel);
       }
-      if (readingTools) articleNode.append(readingTools);
-      articleNode.append(documentHistory.root);
+      if (readingTools) {
+        extraContents.append(readingTools, documentHistory.root);
+        articleNode.append(readingExtras);
+      } else articleNode.append(documentHistory.root);
       main.append(articleNode);
     } else {
       outline.detach();

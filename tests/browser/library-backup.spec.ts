@@ -1,3 +1,4 @@
+import { openReaderTools } from "./reader-tools";
 import { test, expect, type Page } from "@playwright/test";
 import { readFile, writeFile } from "node:fs/promises";
 
@@ -327,6 +328,7 @@ for (const design of ["studio", "editorial", "focus"])
     await destination
       .getByRole("button", { name: "Quote article a", exact: true })
       .click();
+    await openReaderTools(destination);
     await destination.locator("#rss-learning-records summary").click();
     await expect(destination.locator("#rss-learning-records")).toContainText(
       "引用から学んだこと",

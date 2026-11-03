@@ -141,6 +141,7 @@ export class ArticleGraphView {
     this.article = undefined;
   }
   showQuote(quote: ArticleHighlight) {
+    this.root.closest(".rss-reading-extras")?.setAttribute("open", "");
     this.details.open = true;
     this.focus({ kind: "quote", quote });
     this.root.scrollIntoView({ block: "center" });

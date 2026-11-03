@@ -1,3 +1,4 @@
+import { openReaderTools } from "./reader-tools";
 import { test, expect, type Page } from "@playwright/test";
 const definition =
   "観察とは、目の前で起きた変化を丁寧に記録して比べることを意味します。";
@@ -109,6 +110,7 @@ async function open(page: Page, id = "a") {
 const panel = (page: Page) =>
   page.getByRole("region", { name: "学ぶきっかけ", exact: true });
 async function show(page: Page) {
+  await openReaderTools(page);
   await panel(page).locator("summary").click();
   await expect(panel(page).getByRole("status")).not.toContainText(
     "探しています",
@@ -170,6 +172,7 @@ test("optional source-bound questions reveal exact text and save editable highli
   });
   await page.reload();
   await open(page);
+  await openReaderTools(page);
   await page.locator("#rss-highlights summary").click();
   await expect(page.locator("#rss-highlights .rss-highlight-memo")).toHaveText(
     first.note,
@@ -189,6 +192,7 @@ test("hiding and restoring questions is optional and scoped to the displayed art
       .first()
       .click();
   await expect(panel(page).getByRole("listitem")).toHaveCount(0);
+  await openReaderTools(page);
   await panel(page).locator("summary").click();
   await show(page);
   await expect(panel(page).getByRole("listitem")).toHaveCount(0);
@@ -295,6 +299,7 @@ test("closing and navigating during a large scan cannot show the previous articl
   page,
 }) => {
   await fixture(page, { long: true });
+  await openReaderTools(page);
   await panel(page).locator("summary").click();
   await page.getByRole("button", { name: "← 記事一覧へ", exact: true }).click();
   await open(page, "b");
@@ -307,6 +312,7 @@ test("closing and navigating during a large scan cannot show the previous articl
   await open(page);
   await show(page);
   await expect(panel(page).getByRole("listitem")).toHaveCount(3);
+  await openReaderTools(page);
   await panel(page).locator("summary").click();
   await show(page);
   await expect(panel(page).getByRole("listitem")).toHaveCount(3);
@@ -324,6 +330,7 @@ test("questions are keyboard reachable and fit 320px in every viewer design", as
     );
     await page.reload();
     await open(page);
+    await openReaderTools(page);
     await panel(page).locator("summary").focus();
     await page.keyboard.press("Enter");
     await expect(panel(page).getByRole("listitem")).toHaveCount(3);
@@ -437,6 +444,7 @@ test("an old scan released after a newer A version is ready cannot replace the n
       { once: true, capture: true },
     );
   });
+  await openReaderTools(page);
   await panel(page).locator("summary").click();
   await expect(panel(page).getByRole("status")).toContainText("探しています");
   expect(

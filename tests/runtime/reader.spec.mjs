@@ -1,3 +1,4 @@
+import { openReaderTools } from "../browser/reader-tools";
 import { test, expect } from "@playwright/test";
 import { createServer } from "node:net";
 import { readFile, readdir } from "node:fs/promises";
@@ -518,6 +519,7 @@ async function runReaderScenario(browser, info, aliasMode) {
       "const value = 1;\n  console.log(value);\n",
     );
     const history = a.page.locator(".rss-document-history");
+    await openReaderTools(a.page);
     await history.locator("summary").click();
     if (aliasMode) {
       await expect(history).toContainText("許可済みの共通本文を表示しています");
@@ -543,6 +545,7 @@ async function runReaderScenario(browser, info, aliasMode) {
       .getByLabel("共有する利用者ID（1行に1人）", { exact: true })
       .fill(a.account);
     await saveAdmin();
+    await openReaderTools(b.page);
     await b.page.locator(".rss-document-history summary").click();
     await b.page.getByRole("button", { name: "元サイトの更新を確認" }).click();
     await expect(
@@ -678,6 +681,7 @@ async function runReaderScenario(browser, info, aliasMode) {
     );
     expect(articleFetches).toBe(3);
     await a.context.setOffline(true);
+    await openReaderTools(a.page);
     await a.page.locator(".rss-document-history summary").click();
     await a.page
       .locator(".rss-document-version")
@@ -903,6 +907,7 @@ test("closed reader receives a durable RSS revision and retains the old body unt
       "aria-pressed",
       "true",
     );
+    await openReaderTools(page);
     await page.locator(".rss-document-history summary").click();
     await expect(page.locator(".rss-document-version")).toHaveCount(2);
     await page.reload();
@@ -913,6 +918,7 @@ test("closed reader receives a durable RSS revision and retains the old body unt
       "Collected version 2",
     );
     expect((await storedArticles(page))[0].saved).toBe(true);
+    await openReaderTools(page);
     await page.locator(".rss-document-history summary").click();
     await expect(page.locator(".rss-document-version")).toHaveCount(2);
     await page

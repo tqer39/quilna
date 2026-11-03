@@ -1268,7 +1268,7 @@
     grid-column: 2;
     grid-row: 1;
     position: sticky;
-    top: 100px;
+    top: 24px;
     margin: 0;
     padding: 12px;
     min-width: 0;
@@ -1279,17 +1279,17 @@
 }
 
 :root[data-reader-design] .rss-article [id] {
-  scroll-margin-top: max(88px, var(--rss-navigation-height, 0px));
+  scroll-margin-top: 24px;
 }
 @media (max-width: 800px) {
   :root[data-reader-design] .rss-article [id] {
-    scroll-margin-top: max(150px, var(--rss-navigation-height, 0px));
+    scroll-margin-top: 24px;
   }
 }
 
-/* One persistent place for current context and the reader's main destinations. */
+/* Current context and direct destinations; scrolls away with the page. */
 .rss-location-bar {
-  position: sticky;
+  position: static;
   top: 0;
   z-index: 10;
   max-width: 1360px;
@@ -1299,7 +1299,7 @@
   border-radius: var(--viewer-radius);
   background: var(--viewer-surface);
   color: var(--viewer-text);
-  box-shadow: var(--viewer-shadow);
+  box-shadow: none;
 }
 .rss-location-bar [hidden] {
   display: none !important;
@@ -1313,7 +1313,8 @@
 }
 .rss-location-actions {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
 }
 :root[data-reader-design] .rss-location-bar .rss-reader-navigation {
@@ -1322,6 +1323,7 @@
   border: 0;
   border-radius: 0;
   box-shadow: none;
+  margin: 0;
   gap: 6px;
 }
 :root[data-reader-design] .rss-location-bar .rss-reader-navigation button {
@@ -1330,18 +1332,12 @@
   font-size: 13px;
 }
 .rss-destinations {
-  position: relative;
-}
-.rss-destinations > summary {
-  min-height: 44px;
-  padding: 10px;
-  cursor: pointer;
-  white-space: nowrap;
-  border: 1px solid var(--viewer-line);
-  border-radius: 8px;
+  margin-inline-start: auto;
 }
 .rss-destination-links {
   display: flex;
+  flex-direction: row;
+  margin: 0;
   flex-wrap: wrap;
   gap: 6px;
 }
@@ -1361,23 +1357,11 @@
   color: var(--viewer-accent);
   font-weight: 700;
 }
-.rss-location-bar[data-screen="article"] .rss-destination-links {
-  position: absolute;
-  inset-inline-end: 0;
-  top: calc(100% + 6px);
-  display: grid;
-  width: min(260px, 80vw);
-  padding: 8px;
-  border: 1px solid var(--viewer-line);
-  border-radius: 12px;
-  background: var(--viewer-surface);
-  box-shadow: var(--viewer-shadow);
-}
 .rss-location-progress {
   margin-block-start: 6px;
 }
 :root[data-reader-design] #rss-main {
-  scroll-margin-top: var(--rss-navigation-height, 24px);
+  scroll-margin-top: 24px;
 }
 .rss-import-dialog {
   max-height: calc(100dvh - 24px);
@@ -1397,4 +1381,117 @@
 .rss-location-bar :is(a, button, summary):focus-visible {
   outline: 3px solid var(--viewer-accent);
   outline-offset: 3px;
+}
+
+/* A reading trail: one line connects headings; filled marker locates the reader. */
+.rss-article-outline {
+  background: transparent;
+  border: 0;
+  padding: 12px 0;
+}
+.rss-article-outline nav {
+  padding: 4px 4px 4px 10px;
+}
+.rss-article-outline nav ol {
+  padding-inline-start: 16px;
+}
+.rss-article-outline nav > ol {
+  padding-inline-start: 0;
+}
+.rss-article-outline nav li {
+  border-inline-start: 2px solid var(--viewer-line);
+}
+:root[data-reader-design] .rss-article-outline nav a {
+  display: block;
+  margin: 0;
+  position: relative;
+  padding: 9px 8px 9px 20px;
+  font-size: 13px;
+  color: var(--viewer-muted);
+  border: 0;
+  text-decoration: none;
+}
+.rss-article-outline nav a::before {
+  content: "";
+  position: absolute;
+  inset-inline-start: -5px;
+  top: 17px;
+  width: 8px;
+  height: 8px;
+  border: 2px solid var(--viewer-line);
+  border-radius: 50%;
+  background: var(--viewer-surface);
+}
+.rss-article-outline nav a[aria-current="location"] {
+  background: var(--viewer-soft);
+  border-radius: 0 6px 6px 0;
+  text-decoration: none;
+}
+.rss-article-outline nav a[aria-current="location"]::before {
+  background: var(--viewer-accent);
+  border-color: var(--viewer-accent);
+  box-shadow: 0 0 0 3px var(--viewer-soft);
+}
+.rss-code-block {
+  position: relative;
+}
+.rss-code-tools {
+  position: absolute;
+  inset-inline-end: 4px;
+  top: 4px;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  z-index: 1;
+}
+.rss-code-tools::part(copy-button) {
+  min-height: 44px;
+  min-width: 44px;
+  padding: 4px 8px;
+}
+.rss-code-tools::part(copy-status) {
+  background: var(--viewer-surface);
+  max-width: 220px;
+}
+:root[data-reader-design] .rss-article-body .rss-code-block pre {
+  border-radius: 6px;
+  padding: 14px 54px 14px 16px;
+  line-height: 1.6;
+}
+.rss-reading-extras {
+  margin-top: 32px;
+  border-top: 1px solid var(--viewer-line);
+}
+.rss-reading-extras > summary {
+  cursor: pointer;
+  padding: 16px 0;
+  font-weight: 650;
+}
+:root[data-reader-design] .rss-reading-extras > div > section {
+  margin-block: 8px;
+  padding: 12px 16px;
+  box-shadow: none;
+}
+.rss-reading-extras:not([open]) > div {
+  display: none;
+}
+
+.rss-link-title {
+  display: block;
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.5;
+}
+.rss-titled-link {
+  display: inline-block;
+  font-size: 12px;
+  line-height: 1.6;
+}
+.rss-titled-link .rss-site-icon {
+  display: none;
+}
+
+.rss-article-outline nav li {
+  margin: 0;
+  padding: 0;
 }

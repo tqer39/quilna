@@ -1,3 +1,4 @@
+import { openReaderTools } from "./reader-tools";
 import { test, expect } from "@playwright/test";
 async function seed(page: import("@playwright/test").Page, count = 125) {
   await page.goto("/?view=feeds");
@@ -207,6 +208,7 @@ test("reused rows reflect replacements and open the latest saved translation", a
   await expect(row).not.toContainText("保存済み");
   expect(await first!.evaluate((node) => node.isConnected)).toBe(true);
   await page.getByRole("button", { name: "更新後の記事", exact: true }).click();
+  await openReaderTools(page);
   await page
     .getByRole("button", { name: "日本語訳を読む", exact: true })
     .click();

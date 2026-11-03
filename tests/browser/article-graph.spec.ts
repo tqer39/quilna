@@ -1,3 +1,4 @@
+import { openReaderTools } from "./reader-tools";
 import { test, expect, type Page } from "@playwright/test";
 
 async function fixture(
@@ -125,6 +126,7 @@ async function fixture(
     .click();
 }
 async function openGraph(page: Page) {
+  await openReaderTools(page);
   await page.locator("#rss-graph > details > summary").click();
   await expect(page.locator("#rss-graph .rss-graph-center")).toBeVisible();
 }
@@ -284,6 +286,7 @@ for (const design of ["studio", "editorial", "focus"])
     await expect(page.locator(".rss-graph-node")).toHaveCount(6);
     await expect(page.getByRole("button", { name: "次の8件" })).toBeDisabled();
     await page.getByRole("button", { name: "前の8件" }).click();
+    await openReaderTools(page);
     await page.locator("#rss-graph details details > summary").click();
     const first = page
       .getByRole("list", { name: "関係図と同じ情報の一覧" })
@@ -376,6 +379,7 @@ for (const failure of [false, true])
         return request;
       };
     }, failure);
+    await openReaderTools(page);
     await page.locator("#rss-graph > details > summary").click();
     await expect
       .poll(() =>
@@ -565,6 +569,7 @@ test("topic pagination visits all matching articles and large topic scans are ca
     }
   });
   expect(result).toBe("AbortError");
+  await openReaderTools(page);
   await page.locator("#rss-graph > details > summary").click();
   await expect(page.locator(".rss-graph-canvas")).toBeHidden();
 });

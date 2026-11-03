@@ -224,6 +224,7 @@ test("translation and another article never reuse the original heading map", asy
   page,
 }) => {
   await seed(page);
+  await page.getByRole("link", { name: "翻訳・読み上げ", exact: true }).click();
   await page
     .getByRole("button", { name: "日本語訳を読む", exact: true })
     .click();

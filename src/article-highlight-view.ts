@@ -24,7 +24,7 @@ export class ArticleHighlightView {
   private readonly status = el("p", "", "muted");
   private readonly details = el("details");
   private readonly summary = el("summary", "ハイライト・メモ");
-  private readonly selection = button(
+  readonly selection = button(
     "選択範囲をハイライト",
     () => this.useSelection(),
     "rss-highlight-capture",
@@ -423,6 +423,7 @@ export class ArticleHighlightView {
     this.editor.hidden = !this.draft;
     this.save.textContent =
       this.expected === null ? "ハイライトを保存" : "メモを更新";
+    this.root.closest(".rss-reading-extras")?.setAttribute("open", "");
     this.details.open = true;
     this.controls();
     this.note.focus({ preventScroll: true });

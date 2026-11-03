@@ -1,3 +1,4 @@
+import { openReaderTools } from "./reader-tools";
 import { test, expect, type Page } from "@playwright/test";
 import type { ArticleHighlight } from "../../src/article-highlights";
 const body =
@@ -80,6 +81,7 @@ async function open(page: Page) {
   ).toBeEnabled();
 }
 async function quote(page: Page, value: string) {
+  await openReaderTools(page);
   await page.locator("#rss-highlights summary").click();
   await page
     .getByLabel("本文から探す引用（完全一致）", { exact: true })
@@ -145,6 +147,7 @@ test("selection across prose and inline code stores exact offsets, memo, and saf
   await expect(page.locator("#rss-highlights img")).toHaveCount(0);
   await page.reload();
   await open(page);
+  await openReaderTools(page);
   await page.locator("#rss-highlights summary").click();
   await expect(page.locator("#rss-highlights .rss-highlight-memo")).toHaveText(
     saved[0].note,
@@ -216,6 +219,7 @@ test("exact quote lookup disambiguates repeated text and keeps old source and tr
   });
   await page.reload();
   await open(page);
+  await openReaderTools(page);
   await page.locator("#rss-highlights summary").click();
   await expect(page.locator(".rss-source-text mark")).toHaveCount(0);
   await expect(
@@ -318,6 +322,7 @@ test("a stale memo cannot overwrite another tab and source anchors cannot be cha
   const other = await context.newPage();
   await other.goto("/?view=feeds");
   await open(other);
+  await openReaderTools(other);
   await other.locator("#rss-highlights summary").click();
   await other.getByRole("button", { name: "メモを編集", exact: true }).click();
   await other
@@ -512,10 +517,8 @@ test("keyboard quote lookup and memo controls reflow in all viewer designs", asy
   page,
 }, info) => {
   await fixture(page);
-  await page
-    .getByRole("link", { name: "ハイライト・メモ", exact: true })
-    .click();
-  await expect(page.locator("#rss-highlights")).toBeFocused();
+  await page.getByRole("link", { name: "メモ・学び", exact: true }).click();
+  await expect(page.locator("#rss-reading-extras")).toBeFocused();
   await page.locator("#rss-highlights summary").focus();
   await page.keyboard.press("Enter");
   await page.getByLabel("本文から探す引用（完全一致）").focus();
@@ -846,6 +849,7 @@ test("an unavailable highlight store can be retried without changing article sto
     "aria-pressed",
     "true",
   );
+  await openReaderTools(page);
   await page.locator("#rss-highlights summary").click();
   await expect(
     page.getByRole("button", { name: "引用の候補を探す", exact: true }),

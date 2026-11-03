@@ -1,3 +1,4 @@
+import { openReaderTools } from "./reader-tools";
 import { test, expect, type Page } from "@playwright/test";
 const url = "https://publisher.example.org/tags";
 const body =
@@ -23,6 +24,7 @@ async function importArticle(page: Page) {
   );
 }
 async function edit(page: Page, tags: string) {
+  await openReaderTools(page);
   await page.getByText("タグを編集・根拠を確認", { exact: true }).click();
   await page
     .getByLabel("自分のタグを編集（カンマ区切り）", { exact: true })
@@ -72,6 +74,7 @@ test("imported articles get explained tags; corrections persist, filter and sear
   page,
 }, info) => {
   await importArticle(page);
+  await openReaderTools(page);
   await expect(page.getByRole("region", { name: "記事のタグ" })).toContainText(
     "自動判定：技術・開発・手順・解説",
   );
@@ -89,6 +92,7 @@ test("imported articles get explained tags; corrections persist, filter and sear
   await page
     .getByRole("button", { name: "SQLite tutorial", exact: true })
     .click();
+  await openReaderTools(page);
   await page.getByText("タグを編集・根拠を確認", { exact: true }).click();
   await page.getByText("自動判定の根拠", { exact: true }).click();
   await expect(page.getByRole("region", { name: "記事のタグ" })).toContainText(
@@ -224,6 +228,7 @@ test("failed tag persistence keeps original tags and preserves a retryable draft
   page,
 }) => {
   await importArticle(page);
+  await openReaderTools(page);
   await page.evaluate(() => {
     const put = IDBObjectStore.prototype.put;
     IDBObjectStore.prototype.put = function (value, ...rest) {

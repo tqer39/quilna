@@ -134,8 +134,13 @@ export class ArticleOutline {
     const scrollMargin = firstHeading
       ? parseFloat(getComputedStyle(firstHeading).scrollMarginTop) || 0
       : 0;
-    const top =
-      Math.max(scrollMargin, toolbar?.getBoundingClientRect().bottom ?? 0) + 2;
+    const atBottom =
+      window.scrollY + window.innerHeight >=
+      document.documentElement.scrollHeight - 2;
+    const top = atBottom
+      ? window.innerHeight
+      : Math.max(scrollMargin, toolbar?.getBoundingClientRect().bottom ?? 0) +
+        2;
     // Headings are in document order. Bound layout reads even for 1,000 headings.
     let low = 0,
       high = this.links.length;

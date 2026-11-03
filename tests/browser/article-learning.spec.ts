@@ -1,3 +1,4 @@
+import { openReaderTools } from "./reader-tools";
 import { test, expect, type Page } from "@playwright/test";
 import type { LearningRecord } from "../../src/article-learning";
 
@@ -94,6 +95,7 @@ test("newer schema is refused without losing data or the entered draft", async (
         request.onerror = () => reject(request.error);
       }),
   );
+  await openReaderTools(page);
   await page.locator("#rss-highlights summary").click();
   await page
     .getByRole("button", { name: "この引用から学びを記録", exact: true })
@@ -141,6 +143,7 @@ test("keyboard workflow saves only after explicit input and submit", async ({
   page,
 }) => {
   await fixture(page);
+  await openReaderTools(page);
   await page.locator("#rss-highlights summary").focus();
   await page.evaluate(() =>
     speechSynthesis.dispatchEvent(new Event("voiceschanged")),
@@ -169,6 +172,7 @@ test("keyboard workflow saves only after explicit input and submit", async ({
 const records = (page: Page) =>
   panel(page).getByRole("list", { name: "保存した学び" });
 async function begin(page: Page) {
+  await openReaderTools(page);
   await page.locator("#rss-highlights summary").click();
   await page
     .getByRole("button", { name: "この引用から学びを記録", exact: true })
@@ -219,6 +223,7 @@ for (const design of ["studio", "editorial", "focus"])
     await page
       .getByRole("button", { name: "Quote article a", exact: true })
       .click();
+    await openReaderTools(page);
     await panel(page).locator("summary").click();
     await expect(records(page)).toContainText(initial.reflection);
     await panel(page)
@@ -353,6 +358,7 @@ test("snapshots survive deleted highlights and changed source text without movin
   await page
     .getByRole("button", { name: "Quote article a", exact: true })
     .click();
+  await openReaderTools(page);
   await panel(page).locator("summary").click();
   await expect(records(page)).toContainText("Evidence a.");
   await panel(page)
@@ -565,6 +571,7 @@ for (const outcome of ["success", "failure"] as const)
     await page
       .getByRole("button", { name: "Quote article b", exact: true })
       .click();
+    await openReaderTools(page);
     await panel(page).locator("summary").click();
     await expect(panel(page).getByRole("status")).toContainText("0件の学び");
     await page.evaluate(() =>
@@ -634,6 +641,7 @@ test("a submitted write finishes for its original article after navigation", asy
   await page
     .getByRole("button", { name: "Quote article b", exact: true })
     .click();
+  await openReaderTools(page);
   await panel(page).locator("summary").click();
   await expect(panel(page).getByRole("status")).toContainText("0件の学び");
   await page.evaluate(() =>
@@ -649,6 +657,7 @@ test("a submitted write finishes for its original article after navigation", asy
       return (await import(path)).readLearning("b");
     }),
   ).toEqual([]);
+  await openReaderTools(page);
   await page.locator("#rss-highlights summary").click();
   await page
     .getByRole("button", { name: "この引用から学びを記録", exact: true })

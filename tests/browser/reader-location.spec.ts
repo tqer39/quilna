@@ -125,7 +125,7 @@ for (const design of ["studio", "editorial", "focus"])
       });
     expect(contrasts.every((contrast) => contrast >= 4.5)).toBe(true);
     await page.screenshot({ path: info.outputPath(`location-${design}.png`) });
-    await page.locator(".rss-destinations > summary").click();
+    await expect(page.locator(".rss-destinations > summary")).toHaveCount(0);
     await destinations(page)
       .getByRole("link", { name: "サイト・記事の取り込み", exact: true })
       .click();
@@ -151,7 +151,12 @@ for (const design of ["studio", "editorial", "focus"])
       }),
     ).toBeFocused();
     await page.keyboard.press("Escape");
-    await expect(page.locator(".rss-destinations > summary")).toBeFocused();
+    await expect(
+      destinations(page).getByRole("link", {
+        name: "サイト・記事の取り込み",
+        exact: true,
+      }),
+    ).toBeFocused();
     await page
       .getByRole("button", { name: "← 記事一覧へ", exact: true })
       .click();
@@ -311,7 +316,7 @@ for (const mode of ["inline", "dialog", "repeat", "draft", "error"])
       await page
         .getByRole("button", { name: "Location article 002", exact: true })
         .click();
-      await page.locator(".rss-destinations > summary").click();
+      await expect(page.locator(".rss-destinations > summary")).toHaveCount(0);
     }
     const url = "https://example.org/delayed-feed.xml";
     const xml =
@@ -428,7 +433,7 @@ test("a delayed body refresh keeps a newer import error and URL draft", async ({
     .getByRole("button", { name: "コードの書式を取り直す", exact: true })
     .click();
   await expect.poll(() => !!finish).toBe(true);
-  await page.locator(".rss-destinations > summary").click();
+  await expect(page.locator(".rss-destinations > summary")).toHaveCount(0);
   await destinations(page)
     .getByRole("link", { name: "サイト・記事の取り込み", exact: true })
     .click();
