@@ -1,3 +1,4 @@
+import { openReaderTools } from "./reader-tools";
 import { test, expect, type Page } from "@playwright/test";
 import type { FeedArticle } from "../../src/feed-parser";
 const url = "https://publisher.example.org/story";
@@ -16,12 +17,18 @@ async function source(page: Page, fail = false) {
     ),
   );
 }
-async function add(page: Page) {
+async function add(page: Page, pending = false) {
   await page.goto("/?view=feeds");
   await page.getByLabel("サイト・RSSのURL").fill(url);
   await page
     .getByRole("button", { name: "記事として取り込む", exact: true })
     .click();
+  if (pending) return;
+  await expect(page.locator(".rss-content-note").first()).toBeVisible();
+  await expect(page.locator(".rss-content-note").first()).not.toContainText(
+    "取り込み中",
+  );
+  await openReaderTools(page);
 }
 async function reopen(page: Page) {
   await page.reload();
@@ -29,6 +36,7 @@ async function reopen(page: Page) {
   await page
     .getByRole("button", { name: "Collected article", exact: true })
     .click();
+  await openReaderTools(page);
 }
 test("direct article imports safe text and saved original survives reload and a network outage", async ({
   page,
@@ -169,6 +177,7 @@ test("code survives import, translation and offline reopen without reaching the 
     "deleteAlarm()",
   );
   await expect(page.locator(".rss-article-body img")).toHaveCount(0);
+  await openReaderTools(page);
   await page.getByRole("button", { name: "日本語に翻訳", exact: true }).click();
   await expect(
     page.getByText(
@@ -688,7 +697,7 @@ test("failed content persistence is visible and retry saves the full text", asyn
     });
     await route.fulfill({ json: { url, html } });
   });
-  await add(page);
+  await add(page, true);
   await expect.poll(() => !!release).toBe(true);
   await page.evaluate(() => {
     const put = IDBObjectStore.prototype.put;

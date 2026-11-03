@@ -16,7 +16,7 @@ async function seed(page: Page) {
 }
 
 for (const design of ["studio", "editorial", "focus"])
-  test(`${design} keeps a way back while reading and restores the source row in its filtered page`, async ({
+  test(`${design} scrolls navigation away while reading and restores the source row in its filtered page`, async ({
     page,
   }, info) => {
     await page.addInitScript(
@@ -39,6 +39,9 @@ for (const design of ["studio", "editorial", "focus"])
       name: "← 記事一覧へ",
       exact: true,
     });
+    await expect(back).not.toBeInViewport();
+    await page.keyboard.press("ControlOrMeta+Home");
+    await back.scrollIntoViewIfNeeded();
     await expect(back).toBeInViewport();
     await page.screenshot({
       path: info.outputPath(`${design}-reading-back.png`),

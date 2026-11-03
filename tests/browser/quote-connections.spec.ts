@@ -1,3 +1,4 @@
+import { openReaderTools } from "./reader-tools";
 import { test, expect, type Page } from "@playwright/test";
 
 async function fixture(page: Page, design = "studio") {
@@ -77,6 +78,7 @@ async function fixture(page: Page, design = "studio") {
 }
 const panel = (page: Page) => page.locator("#rss-quote-connections");
 async function begin(page: Page) {
+  await openReaderTools(page);
   await page.locator("#rss-highlights summary").click();
   await page
     .getByRole("button", { name: "この引用をつなぐ", exact: true })
@@ -121,6 +123,7 @@ for (const design of ["studio", "editorial", "focus"])
     await page
       .getByRole("button", { name: "Quote article a", exact: true })
       .click();
+    await openReaderTools(page);
     await page.locator("#rss-highlights summary").click();
     await page
       .getByRole("button", { name: "この引用をつなぐ", exact: true })
@@ -356,6 +359,7 @@ test("deleted highlights retain linked snapshots reachable and removable from th
   await page
     .getByRole("button", { name: "Quote article a", exact: true })
     .click();
+  await openReaderTools(page);
   await page.locator("#rss-graph > details > summary").click();
   await page
     .locator(".rss-graph-node")
@@ -402,6 +406,7 @@ test("a future schema is refused without deleting its contents", async ({
         r.onerror = () => reject(r.error);
       }),
   );
+  await openReaderTools(page);
   await page.locator("#rss-highlights summary").click();
   await page
     .getByRole("button", { name: "この引用をつなぐ", exact: true })
@@ -611,6 +616,7 @@ test("keyboard linking keeps read and saved state unchanged", async ({
   page,
 }) => {
   await fixture(page);
+  await openReaderTools(page);
   await page.locator("#rss-highlights summary").focus();
   await page.keyboard.press("Enter");
   await page

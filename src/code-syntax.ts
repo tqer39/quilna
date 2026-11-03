@@ -1,5 +1,8 @@
 import hljs from "highlight.js/lib/core";
 import bash from "highlight.js/lib/languages/bash";
+import csharp from "highlight.js/lib/languages/csharp";
+import powershell from "highlight.js/lib/languages/powershell";
+import dos from "highlight.js/lib/languages/dos";
 import css from "highlight.js/lib/languages/css";
 import go from "highlight.js/lib/languages/go";
 import javascript from "highlight.js/lib/languages/javascript";
@@ -14,6 +17,9 @@ import yaml from "highlight.js/lib/languages/yaml";
 
 const languages = {
   bash,
+  csharp,
+  powershell,
+  dos,
   css,
   go,
   javascript,
@@ -37,6 +43,18 @@ let cachedLength = 0;
 export function codeTokens(text: string): Token[] {
   const plain: Token[] = [{ text, classes: [] }];
   if (!text || text.length > 10_000) return plain;
+  // A path listing is plain text, not XML just because it contains <username>.
+  if (
+    text
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .every((line) =>
+        /^(?:%[A-Za-z_][A-Za-z0-9_]*%\\|[A-Za-z]:\\)[^\n]*$/.test(line),
+      )
+  )
+    return plain;
   const cached = cache.get(text);
   if (cached) return cached;
   let tokens = plain;

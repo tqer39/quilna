@@ -1,3 +1,4 @@
+import { openReaderTools } from "./reader-tools";
 import { test, expect, type Page } from "@playwright/test";
 
 async function setup(page: Page, delayed = false) {
@@ -86,6 +87,7 @@ async function setup(page: Page, delayed = false) {
   await expect(
     page.getByRole("heading", { name: "Speech article", exact: true }),
   ).toBeVisible();
+  await openReaderTools(page);
 }
 
 test("local voice choices persist by language and switching cancels speech", async ({
@@ -114,6 +116,7 @@ test("local voice choices persist by language and switching cancels speech", asy
   await page
     .getByRole("button", { name: "Speech article", exact: true })
     .click();
+  await openReaderTools(page);
   await expect(voice).toHaveValue("novelty");
   await page
     .getByRole("button", { name: "表示中の本文を読み上げ", exact: true })
@@ -175,6 +178,7 @@ test.describe("browser locale defaults", () => {
     await page
       .getByRole("button", { name: "Speech article", exact: true })
       .click();
+    await openReaderTools(page);
     await expect(voice).toHaveValue("natural");
     await page.getByRole("button", { name: "設定", exact: true }).click();
     await expect(locale).toHaveValue("en-GB");

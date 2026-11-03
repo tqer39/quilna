@@ -1,3 +1,4 @@
+import { openReaderTools } from "./reader-tools";
 import { test, expect, type Page } from "@playwright/test";
 const articleURL = "https://example.org/source";
 const html = (version = 1) =>
@@ -177,6 +178,7 @@ for (const design of ["studio", "editorial", "focus"])
     expect(original[0].content.document).toEqual(original[1].content.document);
     expect(original.map((a) => a.saved)).toEqual([true, false]);
     const history = page.locator(".rss-document-history");
+    await openReaderTools(page);
     await history.locator("summary").click();
     await expect(history).toContainText("表示中");
     version = 2;
@@ -401,6 +403,7 @@ test("legacy history migration retains translated text and private state without
   const before = await snapshots(page);
   await page.getByRole("button", { name: "Document 1", exact: true }).click();
   const history = page.locator(".rss-document-history");
+  await openReaderTools(page);
   await history.locator("summary").click();
   await expect(history).toContainText("表示中");
   const after = await snapshots(page);
@@ -603,6 +606,7 @@ test("a failed version switch keeps the selected source and retry succeeds", asy
     "Version 1 explains",
   );
   const history = page.locator(".rss-document-history");
+  await openReaderTools(page);
   await history.locator("summary").click();
   version = 2;
   await history.getByRole("button", { name: "元サイトの更新を確認" }).click();
@@ -699,6 +703,7 @@ test("conditional refresh retains exact original and translation, survives reloa
   await page.reload();
   await page.getByRole("button", { name: "Document 1", exact: true }).click();
   const history = page.locator(".rss-document-history");
+  await openReaderTools(page);
   await history.locator("summary").click();
   phase = 1;
   const refresh = history.getByRole("button", { name: "元サイトの更新を確認" });

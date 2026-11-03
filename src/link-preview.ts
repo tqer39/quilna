@@ -116,6 +116,92 @@ const previews = new Map<
   string,
   { title: string; description: string; url: string }
 >();
+async function fetchPreview(safe: string, signal?: AbortSignal) {
+  let preview = previews.get(safe);
+  if (!preview) {
+    const data = await sourceRequest(safe, false, signal);
+    if (
+      typeof data.html !== "string" ||
+      data.html.length > 2_000_000 ||
+      typeof data.url !== "string" ||
+      !safeArticleLink(data.url)
+    )
+      throw Error("プレビュー情報を読み取れませんでした。");
+    const template = document.createElement("template");
+    template.innerHTML = data.html;
+    const meta = (name: string) =>
+      Array.from(template.content.querySelectorAll("meta"))
+        .find(
+          (m) =>
+            (
+              m.getAttribute("property") ||
+              m.getAttribute("name") ||
+              ""
+            ).toLowerCase() === name,
+        )
+        ?.getAttribute("content")
+        ?.trim();
+    preview = {
+      title: (
+        meta("og:title") ||
+        template.content.querySelector("title")?.textContent ||
+        new URL(data.url).hostname
+      ).slice(0, 300),
+      description: (
+        meta("og:description") ||
+        meta("description") ||
+        "説明文は提供されていません。"
+      ).slice(0, 700),
+      url: data.url,
+    };
+    previews.set(safe, preview);
+    if (previews.size > 40) previews.delete(previews.keys().next().value!);
+  }
+  return preview;
+}
+
+const titledTargets = new Set<HTMLAnchorElement>();
+let titleQueue = Promise.resolve();
+let titleRequests = 0;
+let titleCleanupQueued = false;
+const titleObserver =
+  typeof IntersectionObserver === "undefined"
+    ? null
+    : new IntersectionObserver(
+        (entries) => {
+          for (const entry of entries) {
+            if (!entry.isIntersecting) continue;
+            titleObserver!.unobserve(entry.target);
+            titledTargets.delete(entry.target as HTMLAnchorElement);
+            const anchor = entry.target as HTMLAnchorElement;
+            titleQueue = titleQueue.then(async () => {
+              if (!anchor.isConnected) return;
+              if (!previews.has(anchor.href)) {
+                if (titleRequests >= 20) return;
+                titleRequests++;
+              }
+              try {
+                const preview = await fetchPreview(anchor.href);
+                if (!anchor.isConnected || !preview.title.trim()) return;
+                // Presentation metadata stays outside the offset-bearing source text.
+                const title = el("span", undefined, "rss-link-title");
+                const shadow = title.attachShadow({ mode: "open" });
+                shadow.append(document.createTextNode(preview.title));
+                anchor.prepend(title);
+                anchor.classList.add("rss-titled-link");
+                anchor.setAttribute(
+                  "aria-label",
+                  `${preview.title} — ${anchor.href}`,
+                );
+              } catch {
+                // Keep the original URL usable when metadata cannot be retrieved.
+              }
+            });
+          }
+        },
+        { rootMargin: "0px" },
+      );
+
 function ensureDialog() {
   if (dialog) return dialog;
   dialog = el("div", undefined, "rss-link-preview");
@@ -182,46 +268,7 @@ export async function showLinkPreview(url: string, source?: HTMLElement) {
       throw Error(
         "HTTPのリンクはプレビューできません。元のリンクから開けます。",
       );
-    let preview = previews.get(safe);
-    if (!preview) {
-      const data = await sourceRequest(safe, false, signal);
-      if (
-        typeof data.html !== "string" ||
-        data.html.length > 2_000_000 ||
-        typeof data.url !== "string" ||
-        !safeArticleLink(data.url)
-      )
-        throw Error("プレビュー情報を読み取れませんでした。");
-      const template = document.createElement("template");
-      template.innerHTML = data.html;
-      const meta = (name: string) =>
-        Array.from(template.content.querySelectorAll("meta"))
-          .find(
-            (m) =>
-              (
-                m.getAttribute("property") ||
-                m.getAttribute("name") ||
-                ""
-              ).toLowerCase() === name,
-          )
-          ?.getAttribute("content")
-          ?.trim();
-      preview = {
-        title: (
-          meta("og:title") ||
-          template.content.querySelector("title")?.textContent ||
-          new URL(data.url).hostname
-        ).slice(0, 300),
-        description: (
-          meta("og:description") ||
-          meta("description") ||
-          "説明文は提供されていません。"
-        ).slice(0, 700),
-        url: data.url,
-      };
-      previews.set(safe, preview);
-      if (previews.size > 40) previews.delete(previews.keys().next().value!);
-    }
+    const preview = await fetchPreview(safe, signal);
     if (token !== generation || signal.aborted || host.hidden) return;
     title.textContent = preview.title;
     status.textContent = preview.description;
@@ -233,6 +280,25 @@ export async function showLinkPreview(url: string, source?: HTMLElement) {
   }
 }
 export function decorateArticleLink(anchor: HTMLAnchorElement, url: string) {
+  if (
+    !new URL(url).search &&
+    safeArticleLink(anchor.textContent?.trim() ?? "") === url &&
+    url.startsWith("https:")
+  ) {
+    if (!titleCleanupQueued) {
+      titleCleanupQueued = true;
+      queueMicrotask(() => {
+        titleCleanupQueued = false;
+        for (const target of titledTargets)
+          if (!target.isConnected) {
+            titleObserver?.unobserve(target);
+            titledTargets.delete(target);
+          }
+      });
+    }
+    titledTargets.add(anchor);
+    titleObserver?.observe(anchor);
+  }
   anchor.prepend(siteIcon(url));
   const tools = el("span", undefined, "rss-link-tools"),
     root = tools.attachShadow({ mode: "open" });

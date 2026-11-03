@@ -1,3 +1,4 @@
+import { openReaderTools } from "./reader-tools";
 import { test, expect, type Page } from "@playwright/test";
 import type { SourceDocument } from "../../src/source-document";
 const url = "https://example.org/reusable",
@@ -531,6 +532,7 @@ for (const design of ["studio", "editorial", "focus"])
       await page.screenshot({ path: info.outputPath("document-settings.png") });
       await page.getByRole("button", { name: "閉じる", exact: true }).click();
       const history = page.locator(".rss-document-history");
+      await openReaderTools(page);
       await history.locator("summary").click();
       await history
         .getByRole("button", { name: "元サイトの更新を確認" })

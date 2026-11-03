@@ -1,3 +1,4 @@
+import { openReaderTools } from "./reader-tools";
 import { test, expect, type Page } from "@playwright/test";
 const url = "https://example.org/update",
   feed = "https://example.org/rss";
@@ -693,6 +694,7 @@ test("choosing a newer current catalog version replaces a stale update notice wi
     page.getByRole("button", { name: "更新された本文を読む" }),
   ).toBeVisible();
   const history = page.locator(".rss-document-history");
+  await openReaderTools(page);
   await history.locator("summary").click();
   await history
     .locator(".rss-document-version")

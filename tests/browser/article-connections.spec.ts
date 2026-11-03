@@ -1,3 +1,4 @@
+import { openReaderTools } from "./reader-tools";
 import { test, expect, type Page } from "@playwright/test";
 import type { ArticleConnection } from "../../src/article-connections";
 async function fixture(page: Page, waitReady = true) {
@@ -52,6 +53,7 @@ async function open(page: Page, id: string, waitReady = true) {
   await page
     .getByRole("button", { name: `Connection article ${id}`, exact: true })
     .click();
+  await openReaderTools(page);
   await page.locator("#rss-connections > details > summary").click();
   if (waitReady)
     await expect(
@@ -126,6 +128,7 @@ test("shared-tag candidates remain distinct from persisted, editable and reversi
   await expect(page.locator("#rss-current-title")).toHaveText(
     "Connection article b",
   );
+  await openReaderTools(page);
   await page.locator("#rss-connections > details > summary").click();
   await expect(
     page.locator("#rss-connections .rss-connection-reason"),
@@ -161,6 +164,7 @@ test("hidden pairs persist across reload and can be restored, while manual linki
   await expect(
     page.getByRole("list", { name: "共通タグからの候補", exact: true }),
   ).not.toContainText("Connection article b");
+  await openReaderTools(page);
   await page.locator("#rss-connections details details summary").click();
   page.once("dialog", (d) => d.accept());
   await page.getByRole("button", { name: "候補の非表示を解除" }).click();
@@ -393,6 +397,7 @@ async function changeWhilePending(page: Page, id: string) {
   await page
     .getByRole("button", { name: `Connection article ${id}`, exact: true })
     .click();
+  await openReaderTools(page);
   await page.locator("#rss-connections > details > summary").click();
   await expect(page.locator("#rss-connections [role=status]")).toContainText(
     "読み込んでいます",
@@ -470,6 +475,7 @@ for (const failure of [false, true]) {
     await fixture(page);
     await choose(page, "article c");
     await save(page, "A to C reason");
+    await openReaderTools(page);
     await page.locator("#rss-connections > details > summary").click();
     await holdWrites(page);
     await page.evaluate((failure) => {
@@ -486,6 +492,7 @@ for (const failure of [false, true]) {
         return request;
       };
     }, failure);
+    await openReaderTools(page);
     await page.locator("#rss-connections > details > summary").click();
     await expect(page.locator("#rss-connections [role=status]")).toContainText(
       "読み込んでいます",
@@ -542,17 +549,21 @@ test("closing a loading panel keeps it closed and a subsequent open recovers", a
   page,
 }) => {
   await fixture(page);
+  await openReaderTools(page);
   await page.locator("#rss-connections > details > summary").click();
   await holdWrites(page);
+  await openReaderTools(page);
   await page.locator("#rss-connections > details > summary").click();
   await expect(page.locator("#rss-connections [role=status]")).toContainText(
     "読み込んでいます",
   );
+  await openReaderTools(page);
   await page.locator("#rss-connections > details > summary").click();
   await releaseWrites(page);
   await expect(
     page.getByRole("button", { name: "つなぐ記事を探す", exact: true }),
   ).toBeHidden();
+  await openReaderTools(page);
   await page.locator("#rss-connections > details > summary").click();
   await expect(
     page.getByRole("button", { name: "つなぐ記事を探す", exact: true }),
@@ -762,6 +773,7 @@ for (const outcome of ["success", "failure"] as const) {
     await fixture(page);
     await choose(page, "article c");
     await save(page, "Old reason");
+    await openReaderTools(page);
     await page.locator("#rss-connections > details > summary").click();
     await page.evaluate((outcome) => {
       const transaction = IDBDatabase.prototype.transaction;
@@ -814,6 +826,7 @@ for (const outcome of ["success", "failure"] as const) {
         return request;
       };
     }, outcome);
+    await openReaderTools(page);
     await page.locator("#rss-connections > details > summary").click();
     await expect
       .poll(() =>
