@@ -2,7 +2,10 @@ import { listPaperExcerpts } from "./paper-excerpt-store";
 import { type PaperExcerpt } from "./paper-text-format";
 import { button, el } from "./ui";
 /** Keep stored-citation paging independent of the selected source, including during delayed save completions. */
-export function paperExcerptLibrary(open: (record: PaperExcerpt) => void) {
+export function paperExcerptLibrary(
+  open: (record: PaperExcerpt) => void,
+  pageChanged: (cursor?: string) => void = () => {},
+) {
   const root = el("section");
   root.setAttribute("aria-label", "保存した論文引用");
   let revision = 0,
@@ -62,12 +65,14 @@ export function paperExcerptLibrary(open: (record: PaperExcerpt) => void) {
       if (cursor)
         children.push(
           control("first", "論文引用の先頭20件", () => {
+            pageChanged();
             void read();
           }),
         );
       if (page.next)
         children.push(
           control("next", "論文引用の次の20件", () => {
+            pageChanged(page.next);
             void read(page.next);
           }),
         );
@@ -86,5 +91,5 @@ export function paperExcerptLibrary(open: (record: PaperExcerpt) => void) {
   window.addEventListener("pagehide", () => {
     revision++;
   });
-  return { root, refresh: () => read(after) };
+  return { root, refresh: () => read(after), restore: read };
 }

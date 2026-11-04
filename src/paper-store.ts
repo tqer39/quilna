@@ -29,6 +29,21 @@ function open(): Promise<IDBDatabase> {
 /** Stable fact identity keeps changed deposits separate while identical recaptures reuse the first observation. */
 export const paperKey = (p: PaperSnapshot) =>
   JSON.stringify([p.metadata.doi, p.digest]);
+/** Resolve an exact local observation without making a provider request. */
+export async function readPaper(key: string) {
+  const db = await open();
+  try {
+    const value = await new Promise<unknown>((resolve, reject) => {
+      const tx = db.transaction("snapshots"),
+        request = tx.objectStore("snapshots").get(key);
+      tx.oncomplete = () => resolve(request.result);
+      tx.onabort = tx.onerror = () => reject(failed());
+    });
+    return value === undefined ? undefined : stored(key, value);
+  } finally {
+    db.close();
+  }
+}
 /** Validate every persisted value and its key before returning it to the UI. */
 async function stored(key: IDBValidKey, value: unknown) {
   if (typeof value !== "string") throw failed();
