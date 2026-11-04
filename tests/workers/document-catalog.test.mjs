@@ -416,13 +416,35 @@ test(`explicit revalidation repairs ${legacyStructure ? "heading-only" : "plain"
   const legacy = body();
   if (legacyStructure) delete legacy.structure.blocks;
   else delete legacy.structure;
+  const repaired = body();
+  repaired.structure.blocks = [
+    {
+      tag: "ul",
+      start: 0,
+      end: 9,
+      children: [{ tag: "li", start: 0, end: 9, children: [] }],
+    },
+    {
+      tag: "table",
+      start: 10,
+      end: 22,
+      children: [
+        {
+          tag: "tr",
+          start: 10,
+          end: 22,
+          children: [{ tag: "td", start: 10, end: 22, children: [] }],
+        },
+      ],
+    },
+  ];
   const f = fixture({
     load: async (_url, previous) => {
       calls++;
       if (calls === 1)
         return { content: legacy, validators: { url, etag: '"same"' } };
       assert.equal(previous.validators, undefined);
-      return { content: body(), validators: { url, etag: '"same"' } };
+      return { content: repaired, validators: { url, etag: '"same"' } };
     },
   });
   const first = await f.catalog.acquire("alice");
@@ -431,6 +453,10 @@ test(`explicit revalidation repairs ${legacyStructure ? "heading-only" : "plain"
   const enriched = await f.catalog.acquire("alice", { force: true });
   assert.notEqual(enriched.version.id, first.version.id);
   assert.equal(enriched.version.content.text, first.version.content.text);
+  assert.deepEqual(
+    enriched.version.content.structure.blocks,
+    repaired.structure.blocks,
+  );
   assert.deepEqual(
     (await f.catalog.read("alice", first.version.id)).content,
     legacy,
