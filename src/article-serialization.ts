@@ -5,6 +5,8 @@ import {
   type ArticleBlock,
   type ArticleStructure,
   validArticleBlocks,
+  validArticleOrdinal,
+  validArticleSpan,
 } from "./article-structure";
 
 // Map boundaries through the same whitespace normalization used by legacy imports.
@@ -114,14 +116,16 @@ export function serializeArticle(
       if (
         ["ol", "li"].includes(tag) &&
         ordinal !== null &&
-        /^-?\d+$/.test(ordinal) &&
-        Math.abs(Number(ordinal)) <= 1_000_000
+        validArticleOrdinal(ordinal)
       )
         block.ordinal = Number(ordinal);
+      if (tag === "ol" && element.hasAttribute("reversed"))
+        block.reversed = true;
       if (["th", "td"].includes(tag))
         for (const attr of ["colspan", "rowspan"] as const) {
-          const n = Number(element.getAttribute(attr));
-          if (Number.isInteger(n) && n >= 1 && n <= 100) block[attr] = n;
+          const value = element.getAttribute(attr);
+          if (value !== null && validArticleSpan(attr, value))
+            block[attr] = Number(value);
         }
       (containers.at(-1)?.children ?? blocks).push(block);
       containers.push(block);
