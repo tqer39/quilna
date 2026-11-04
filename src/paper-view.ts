@@ -95,7 +95,6 @@ export async function paperView(root: HTMLElement, client = new PaperClient()) {
     }
     url.hash = "";
     pushReaderURL(url);
-    history.replaceState({ ...history.state, readerScroll: scrollY }, "");
   }
   async function restoreRoute() {
     const href = location.href,

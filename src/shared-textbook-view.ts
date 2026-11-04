@@ -192,7 +192,14 @@ export async function sharedTextbookView(root: HTMLElement) {
     pending = 0;
   let routeEpoch = 0,
     selectedBook = "",
+    routeNotice = "",
     readerTrigger: HTMLElement | undefined;
+  // The notice is shared with imports; clear only an error about a URL we left.
+  function clearRouteNotice() {
+    if (routeNotice && notice.textContent === routeNotice)
+      notice.textContent = "";
+    routeNotice = "";
+  }
   function bookURL(id = "", hash = "") {
     const url = new URL(location.href);
     url.searchParams.set("view", "textbooks");
@@ -205,6 +212,7 @@ export async function sharedTextbookView(root: HTMLElement) {
     routeEpoch++;
     readEpoch++;
     selectedBook = "";
+    clearRouteNotice();
     if (navigate) pushReaderURL(bookURL());
     document.title = "受け取った教材 | Quilna";
     reader.replaceChildren();
@@ -238,7 +246,7 @@ export async function sharedTextbookView(root: HTMLElement) {
       await showBook(book, undefined, false);
     } catch (error) {
       if (ticket === routeEpoch && url === location.href)
-        notice.textContent = message(error);
+        notice.textContent = routeNotice = message(error);
     }
   }
   window.addEventListener("popstate", () => void restoreRoute());
@@ -300,6 +308,7 @@ export async function sharedTextbookView(root: HTMLElement) {
     routeEpoch++;
     selectedBook = book.id;
     readerTrigger = trigger;
+    clearRouteNotice();
     if (navigate) pushReaderURL(bookURL(book.id));
     document.title = `${book.draft.title} · 版 ${book.record.version} | Quilna`;
     const epoch = ++readEpoch;
@@ -335,7 +344,7 @@ export async function sharedTextbookView(root: HTMLElement) {
       reader.append(
         el("p", message(answerError)),
         button("回答の読み込みを再試行", () => {
-          void showBook(book, trigger);
+          void showBook(book, trigger, false);
         }),
       );
     const sourceSummary = el("details");

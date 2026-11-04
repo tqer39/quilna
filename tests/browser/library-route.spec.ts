@@ -178,3 +178,19 @@ test("returning from the back/forward cache restores the saved detail named by t
   await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true })));
   await expect(heading).toBeVisible();
 });
+
+test("returning to the list does not store the departing detail's scroll on the list entry", async ({ page }) => {
+  await page.goto("/?view=papers");
+  const metadata = crossrefMetadata(fixture, fixture.message.DOI);
+  const papers = await Promise.all(Array.from({ length: 20 }, (_, i) => paperSnapshot({ ...metadata, titles: [`Scroll source ${i}`] })));
+  await page.evaluate(async (papers) => {
+    const path = "/src/paper-store.ts", api = await import(path);
+    for (const paper of papers) await api.savePaper(paper);
+  }, papers);
+  await page.reload();
+  await page.getByRole("button", { name: "書誌情報を開く", exact: true }).first().click();
+  await page.evaluate(() => window.scrollTo(0, 400));
+  await expect.poll(() => page.evaluate(() => scrollY)).toBeGreaterThan(0);
+  await page.getByRole("button", { name: "保存一覧へ戻る", exact: true }).evaluate((node: HTMLElement) => node.click());
+  expect(await page.evaluate(() => history.state.readerScroll)).toBe(0);
+});
