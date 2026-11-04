@@ -10,6 +10,7 @@ The page discloses the provider and transmitted identifier before dispatch.
 It previews selected bibliographic facts without automatically saving them.
 **この書誌情報を保存** retains an immutable observation in this browser profile.
 Opening an older observation never replaces it with a newer provider response.
+Saved observations and citations use `paper` and `excerpt` URL parameters; `paperAfter` and `excerptAfter` retain the local list page. Back/Forward and reload restore these records from the current library without a provider request. Missing or corrupt records show a failure and are never replaced or deleted. These URLs do not publish or synchronize data; unsaved provider results and file previews still require their explicit input again after reload.
 The page accepts DOI registrant prefixes of 4–9 digits and non-whitespace printable ASCII suffixes up to 2,048 characters; unsupported inputs fail locally.
 Resolver URLs with credentials, non-default ports, queries or fragments are refused; use a literal DOI for suffixes containing `?` or `#`.
 

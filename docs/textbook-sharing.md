@@ -18,7 +18,7 @@ Text remains plain text, including imported markup; source links open only on an
 Answer choices and outcomes are saved under the exact immutable record, separately from the fixed CAA demo and every other imported edition.
 A failed answer write retains the selection for an explicit retry.
 If existing answers cannot be read, the textbook remains readable while new answers are disabled until a successful retry.
-Reload retains books and answers. The shared reader currently opens the whole book; a per-section resume position is not stored.
+Reload retains books and answers. The `book` URL parameter identifies the exact retained edition, and contents links add `#shared-section-<id>` for a section. Direct URLs, Back/Forward and reload restore that edition and heading without fetching a source. Missing editions are reported in the current library; these URLs do not publish or synchronize a textbook. The whole book remains available, but no separate per-section resume preference is stored.
 Answer history pages 20 attempts at a time, starting with the most recent page; older pages remain available.
 Visible answer dates use Japanese date/time formatting in the browser's local timezone. Stored ISO timestamps and each `time` element's `datetime` remain unchanged.
 

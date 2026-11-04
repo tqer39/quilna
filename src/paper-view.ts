@@ -1,5 +1,6 @@
 import { hasAccountLibrary } from "./library-context";
 import { button, el } from "./ui";
+import { pushReaderURL, revealReaderAnchor } from "./reader-route";
 import { PaperClient } from "./paper-client";
 import { paperSearchView } from "./paper-search-view";
 import {
@@ -8,7 +9,8 @@ import {
   parsePaper,
   type PaperSnapshot,
 } from "./paper-format";
-import { listPapers, savePaper, paperKey } from "./paper-store";
+import { listPapers, savePaper, paperKey, readPaper } from "./paper-store";
+import { readPaperExcerpt } from "./paper-excerpt-store";
 import { paperExcerptView } from "./paper-excerpt-view";
 import { paperExcerptLibrary } from "./paper-excerpt-library";
 import {
@@ -69,6 +71,69 @@ export async function paperView(root: HTMLElement, client = new PaperClient()) {
     busy = false,
     libraryAfter: string | undefined,
     excerptView: ReturnType<typeof paperExcerptView> | null = null;
+  let routeRevision = 0;
+  function pageURL(key: string, cursor?: string) {
+    const url = new URL(location.href);
+    if (cursor) url.searchParams.set(key, cursor);
+    else url.searchParams.delete(key);
+    pushReaderURL(url);
+    routeRevision++;
+    // Paging during a pending detail read still keeps that detail in the URL.
+    // Restart its restore so cancellation cannot leave an empty preview behind.
+    if (
+      !preview.hasChildNodes() &&
+      (url.searchParams.has("paper") || url.searchParams.has("excerpt"))
+    )
+      void restoreRoute(false); // The pager reads its own list.
+  }
+  function selectURL(paper = "", excerpt = "") {
+    const url = new URL(location.href);
+    url.searchParams.set("view", "papers");
+    for (const [key, value] of Object.entries({ paper, excerpt })) {
+      if (value) url.searchParams.set(key, value);
+      else url.searchParams.delete(key);
+    }
+    url.hash = "";
+    pushReaderURL(url);
+  }
+  async function restoreRoute(lists = true) {
+    const href = location.href,
+      params = new URL(href).searchParams;
+    changed(false);
+    const ticket = routeRevision;
+    notice.textContent = "";
+    try {
+      if (lists)
+        await Promise.all([
+          refresh(params.get("paperAfter") || undefined),
+          excerpts.restore(params.get("excerptAfter") || undefined),
+        ]);
+      if (ticket !== routeRevision || href !== location.href) return;
+      if (params.get("excerpt")) {
+        const record = await readPaperExcerpt(params.get("excerpt")!);
+        if (ticket !== routeRevision || href !== location.href) return;
+        if (!record)
+          throw Error("このURLの論文引用は現在のライブラリにありません。");
+        show(record.source.paper, false, record, true, false);
+      } else if (params.get("paper")) {
+        const record = await readPaper(params.get("paper")!);
+        if (ticket !== routeRevision || href !== location.href) return;
+        if (!record)
+          throw Error("このURLの書誌情報は現在のライブラリにありません。");
+        show(record, true, undefined, false, false);
+      }
+      if (
+        !revealReaderAnchor() &&
+        ((!params.get("paper") && !params.get("excerpt")) ||
+          typeof history.state?.readerScroll === "number")
+      )
+        window.scrollTo(0, Number(history.state?.readerScroll) || 0);
+    } catch (error) {
+      if (ticket === routeRevision && href === location.href)
+        notice.textContent = (error as Error).message;
+    }
+  }
+  window.addEventListener("popstate", () => void restoreRoute());
   const cancel = button("確認を中止", () => {
     revision++;
     controller.abort();
@@ -115,8 +180,9 @@ export async function paperView(root: HTMLElement, client = new PaperClient()) {
     excerptLabel,
     excerptFile,
   );
-  const excerpts = paperExcerptLibrary((record) =>
-    show(record.source.paper, false, record, true),
+  const excerpts = paperExcerptLibrary(
+    (record) => show(record.source.paper, false, record, true),
+    (cursor) => pageURL("excerptAfter", cursor),
   );
   main.append(
     search.root,
@@ -130,7 +196,10 @@ export async function paperView(root: HTMLElement, client = new PaperClient()) {
   root.replaceChildren(header, main);
 
   /** Changing the pending input invalidates even a transport that ignores cancellation. */
-  function changed() {
+  function changed(navigate = true) {
+    routeRevision++;
+    if (navigate) selectURL();
+    document.title = "論文の書誌情報 · Quilna";
     excerptView?.dispose();
     excerptView = null;
     search.cancel();
@@ -146,14 +215,23 @@ export async function paperView(root: HTMLElement, client = new PaperClient()) {
     changed();
     notice.textContent = "DOIを確認してから送信してください。";
   });
-  window.addEventListener("pagehide", changed);
+  window.addEventListener("pagehide", () => changed(false));
+  // pagehide clears the detail, but a cached page keeps the URL that names it.
+  window.addEventListener("pageshow", (event) => {
+    if (event.persisted) void restoreRoute();
+  });
   /** Show selected facts as text, including explicit uncertainty and deposited relationship records. */
   function show(
     p: PaperSnapshot,
     saved = false,
     excerpt?: PaperExcerpt,
     excerptSaved = false,
+    navigate = true,
   ) {
+    routeRevision++;
+    if (navigate)
+      selectURL(saved ? paperKey(p) : "", excerptSaved ? excerpt?.digest : "");
+    document.title = `${p.metadata.titles.join(" / ") || "題名不明"} · Quilna`;
     excerptView?.dispose();
     excerptView = null;
     search.cancel();
@@ -259,6 +337,12 @@ export async function paperView(root: HTMLElement, client = new PaperClient()) {
           activeSnapshot = result.snapshot;
           capturedAtDisplay.textContent = `Crossref · ${new Date(activeSnapshot.capturedAt).toLocaleString("ja-JP")}`;
           isSaved = true;
+          const currentExcerpt =
+            new URL(location.href).searchParams.get("excerpt") || "";
+          selectURL(
+            currentExcerpt ? "" : paperKey(activeSnapshot),
+            currentExcerpt,
+          );
           save.textContent = "保存済み";
           state.textContent = result.reused
             ? "同じ書誌情報は保存済みです。最初の取得記録を保持しました。"
@@ -288,6 +372,10 @@ export async function paperView(root: HTMLElement, client = new PaperClient()) {
     save.disabled = saved;
     preview.replaceChildren(
       heading,
+      button("保存一覧へ戻る", () => {
+        changed();
+        library.querySelector<HTMLElement>("h2")?.focus();
+      }),
       el(
         "p",
         "提供元の書誌情報を取得した時点の記録です。本文・抄録や実際の論文の版、内容の正しさ、査読・訂正・撤回の網羅性を確認したものではありません。",
@@ -299,13 +387,22 @@ export async function paperView(root: HTMLElement, client = new PaperClient()) {
       save,
       download,
     );
-    excerptView = paperExcerptView(p, excerpts.refresh, {
-      record: excerpt,
-      saved: excerptSaved,
-    });
+    excerptView = paperExcerptView(
+      p,
+      (record, visible) => {
+        if (visible && current === revision) selectURL("", record.digest);
+        return excerpts.refresh();
+      },
+      {
+        record: excerpt,
+        saved: excerptSaved,
+      },
+    );
     preview.append(excerptView.root);
     if (excerpt) excerptView.focus();
     else heading.focus();
+    if (navigate)
+      history.replaceState({ ...history.state, readerScroll: scrollY }, "");
   }
   /** Give each library action a stable focus identity independent of row order. */
   function libraryButton(key: string, text: string, action: () => void) {
@@ -355,12 +452,14 @@ export async function paperView(root: HTMLElement, client = new PaperClient()) {
       if (after)
         content.push(
           libraryButton("first", "先頭の20件", () => {
+            pageURL("paperAfter");
             void refresh();
           }),
         );
       if (page.next)
         content.push(
           libraryButton("next", "次の20件", () => {
+            pageURL("paperAfter", page.next);
             void refresh(page.next);
           }),
         );
@@ -470,5 +569,5 @@ export async function paperView(root: HTMLElement, client = new PaperClient()) {
         : "書誌情報と論文引用はこのブラウザのプロフィールに保存します。ログインごとの分離や同期はありません。別の人とはプロフィールを分けてください。記事のバックアップとは別です。必要な記録は書誌ファイルとして保存できます。同じDOIの変更された登録情報は別の記録として残します。",
     ),
   );
-  await Promise.all([refresh(), excerpts.refresh()]);
+  await restoreRoute();
 }

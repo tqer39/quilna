@@ -147,6 +147,19 @@ export async function importSharedTextbook(raw: string) {
   return book;
 }
 
+/** Read and validate one exact URL-selected edition without scanning the library. */
+export async function readSharedTextbook(id: string) {
+  const row = await transaction<unknown>(["books"], "readonly", (tx, done) => {
+    const request = tx.objectStore("books").get(id);
+    request.onsuccess = () => done(request.result);
+  });
+  if (row === undefined) return undefined;
+  retainedRecord(row, id);
+  const book = await parseSharedTextbook((row as { raw: string }).raw);
+  if (book.id !== id) throw unavailable();
+  return book;
+}
+
 /** Validate every retained edition before exposing a complete, bounded library snapshot. */
 export async function listSharedTextbooks(): Promise<SharedTextbook[]> {
   const rows = await transaction<unknown[]>(

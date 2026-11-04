@@ -229,7 +229,7 @@ RSS observations have a separate fingerprint of title, URL, summary/body, public
 
 New immutable versions appear as **本文の更新あり** in the list and reader. The selected body, matching translation, position and personal records remain until **更新された本文を読む** uses the existing version-switching rules. Failure retains the selected body and any previously detected version, shows a reason and retry time, and backs off from 5 to at most 640 minutes. **本文の更新確認を再試行** explicitly refreshes and displays the resulting body. Deleted, unsubscribed or concurrently replaced articles are not overwritten. A changed RSS URL is reported rather than silently changing a saved source. Update metadata and both referenced versions are included in backup validation.
 
-PC-off cloud collection still fetches RSS. Its observations trigger body checks after the reader opens again; this browser scheduler does **not** fetch original bodies while the PC is off. Always-on original acquisition remains in #79 and requires a separately validated cloud execution and retention design; shared IDs alone do not provide it.
+PC-off cloud collection fetches RSS and, when enabled, [new article pages](cloud-feed-collection.md#article-prefetch). Its observations trigger body checks after the reader opens again; this browser scheduler does **not** fetch original bodies while the PC is off. Pages collected in the cloud are saved when the reader opens again.
 
 ## Library backup and recovery
 
