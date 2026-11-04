@@ -20,6 +20,7 @@ export type ArticleBlock = {
   end: number;
   children: ArticleBlock[];
   ordinal?: number;
+  reversed?: boolean;
   colspan?: number;
   rowspan?: number;
 };
@@ -36,8 +37,16 @@ export const articleBlockChildren: Record<string, readonly string[]> = {
   tr: ["th", "td"],
   th: ["ul", "ol", "table"],
   td: ["ul", "ol", "table"],
-  caption: [],
+  caption: ["ul", "ol"],
 };
+/** HTML integers may be signed or space-padded; browsers honour both. */
+export const validArticleOrdinal = (value: string) =>
+  /^\s*[+-]?\d+$/.test(value) && Math.abs(Number(value)) <= 1_000_000;
+/** `rowspan="0"` is valid HTML: the cell spans the rest of its row group. */
+export const validArticleSpan = (attr: "colspan" | "rowspan", value: string) =>
+  /^\d+$/.test(value) &&
+  Number(value) >= (attr === "rowspan" ? 0 : 1) &&
+  Number(value) <= 100;
 /** Bounded, nested ranges contain only allowlisted semantic elements, never HTML. */
 export function validArticleBlocks(
   text: string,
@@ -69,13 +78,14 @@ export function validArticleBlocks(
           (!["ol", "li"].includes(block.tag) ||
             !Number.isSafeInteger(block.ordinal) ||
             Math.abs(block.ordinal) > 1_000_000)) ||
-        [block.colspan, block.rowspan].some(
-          (n) =>
-            n !== undefined &&
+        (block.reversed !== undefined &&
+          (block.tag !== "ol" || block.reversed !== true)) ||
+        (["colspan", "rowspan"] as const).some(
+          (attr) =>
+            block[attr] !== undefined &&
             (!["td", "th"].includes(block.tag) ||
-              !Number.isInteger(n) ||
-              n < 1 ||
-              n > 100),
+              !Number.isInteger(block[attr]) ||
+              !validArticleSpan(attr, String(block[attr]))),
         )
       )
         return false;

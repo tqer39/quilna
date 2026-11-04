@@ -129,6 +129,7 @@ export function appendArticleText(
   copyControls.set(parent, currentControls);
   let syntaxBudget = 20_000;
   let syntaxBlocks = 0;
+  let firstRange = 0;
   const appendFlow = (target: HTMLElement, from: number, to: number) => {
     let offset = from;
     let paragraph: HTMLElement | undefined;
@@ -152,13 +153,17 @@ export function appendArticleText(
       }
       return paragraph;
     };
-    const selectedRanges = ranges
-      .filter((r) => r.end > from && r.start < to)
-      .map((r) => ({
-        ...r,
-        start: Math.max(r.start, from) - from,
-        end: Math.min(r.end, to) - from,
-      }));
+    // Flows are visited in offset order and ranges are sorted, so a repaint stays
+    // linear even at the block and code range limits.
+    while (firstRange < ranges.length && ranges[firstRange].end <= from)
+      firstRange++;
+    const selectedRanges = [];
+    for (let i = firstRange; i < ranges.length && ranges[i].start < to; i++)
+      selectedRanges.push({
+        ...ranges[i],
+        start: Math.max(ranges[i].start, from) - from,
+        end: Math.min(ranges[i].end, to) - from,
+      });
     for (const segment of articleSegments(
       text.slice(from, to),
       selectedRanges,
@@ -227,6 +232,7 @@ export function appendArticleText(
           block.tag === "ol" ? "start" : "value",
           String(block.ordinal),
         );
+      if (block.reversed) node.setAttribute("reversed", "");
       for (const attr of ["colspan", "rowspan"] as const)
         if (block[attr] !== undefined)
           node.setAttribute(attr, String(block[attr]));

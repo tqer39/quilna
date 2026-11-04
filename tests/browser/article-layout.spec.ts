@@ -27,6 +27,8 @@ test("lists, nested numbering and table cells retain semantics, links and source
   await expect(page.locator('ol > li > ul > li')).toHaveCount(2);
   await expect(page.getByRole('table')).toHaveCount(1);
   await expect(page.locator('table tr')).toHaveCount(4);
+  for (const name of ['No admin access', 'Key authentication only', 'Retained'])
+    await expect(page.getByRole('cell', {name})).toBeVisible();
   await expect(page.locator('tbody tr').first().locator('th')).toHaveAttribute('rowspan', '2');
   await expect(page.locator('tbody tr').nth(1).locator('td')).toHaveAttribute('colspan', '2');
   await expect(page.locator('tbody tr').last().locator('td').first()).toBeEmpty();
@@ -85,4 +87,69 @@ test("a table above the structure limit still imports as readable text", async (
   }, `<article><h1>Guide</h1><p>${filler}</p><table>${rows}</table></article>`);
   expect(content.text).toContain("row 699");
   expect(content.structure.blocks).toEqual([]);
+});
+
+test("list and cell attributes follow HTML parsing, including reversed and full-group spans", async ({ page }) => {
+  await page.goto("/?view=feeds");
+  const html = `<article><h1>Guide</h1><p>${filler}</p>
+    <ol reversed start="+9" id="signed"><li value=" 4">Padded</li><li>Next</li></ol>
+    <table><caption><ul><li>In caption</li></ul></caption><tbody><tr><th rowspan="0">Group</th><td>A</td></tr><tr><td colspan="0">B</td></tr></tbody></table></article>`;
+  const blocks = await page.evaluate(async (html) => {
+    const extraction = "/src/article-content.ts", rendering = "/src/article-code.ts";
+    const content = (await import(extraction)).extractArticle(html, "https://publisher.example.org/guide");
+    const root = document.createElement("div");
+    root.id = "attribute-fixture";
+    (await import(rendering)).appendArticleText(root, content.text, content.codeRanges, (text: string) => document.createTextNode(text), content.structure);
+    document.querySelector("#app")!.replaceChildren(root);
+    return content.structure.blocks;
+  }, html);
+  expect(blocks[0]).toMatchObject({ tag: "ol", ordinal: 9, reversed: true });
+  await expect(page.locator("#attribute-fixture > ol")).toHaveAttribute("reversed", "");
+  await expect(page.locator("#attribute-fixture > ol")).toHaveAttribute("start", "9");
+  await expect(page.locator("#attribute-fixture > ol > li").first()).toHaveAttribute("value", "4");
+  await expect(page.locator("#attribute-fixture caption > ul > li")).toHaveText("In caption");
+  await expect(page.locator("#attribute-fixture th")).toHaveAttribute("rowspan", "0");
+  await expect(page.locator("#attribute-fixture td").last()).not.toHaveAttribute("colspan");
+});
+
+test("the renderer ignores invalid structural metadata and keeps the text", async ({ page }) => {
+  await page.goto("/?view=feeds");
+  const rendered = await page.evaluate(async () => {
+    const path = "/src/article-code.ts";
+    const root = document.createElement("div");
+    (await import(path)).appendArticleText(root, "example text", [], (text: string) => document.createTextNode(text), {
+      version: 1, links: [], headings: [],
+      blocks: [{ tag: "script", start: 0, end: 7, children: [] }, { tag: "ol", start: 8, end: 12, children: [], reversed: "yes" }],
+    });
+    return { html: root.innerHTML, text: root.textContent };
+  });
+  expect(rendered.text).toBe("example text");
+  expect(rendered.html).not.toContain("<script");
+  expect(rendered.html).not.toContain("<ol");
+});
+
+test("code ranges across many blocks render once and in place", async ({ page }) => {
+  await page.goto("/?view=feeds");
+  const result = await page.evaluate(async () => {
+    const path = "/src/article-code.ts";
+    const root = document.createElement("div");
+    const items = Array.from({ length: 40 }, (_, i) => `item ${i} code${i} end`);
+    const ranges: { start: number; end: number; block: boolean }[] = [];
+    const children: { tag: string; start: number; end: number; children: never[] }[] = [];
+    let text = "";
+    for (const item of items) {
+      const start = text.length;
+      text += item;
+      const code = start + item.indexOf("code");
+      ranges.push({ start: code, end: code + item.split(" ")[2].length, block: false });
+      children.push({ tag: "li", start, end: text.length, children: [] });
+      text += "\n\n";
+    }
+    (await import(path)).appendArticleText(root, text, ranges, (value: string) => document.createTextNode(value), {
+      version: 1, links: [], headings: [],
+      blocks: [{ tag: "ul", start: 0, end: text.length - 2, children }],
+    });
+    return Array.from(root.querySelectorAll("li code"), (node) => node.textContent);
+  });
+  expect(result).toEqual(Array.from({ length: 40 }, (_, i) => `code${i}`));
 });
