@@ -2,6 +2,7 @@ import { z } from "zod";
 import { hash } from "./crypto.mjs";
 import { cloudFeedURL, fetchCloudFeed } from "./feed-fetch.mjs";
 import { validSourceValidators } from "../src/http-validators.mjs";
+import { ArticlePrefetch } from "./article-prefetch.mjs";
 
 const integer = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 const feedSchema = z
@@ -38,6 +39,8 @@ const stateSchema = z
     pending: z.array(snapshotSchema).max(100),
     bytes: integer.max(20_000_000),
     blocked: z.boolean(),
+    // Absent in states saved before article prefetch existed.
+    articles: z.boolean().optional(),
   })
   .strict();
 const empty = () => ({
@@ -54,6 +57,7 @@ const configSchema = z
     expectedRevision: integer,
     interval: stateSchema.shape.interval,
     urls: z.array(z.string().max(2048)).max(50),
+    articles: z.boolean().optional(),
   })
   .strict();
 const stateKey = "rss:state";
@@ -71,9 +75,15 @@ export class FeedCollector {
       blockedHosts = [],
       now = Date.now,
       fetchFeed = (url) => fetchCloudFeed(url, { blockedHosts }),
+      ...articleOptions
     } = {},
   ) {
     Object.assign(this, { storage, enabled, blockedHosts, now, fetchFeed });
+    this.prefetch = new ArticlePrefetch(storage, {
+      blockedHosts,
+      now,
+      ...articleOptions,
+    });
   }
   async transaction(update) {
     return this.storage.transaction(async (tx) => {
@@ -97,12 +107,17 @@ export class FeedCollector {
     await tx.setAlarm(
       Math.max(
         this.now() + 1000,
-        Math.min(...state.feeds.map((f) => f.nextAt)),
+        Math.min(
+          ...state.feeds.map((f) => f.nextAt),
+          state.articles ? await this.prefetch.nextAt(tx) : Infinity,
+        ),
       ),
     );
   }
-  summary(state) {
+  async summary(state, reader) {
     return {
+      ...(await this.prefetch.summary(reader)),
+      articles: state.articles === true,
       available: this.enabled,
       revision: state.revision,
       interval: state.interval,
@@ -124,7 +139,10 @@ export class FeedCollector {
     const state = stateSchema.parse(
       (await this.storage.get(stateKey)) ?? empty(),
     );
-    return this.summary(state);
+    return this.summary(state, this.storage);
+  }
+  async article(id) {
+    return this.prefetch.article(id);
   }
   async source(input) {
     if (!this.enabled) throw Error("collection-unconfigured");
@@ -170,6 +188,10 @@ export class FeedCollector {
         throw Error("collection-conflict");
       state.revision++;
       state.interval = config.interval;
+      if (config.articles !== undefined) {
+        state.articles = config.articles;
+        if (!config.articles) await this.prefetch.clearQueue(tx);
+      }
       state.feeds = urls.map(
         (url) =>
           state.feeds.find((feed) => feed.url === url) ?? {
@@ -182,7 +204,7 @@ export class FeedCollector {
           },
       );
       await this.schedule(state, tx);
-      return this.summary(state);
+      return this.summary(state, tx);
     });
   }
   async snapshot(id) {
@@ -217,11 +239,13 @@ export class FeedCollector {
       }
       state.pending = state.pending.filter((item) => !ids.includes(item.id));
       if (removed.length) state.blocked = false;
+      await this.prefetch.remove(tx, ids);
       await this.schedule(state, tx);
-      return this.summary(state);
+      return this.summary(state, tx);
     });
   }
   async alarm() {
+    let article = null;
     const work = await this.transaction(async (state, tx) => {
       if (!this.enabled || !state.interval || state.blocked) {
         await this.schedule(state, tx);
@@ -233,16 +257,24 @@ export class FeedCollector {
       // Persist a recovery alarm before any network operation. Re-delivery or
       // process death cannot start the same feed again during this lease.
       for (const feed of due) feed.nextAt = this.now() + 60_000;
+      if (state.articles)
+        article = await this.prefetch.take(
+          tx,
+          state.feeds.map((feed) => feed.url),
+        );
       await this.schedule(state, tx);
       return due.map((feed) => ({
         url: feed.url,
         revision: state.revision,
         lease: feed.nextAt,
+        digest: feed.digest,
+        articles: state.articles === true,
       }));
     });
-    await Promise.all(
-      work.map(async (ticket) => {
-        let result, digest, failure;
+    await Promise.all([
+      this.prefetchArticle(article),
+      ...work.map(async (ticket) => {
+        let result, digest, failure, links;
         try {
           result = await this.fetchFeed(ticket.url);
           cloudFeedURL(result.url, this.blockedHosts);
@@ -253,6 +285,8 @@ export class FeedCollector {
           )
             throw Error();
           digest = await hash(result.url + "\n" + result.xml);
+          if (ticket.articles && digest !== ticket.digest)
+            links = await this.prefetch.scan(result.xml, result.url);
         } catch {
           failure = "feed-fetch-failed";
         }
@@ -302,6 +336,8 @@ export class FeedCollector {
               state.pending.push(meta);
               state.bytes += size;
               feed.digest = digest;
+              if (state.articles && links)
+                await this.prefetch.add(tx, feed.url, links);
             }
             feed.lastSuccess = this.now();
             feed.failures = 0;
@@ -311,6 +347,20 @@ export class FeedCollector {
           await this.schedule(state, tx);
         });
       }),
-    );
+    ]);
+  }
+  /** A prefetch failure never affects RSS: reading falls back to a fetch on open. */
+  async prefetchArticle(ticket) {
+    if (!ticket) return;
+    const outcome = await this.prefetch.load(ticket);
+    await this.transaction(async (state, tx) => {
+      await this.prefetch.commit(
+        tx,
+        ticket,
+        state.articles ? outcome : { ...outcome, kind: "drop" },
+        state.feeds.map((feed) => feed.url),
+      );
+      await this.schedule(state, tx);
+    });
   }
 }

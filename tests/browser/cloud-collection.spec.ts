@@ -730,3 +730,206 @@ test("initial connection failures back off to five minutes and a lost ACK recove
   await page.clock.fastForward(1);
   await expect.poll(() => requests).toBe(before + 1);
 });
+
+const gzipBase64 = async (text: string) => {
+  const compressed = await new Response(
+    new Blob([text]).stream().pipeThrough(new CompressionStream("gzip")),
+  ).arrayBuffer();
+  return btoa(String.fromCharCode(...new Uint8Array(compressed)));
+};
+const pageURL = "https://news.example.org/prefetched";
+const pageId = "3b0f8a1e-52a4-4a37-9a33-0f2f1e7e0a11";
+const pageHTML = `<html lang="en"><head><title>Prefetched page</title></head><body><article><h1>Prefetched page</h1>${"<p>Collected while the browser was closed, and readable without another fetch.</p>".repeat(30)}</article></body></html>`;
+const pageRSS = `<rss><channel><title>Cloud source</title><item><guid>page</guid><title>Prefetched page</title><link>${pageURL}</link></item></channel></rss>`;
+const pageMeta = {
+  id: pageId,
+  feedUrl: address,
+  url: pageURL,
+  fetchedAt: time,
+  parts: 1,
+  size: 100,
+};
+async function collectedPage(
+  page: Page,
+  article: () => Promise<{ status?: number; json: unknown }>,
+) {
+  const state = {
+    ...initial(),
+    interval: 15,
+    articles: true,
+    articleQueued: 0,
+    articleBytes: 100,
+    articlePending: [pageMeta],
+    pending: [
+      {
+        id: snapshotId,
+        feedUrl: address,
+        url: address,
+        fetchedAt: time,
+        parts: 1,
+        size: pageRSS.length,
+      },
+    ],
+  };
+  const acknowledged: string[][] = [];
+  const foreground: string[] = [];
+  await page.route("**/api/feeds/fetch", (route) => {
+    const body = route.request().postDataJSON();
+    if (body.icon === true) return route.fulfill({ status: 404, json: {} });
+    foreground.push(body.url);
+    return route.fulfill({ status: 502, json: { error: "unexpected" } });
+  });
+  await page.route("**/api/session", (route) =>
+    route.fulfill({ json: { csrfToken: csrf } }),
+  );
+  await page.route("**/api/collection**", async (route) => {
+    const path = new URL(route.request().url()).pathname;
+    if (path.endsWith("/ack")) {
+      const { ids } = route.request().postDataJSON();
+      acknowledged.push(ids);
+      state.pending = state.pending.filter((p) => !ids.includes(p.id));
+      state.articlePending = state.articlePending.filter(
+        (p) => !ids.includes(p.id),
+      );
+    }
+    if (path.includes("/snapshots/"))
+      return route.fulfill({
+        json: { ...state.pending[0], account, xml: pageRSS },
+      });
+    if (path.includes("/articles/")) {
+      const value = await article();
+      return route.fulfill({
+        status: value.status ?? 200,
+        json: value.json,
+      });
+    }
+    return route.fulfill({ json: state });
+  });
+  return { state, acknowledged, foreground };
+}
+
+test("a page collected while closed opens without a fetch and is acknowledged once saved", async ({
+  page,
+}) => {
+  const gzip = await gzipBase64(pageHTML);
+  const { acknowledged, foreground } = await collectedPage(page, async () => ({
+    json: { ...pageMeta, account, finalUrl: pageURL, gzip },
+  }));
+  await page.goto("/?view=feeds");
+  const title = page.getByRole("button", {
+    name: "Prefetched page",
+    exact: true,
+  });
+  await expect(title).toBeVisible();
+  await expect.poll(() => acknowledged.flat()).toContain(pageId);
+  await title.click();
+  await expect(page.locator(".rss-source-text")).toContainText(
+    "Collected while the browser was closed",
+  );
+  expect(foreground).toEqual([]);
+  await page.reload(); // The URL reopens the article from what was saved.
+  await expect(page.locator(".rss-source-text")).toContainText(
+    "Collected while the browser was closed",
+  );
+  expect(foreground).toEqual([]);
+});
+
+test("an unreadable collected page is released and opening it fetches as before", async ({
+  page,
+}) => {
+  const { acknowledged, foreground } = await collectedPage(page, async () => ({
+    json: {
+      ...pageMeta,
+      account,
+      finalUrl: pageURL,
+      gzip: await gzipBase64("<html><body></body></html>"),
+    },
+  }));
+  await page.goto("/?view=feeds");
+  await expect.poll(() => acknowledged.flat()).toContain(pageId);
+  await page
+    .getByRole("button", { name: "Prefetched page", exact: true })
+    .click();
+  await expect.poll(() => foreground).toContain(pageURL);
+});
+
+test("a failed local save keeps the collected page on the server for retry", async ({
+  page,
+}) => {
+  const { acknowledged } = await collectedPage(page, async () => ({
+    json: {
+      ...pageMeta,
+      account,
+      finalUrl: pageURL,
+      gzip: await gzipBase64(pageHTML),
+    },
+  }));
+  await page.addInitScript(() => {
+    for (const method of ["add", "put"] as const) {
+      const original = IDBObjectStore.prototype[method];
+      IDBObjectStore.prototype[method] = function (...args) {
+        if (this.name === "versions") throw Error("Synthetic save failure");
+        return original.apply(this, args);
+      };
+    }
+  });
+  await page.goto("/?view=feeds");
+  await expect(
+    page.getByRole("button", { name: "Prefetched page", exact: true }),
+  ).toBeVisible();
+  await expect.poll(() => acknowledged.flat()).toContain(snapshotId);
+  await page.waitForTimeout(500);
+  expect(acknowledged.flat()).not.toContain(pageId);
+});
+
+test("the prefetch choice is sent with the schedule and reflects the saved state", async ({
+  page,
+}) => {
+  const state = {
+    ...initial(),
+    articles: false,
+    articleQueued: 0,
+    articleBytes: 0,
+    articlePending: [],
+  };
+  const bodies: { articles?: boolean }[] = [];
+  await page.route("**/api/session", (route) =>
+    route.fulfill({ json: { csrfToken: csrf } }),
+  );
+  await page.route("**/api/collection", (route) => {
+    if (route.request().method() === "PUT") {
+      const body = route.request().postDataJSON();
+      bodies.push(body);
+      Object.assign(state, {
+        revision: state.revision + 1,
+        interval: body.interval,
+        articles: body.articles,
+      });
+    }
+    return route.fulfill({ json: state });
+  });
+  await seed(page);
+  await page.goto("/?view=feeds&screen=settings");
+  const option = page.getByRole("checkbox", { name: /本文も先に取得する/ });
+  await expect(option).toBeChecked(); // New schedules default to prefetch.
+  await page
+    .getByRole("button", {
+      name: "クラウド収集を開始・設定を更新",
+      exact: true,
+    })
+    .click();
+  await expect.poll(() => bodies.at(-1)?.articles).toBe(true);
+  await expect(page.locator("#rss-cloud-status")).toContainText(
+    "本文の先行取得：待機0件・未取り込み0件",
+  );
+  await option.uncheck();
+  await page
+    .getByRole("button", {
+      name: "クラウド収集を開始・設定を更新",
+      exact: true,
+    })
+    .click();
+  await expect.poll(() => bodies.at(-1)?.articles).toBe(false);
+  await page.reload();
+  await expect(option).not.toBeChecked();
+});

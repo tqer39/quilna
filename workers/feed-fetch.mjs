@@ -31,6 +31,14 @@ export function cloudFeedURL(value, blockedHosts = []) {
   return url;
 }
 
+function retryAfterSeconds(value) {
+  if (!value) return 0;
+  const seconds = /^\d+$/.test(value)
+    ? Number(value)
+    : (Date.parse(value) - Date.now()) / 1000;
+  return Number.isFinite(seconds) ? Math.max(0, Math.ceil(seconds)) : 0;
+}
+
 export async function fetchCloudFeed(
   value,
   {
@@ -136,7 +144,12 @@ export async function fetchCloudFeed(
               ))
           ) {
             await response.body?.cancel();
-            throw Error("feed-response");
+            const failure = Error("feed-response");
+            failure.status = response.status;
+            failure.retryAfter = retryAfterSeconds(
+              response.headers.get("Retry-After"),
+            );
+            throw failure;
           }
           const charset =
             /charset=["']?([^;\s"']+)/i.exec(

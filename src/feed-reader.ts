@@ -903,6 +903,19 @@ export async function feedReader(root: HTMLElement) {
     option.value = String(minutes);
     cloudInterval.append(option);
   }
+  const cloudArticles = el("input");
+  cloudArticles.type = "checkbox";
+  cloudArticles.id = "rss-cloud-articles";
+  cloudArticles.checked = true;
+  let cloudArticlesDirty = false;
+  cloudArticles.addEventListener("change", () => {
+    cloudArticlesDirty = true;
+  });
+  const cloudArticlesLabel = el(
+    "label",
+    "新着記事の本文も先に取得する（同じサイトへは30秒以上あけ、robots.txtに従います）",
+  );
+  cloudArticlesLabel.htmlFor = cloudArticles.id;
   const cloudStart = button(
     "クラウド収集を開始・設定を更新",
     () => void configureCloud(false),
@@ -942,6 +955,8 @@ export async function feedReader(root: HTMLElement) {
     ),
     cloudLabel,
     cloudInterval,
+    cloudArticles,
+    cloudArticlesLabel,
     cloudStart,
     cloudStop,
     cloudCheck,
@@ -977,7 +992,7 @@ export async function feedReader(root: HTMLElement) {
     cloudStop.disabled =
       cloudBusy || !cloudState?.available || !cloudState.interval;
     cloudCheck.disabled = cloudBusy || !db;
-    cloudInterval.disabled = cloudBusy;
+    cloudInterval.disabled = cloudArticles.disabled = cloudBusy;
     cloudLogin.hidden = !cloudError.includes("ログインが必要");
     cloudNotice.textContent = cloudBusy
       ? "クラウドの処理中です…"
@@ -985,13 +1000,17 @@ export async function feedReader(root: HTMLElement) {
           `${cloudError}${cloudRetryCount ? " 接続の回復を待って自動的に再確認します。" : ""}`) ||
         (!cloudState?.available
           ? "クラウド収集はまだ利用できません。現在は画面表示中の更新のみです。"
-          : `${cloudState.interval ? `クラウドで${cloudState.interval}分ごとに収集を設定済み` : "クラウド収集は停止中"}。未取り込みの取得結果：${cloudState.pending.length}件。${failures.length ? `取り込めない取得結果：${failures.length}件。下の理由を確認してください。` : ""}${cloudState.blocked ? "保存上限に達したため収集を一時停止しています。取得済みの記事を取り込んでください。" : ""}${cloudState.feeds.some((feed) => feed.error) ? "取得に失敗した配信元があります。再試行を待っています。" : ""} ${cloudState.sourcePolicy === "public-https" ? "公開HTTPSのサイト・RSSに対応します。ログインが必要なページや配信元側の制限により取得できない場合があります。" : `対応する配信元：${cloudState.hosts.join("、")}。`}追加した購読先は「設定を更新」でクラウドに反映できます。`);
+          : `${cloudState.interval ? `クラウドで${cloudState.interval}分ごとに収集を設定済み` : "クラウド収集は停止中"}。未取り込みの取得結果：${cloudState.pending.length}件。${cloudState.articles ? `本文の先行取得：待機${cloudState.articleQueued}件・未取り込み${cloudState.articlePending.length}件。` : ""}${failures.length ? `取り込めない取得結果：${failures.length}件。下の理由を確認してください。` : ""}${cloudState.blocked ? "保存上限に達したため収集を一時停止しています。取得済みの記事を取り込んでください。" : ""}${cloudState.feeds.some((feed) => feed.error) ? "取得に失敗した配信元があります。再試行を待っています。" : ""} ${cloudState.sourcePolicy === "public-https" ? "公開HTTPSのサイト・RSSに対応します。ログインが必要なページや配信元側の制限により取得できない場合があります。" : `対応する配信元：${cloudState.hosts.join("、")}。`}追加した購読先は「設定を更新」でクラウドに反映できます。`);
   }
   function acceptCloudState(next: CloudCollectionState) {
-    if (cloudState?.account !== next.account) cloudIntervalDirty = false;
+    if (cloudState?.account !== next.account)
+      cloudIntervalDirty = cloudArticlesDirty = false;
     cloudState = next;
     if (!cloudIntervalDirty && next.interval)
       cloudInterval.value = String(next.interval);
+    // A schedule saved earlier keeps its choice; a new one starts checked.
+    if (!cloudArticlesDirty && next.interval)
+      cloudArticles.checked = next.articles;
   }
   function scheduleCloud() {
     if (cloudTimer) clearTimeout(cloudTimer);
@@ -1024,6 +1043,16 @@ export async function feedReader(root: HTMLElement) {
           await cloudClient.importPending(db, latest);
         } finally {
           // Earlier documents may already be committed when a later save/ACK fails.
+          await load();
+          announceChange();
+        }
+        acceptCloudState(await cloudClient.status());
+      }
+      // After the RSS results, so a page can attach to the article it belongs to.
+      if (cloudState?.available && cloudState.articlePending.length) {
+        try {
+          await cloudClient.importArticles(db, cloudState, articles);
+        } finally {
           await load();
           announceChange();
         }
@@ -1110,8 +1139,9 @@ export async function feedReader(root: HTMLElement) {
         currentState,
         urls,
         stop ? 0 : (Number(cloudInterval.value) as 15 | 30 | 60),
+        stop ? currentState.articles : cloudArticles.checked,
       );
-      cloudIntervalDirty = false;
+      cloudIntervalDirty = cloudArticlesDirty = false;
       acceptCloudState(next);
       if (!stop) {
         for (const feed of localFeeds) {
