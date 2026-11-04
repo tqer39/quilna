@@ -55,3 +55,34 @@ test('invalid and deeply nested structural metadata is rejected without executin
   });
   expect(values).toEqual([false,false,false]);
 });
+
+const filler = "Readable body text keeps this extraction above the article threshold. ".repeat(20);
+for (const [name, markup, expected] of [
+  ["a list directly inside a list", "<ul><li>Outer</li><ul><li>Inner</li></ul></ul>", ["Outer", "Inner"]],
+  ["list items without a list", "<div><li>Stray item</li></div>", ["Stray item"]],
+  ["a menu element", "<menu><li>Menu item</li></menu>", ["Menu item"]],
+  ["a list inside a caption", "<table><caption><ul><li>Caption item</li></ul></caption><tr><td>Cell</td></tr></table>", ["Caption item", "Cell"]],
+] as const)
+  test(`imports keep readable text for ${name}`, async ({ page }) => {
+    await page.goto("/?view=feeds");
+    const content = await page.evaluate(async (html) => {
+      const path = "/src/article-content.ts";
+      const { extractArticle } = await import(path);
+      return extractArticle(html, "https://publisher.example.org/guide");
+    }, `<article><h1>Guide</h1><p>${filler}</p>${markup}</article>`);
+    for (const text of expected) expect(content.text).toContain(text);
+    if (name === "a list directly inside a list")
+      expect(content.structure.blocks[0].children.map((b: { tag: string }) => b.tag)).toEqual(["li", "li"]);
+  });
+
+test("a table above the structure limit still imports as readable text", async ({ page }) => {
+  await page.goto("/?view=feeds");
+  const rows = Array.from({ length: 700 }, (_, i) => `<tr>${"<td>c</td>".repeat(8)}<td>row ${i}</td></tr>`).join("");
+  const content = await page.evaluate(async (html) => {
+    const path = "/src/article-content.ts";
+    const { extractArticle } = await import(path);
+    return extractArticle(html, "https://publisher.example.org/guide");
+  }, `<article><h1>Guide</h1><p>${filler}</p><table>${rows}</table></article>`);
+  expect(content.text).toContain("row 699");
+  expect(content.structure.blocks).toEqual([]);
+});
