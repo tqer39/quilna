@@ -216,6 +216,10 @@ export async function paperView(root: HTMLElement, client = new PaperClient()) {
     notice.textContent = "DOIを確認してから送信してください。";
   });
   window.addEventListener("pagehide", () => changed(false));
+  // pagehide clears the detail, but a cached page keeps the URL that names it.
+  window.addEventListener("pageshow", (event) => {
+    if (event.persisted) void restoreRoute();
+  });
   /** Show selected facts as text, including explicit uncertainty and deposited relationship records. */
   function show(
     p: PaperSnapshot,
