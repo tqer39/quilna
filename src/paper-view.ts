@@ -84,7 +84,7 @@ export async function paperView(root: HTMLElement, client = new PaperClient()) {
       !preview.hasChildNodes() &&
       (url.searchParams.has("paper") || url.searchParams.has("excerpt"))
     )
-      void restoreRoute();
+      void restoreRoute(false); // The pager reads its own list.
   }
   function selectURL(paper = "", excerpt = "") {
     const url = new URL(location.href);
@@ -96,17 +96,18 @@ export async function paperView(root: HTMLElement, client = new PaperClient()) {
     url.hash = "";
     pushReaderURL(url);
   }
-  async function restoreRoute() {
+  async function restoreRoute(lists = true) {
     const href = location.href,
       params = new URL(href).searchParams;
     changed(false);
     const ticket = routeRevision;
     notice.textContent = "";
     try {
-      await Promise.all([
-        refresh(params.get("paperAfter") || undefined),
-        excerpts.restore(params.get("excerptAfter") || undefined),
-      ]);
+      if (lists)
+        await Promise.all([
+          refresh(params.get("paperAfter") || undefined),
+          excerpts.restore(params.get("excerptAfter") || undefined),
+        ]);
       if (ticket !== routeRevision || href !== location.href) return;
       if (params.get("excerpt")) {
         const record = await readPaperExcerpt(params.get("excerpt")!);

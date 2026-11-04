@@ -41,12 +41,16 @@ test("saved bibliography and citation URLs restore exact local records without p
   await expect(page.getByRole("region", { name: "書誌情報のプレビュー", exact: true })).toBeEmpty();
   await page.goto(paperURL);
   await expect(page.getByRole("button", { name: "この書誌情報を保存", exact: true })).toBeDisabled();
-  expect(requests).toEqual([]);
   const context = await browser.newContext();
   try {
     const other = await context.newPage();
+    await other.route("https://**/*", (route) => {
+      requests.push(route.request().url());
+      return route.abort();
+    });
     await other.goto(citationURL);
     await expect(other.getByRole("status")).toContainText("現在のライブラリにありません");
+    expect(requests).toEqual([]);
   } finally { await context.close(); }
 });
 
@@ -193,4 +197,61 @@ test("returning to the list does not store the departing detail's scroll on the 
   await expect.poll(() => page.evaluate(() => scrollY)).toBeGreaterThan(0);
   await page.getByRole("button", { name: "保存一覧へ戻る", exact: true }).evaluate((node: HTMLElement) => node.click());
   expect(await page.evaluate(() => history.state.readerScroll)).toBe(0);
+});
+
+test("citation page cursors survive reload and Back and name the second page", async ({ page }) => {
+  await page.goto("/?view=papers");
+  const saved = await page.evaluate(async (citation) => {
+    const format = "/src/paper-text-format.ts", store = "/src/paper-excerpt-store.ts";
+    const { paperExcerpt } = await import(format), { savePaperExcerpt } = await import(store);
+    const records = [];
+    // Distinct ranges of the fixture's ASCII prefix are distinct immutable records.
+    for (let start = 0; records.length < 25 && start < 8; start++)
+      for (let end = start + 1; records.length < 25 && end <= 8; end++) {
+        const record = await paperExcerpt(citation.source, citation.block, start, end, citation.createdAt);
+        await savePaperExcerpt(record);
+        records.push(record.digest);
+      }
+    return records.length;
+  }, citation);
+  expect(saved).toBe(25);
+  await page.reload();
+  const library = page.getByRole("region", { name: "保存した論文引用", exact: true });
+  await expect(library.locator(".paper-row")).toHaveCount(20);
+  await library.getByRole("button", { name: "論文引用の次の20件", exact: true }).click();
+  await expect(library.locator(".paper-row")).toHaveCount(5);
+  expect(new URL(page.url()).searchParams.get("excerptAfter")).toBeTruthy();
+  const visible = await library.locator(".paper-row").allTextContents();
+  await page.reload();
+  await expect(library.locator(".paper-row")).toHaveCount(5);
+  expect(await library.locator(".paper-row").allTextContents()).toEqual(visible);
+  await page.goBack();
+  await expect(library.locator(".paper-row")).toHaveCount(20);
+  await page.goForward();
+  await expect(library.locator(".paper-row")).toHaveCount(5);
+});
+
+test("a citation stored under another key reports storage trouble, not a missing record", async ({ page }) => {
+  await page.goto("/?view=papers");
+  const key = "0".repeat(64);
+  await page.evaluate(async ({ citation, key }) => {
+    const path = "/src/paper-excerpt-store.ts", name = (await import(path)).paperExcerptDatabase;
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(name, 1);
+      request.onupgradeneeded = () => request.result.createObjectStore("excerpts");
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction("excerpts", "readwrite");
+      tx.objectStore("excerpts").put(JSON.stringify(citation), key);
+      tx.oncomplete = () => resolve();
+      tx.onabort = () => reject(tx.error);
+    });
+    db.close();
+  }, { citation, key });
+  await page.goto(`/?view=papers&excerpt=${key}`);
+  await expect(page.getByRole("status")).toContainText("論文引用を保存領域で確認できません");
+  await expect(page.getByRole("status")).not.toContainText("現在のライブラリにありません");
+  await expect(page.locator("blockquote")).toHaveCount(0);
 });

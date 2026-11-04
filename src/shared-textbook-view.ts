@@ -653,6 +653,6 @@ export async function sharedTextbookView(root: HTMLElement) {
       if (epoch === fileEpoch) notice.textContent = message(error);
     });
   });
-  await showList();
-  await restoreRoute();
+  // A URL names one edition; opening it need not wait for every edition's validation.
+  await Promise.all([showList(), restoreRoute()]);
 }

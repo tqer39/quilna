@@ -1052,3 +1052,65 @@ test("a stale missing-book error clears on return and retrying answers keeps the
   expect(await page.evaluate(() => history.length)).toBe(entries);
   await expect(page.locator(new URL(sectionURL).hash)).toBeFocused();
 });
+
+test("a valid edition stored under another identifier reports storage trouble", async ({ page }) => {
+  await page.goto("/?view=textbooks");
+  await importBook(page);
+  await page.evaluate(async () => {
+    const path = "/src/shared-textbook-store.ts", name = (await import(path)).sharedTextbookDatabase;
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open(name);
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction("books", "readwrite"), store = tx.objectStore("books");
+      const rows = store.getAll();
+      rows.onsuccess = () => {
+        store.put({ id: "another-edition", raw: rows.result[0].raw });
+      };
+      tx.oncomplete = () => resolve();
+      tx.onabort = () => reject(tx.error);
+    });
+    db.close();
+  });
+  await page.goto("/?view=textbooks&book=another-edition");
+  await expect(page.getByRole("status")).toContainText("教材の保存領域を利用できません");
+  await expect(page.getByRole("status")).not.toContainText("現在のライブラリにありません");
+  await expect(page.getByRole("main", { name: "共有教材の読書" })).toBeHidden();
+});
+
+test("a direct edition URL opens without waiting for the library list", async ({ page }) => {
+  await page.goto("/?view=textbooks");
+  await importBook(page);
+  await openBook(page);
+  const url = page.url();
+  // Never completing the list's transaction must not block the edition's own read.
+  await page.addInitScript(() => {
+    const held = new WeakSet<IDBTransaction>();
+    const transaction = IDBDatabase.prototype.transaction;
+    IDBDatabase.prototype.transaction = function (...args) {
+      const tx = transaction.apply(this, args);
+      let completed: ((this: IDBTransaction, event: Event) => unknown) | null = null;
+      Object.defineProperty(tx, "oncomplete", {
+        set(value) {
+          completed = value;
+        },
+        get() {
+          return completed;
+        },
+      });
+      tx.addEventListener("complete", (event) => {
+        if (!held.has(tx)) completed?.call(tx, event);
+      });
+      return tx;
+    };
+    const getAll = IDBObjectStore.prototype.getAll;
+    IDBObjectStore.prototype.getAll = function (...args) {
+      if (this.name === "books") held.add(this.transaction);
+      return getAll.apply(this, args);
+    };
+  });
+  await page.goto(url);
+  await expect(page.getByRole("navigation", { name: "教材の目次" })).toBeVisible();
+});
