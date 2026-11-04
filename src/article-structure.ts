@@ -39,14 +39,23 @@ export const articleBlockChildren: Record<string, readonly string[]> = {
   td: ["ul", "ol", "table"],
   caption: ["ul", "ol"],
 };
-/** HTML integers may be signed or space-padded; browsers honour both. */
-export const validArticleOrdinal = (value: string) =>
-  /^\s*[+-]?\d+$/.test(value) && Math.abs(Number(value)) <= 1_000_000;
+/** HTML's integer rules: leading ASCII whitespace, a sign, digits; the rest is ignored. */
+export function htmlInteger(value: string) {
+  const match = /^[\t\n\f\r ]*([+-]?\d+)/.exec(value);
+  return match ? Number(match[1]) : null;
+}
+export const validArticleOrdinal = (value: string) => {
+  const n = htmlInteger(value);
+  return n !== null && Math.abs(n) <= 1_000_000;
+};
 /** `rowspan="0"` is valid HTML: the cell spans the rest of its row group. */
-export const validArticleSpan = (attr: "colspan" | "rowspan", value: string) =>
-  /^\d+$/.test(value) &&
-  Number(value) >= (attr === "rowspan" ? 0 : 1) &&
-  Number(value) <= 100;
+export const validArticleSpan = (
+  attr: "colspan" | "rowspan",
+  value: string,
+) => {
+  const n = htmlInteger(value);
+  return n !== null && n >= (attr === "rowspan" ? 0 : 1) && n <= 100;
+};
 /** Bounded, nested ranges contain only allowlisted semantic elements, never HTML. */
 export function validArticleBlocks(
   text: string,
