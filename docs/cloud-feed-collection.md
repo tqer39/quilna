@@ -57,7 +57,21 @@ Merging keeps read/saved flags, stable saved copies, imported originals, transla
 Older cloud snapshots cannot replace more recently fetched local feed/article content.
 The cloud is a delivery queue, not a complete backup or multi-device article/history sync: a result is removed after one browser acknowledges it.
 Browser-local articles and marks remain local after logout; a shared browser profile is not an account-isolated local library.
-The cloud queue contains RSS-provided content. Fetching the linked article's full text, translation and speech still happen when using the browser.
+Translation and speech still happen when using the browser.
+
+### Article prefetch
+
+**新着記事の本文も先に取得する**, sent with **クラウド収集を開始・設定を更新**, also collects new article pages while the browser is closed (Issue #79). It starts checked for a new schedule, and a schedule saved earlier keeps its choice: deploying this version enables nothing until the settings are updated. Turning it off clears waiting items and keeps pages already queued for delivery.
+
+When a feed response changes, the Worker scans it for at most five entry links per response and skips those already seen (the last 500, stored as hashes). The scan is deliberately small: full parsing stays in the browser, and a missed link only means that article is fetched when opened, as before.
+Each alarm fetches at most one page, after persisting a 60-second lease and a 30-second per-host spacing. `robots.txt` is read once per host per day, using the rules for `Quilna` or otherwise `*`. A missing or empty file permits access; an unreachable one (5xx, 408, 429, network failure) delays the fetch. Disallowed pages are not fetched.
+Temporary failures retry after 5 and 20 minutes, also waiting for `Retry-After` up to one day, and the item is dropped after three attempts. Other 4xx responses, non-HTML responses and pages over 1.5 MB after compression and encoding are dropped at once. A dropped page still works: opening the article fetches it.
+
+The Worker stores the page as gzip, without extracting it, because extraction could exceed the Workers Free CPU allowance and stored responses are untrusted data. Pages have their own limits of 100 pages and 20 MB, with room always kept for the largest page. Reaching them pauses only prefetch; RSS collection continues, and an acknowledgement resumes it.
+The next browser saves the RSS results, then at most five pages per pass. It extracts each page as it would any fetched HTML, retains it as an immutable version and fills only articles that have no body, so opening them needs no fetch. A source with a retained body is left to the [body update flow](browser-rss.md#source-reuse-and-saved-body-versions). A page that cannot be read is acknowledged and fetched on open. A failed local save is not acknowledged and retries.
+Pages are read from `GET /api/collection/articles/<id>`, scoped to the verified owner, and acknowledged through the existing endpoint.
+
+Miniflare tests cover real alarms, compression and `robots.txt` with synthetic responses. Live publisher acceptance, the real CPU and storage use on Workers Free, physical PC shutdown and long-running operation are unverified.
 
 ## Publication checkpoint — 2026-10-24
 

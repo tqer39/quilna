@@ -170,6 +170,9 @@ export function createHandler({
         const snapshot = /^\/api\/collection\/snapshots\/([a-f0-9-]{36})$/.exec(
           url.pathname,
         );
+        const article = /^\/api\/collection\/articles\/([a-f0-9-]{36})$/.exec(
+          url.pathname,
+        );
         const action =
           url.pathname === "/api/collection"
             ? { GET: "collection-status", PUT: "collection-configure" }[
@@ -177,13 +180,15 @@ export function createHandler({
               ]
             : snapshot && request.method === "GET"
               ? "collection-snapshot"
-              : ["/api/collection/ack", "/api/collection/discard"].includes(
-                    url.pathname,
-                  ) && request.method === "POST"
-                ? url.pathname.endsWith("/discard")
-                  ? "collection-discard"
-                  : "collection-ack"
-                : null;
+              : article && request.method === "GET"
+                ? "collection-article"
+                : ["/api/collection/ack", "/api/collection/discard"].includes(
+                      url.pathname,
+                    ) && request.method === "POST"
+                  ? url.pathname.endsWith("/discard")
+                    ? "collection-discard"
+                    : "collection-ack"
+                  : null;
         if (!action) return json(404, { status: "not-found" });
         const data = [
           "collection-configure",
@@ -201,7 +206,7 @@ export function createHandler({
               principal: verified.data,
               csrf: request.headers.get("X-CSRF-Token"),
               data,
-              id: snapshot?.[1],
+              id: snapshot?.[1] ?? article?.[1],
             }),
           }),
         );
@@ -271,6 +276,7 @@ export async function handleAccount(core, request, collector, documents) {
         "status",
         "collection-status",
         "collection-snapshot",
+        "collection-article",
         "feed-fetch",
         "document-status",
         "document-admin-status",
@@ -297,6 +303,8 @@ export async function handleAccount(core, request, collector, documents) {
         value = await collector.configure(command.data);
       else if (command.action === "collection-snapshot")
         value = await collector.snapshot(command.id);
+      else if (command.action === "collection-article")
+        value = await collector.article(command.id);
       else if (command.action === "collection-ack")
         value = await collector.acknowledge(command.data);
       else if (command.action === "collection-discard")

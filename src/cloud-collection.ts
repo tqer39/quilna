@@ -1,6 +1,15 @@
 import { z } from "zod";
 import { parseFeed } from "./feed-parser";
-import { mergeFeed } from "./feed-store";
+import { mergeFeed, updateArticleContent } from "./feed-store";
+import type { FeedArticle } from "./feed-parser";
+import { extractArticle } from "./article-content";
+import { sourceURL } from "./feed-discovery";
+import { currentDocument, retainDocument } from "./source-document-store";
+import { versionContent } from "./source-document";
+import {
+  validSourceValidators,
+  type SourceValidators,
+} from "./http-validators.mjs";
 
 const timestamp = z.number().int().nonnegative();
 const snapshotMeta = z.object({
@@ -10,6 +19,14 @@ const snapshotMeta = z.object({
   fetchedAt: timestamp,
   parts: z.number().int().min(0).max(125),
   size: timestamp.max(8_000_000),
+});
+const articleMeta = z.object({
+  id: z.string().uuid(),
+  feedUrl: z.string().url().max(2048),
+  url: z.string().url().max(1024),
+  fetchedAt: timestamp,
+  parts: z.number().int().min(0).max(125),
+  size: timestamp.max(2_000_000),
 });
 const stateSchema = z.object({
   available: z.boolean(),
@@ -39,8 +56,29 @@ const stateSchema = z.object({
   pending: z.array(snapshotMeta).max(100),
   bytes: timestamp.max(20_000_000),
   blocked: z.boolean(),
+  // Absent from a Worker deployed before article prefetch.
+  articles: z.boolean().default(false),
+  articleQueued: timestamp.default(0),
+  articleBytes: timestamp.default(0),
+  articlePending: z.array(articleMeta).max(100).default([]),
 });
 export type CloudCollectionState = z.infer<typeof stateSchema>;
+const sameSource = (url: string, normalized: string) => {
+  try {
+    return sourceURL(url) === normalized;
+  } catch {
+    return false;
+  }
+};
+/** Inflate a page the Worker queued as compressed, untrusted bytes. */
+async function inflate(base64: string) {
+  const stream = new Blob([
+    Uint8Array.from(atob(base64), (c) => c.charCodeAt(0)),
+  ])
+    .stream()
+    .pipeThrough(new DecompressionStream("gzip"));
+  return new Response(stream).text();
+}
 class CloudRequestError extends Error {
   constructor(
     readonly code: string,
@@ -167,6 +205,7 @@ export class CloudCollectionClient {
     state: CloudCollectionState,
     urls: string[],
     interval: 0 | 15 | 30 | 60,
+    articles = state.articles,
   ) {
     const csrf = await this.csrf();
     return stateSchema.parse(
@@ -174,7 +213,7 @@ export class CloudCollectionClient {
         method: "PUT",
         account: state.account,
         csrf,
-        body: { expectedRevision: state.revision, urls, interval },
+        body: { expectedRevision: state.revision, urls, interval, articles },
       }),
     );
   }
@@ -241,6 +280,76 @@ export class CloudCollectionClient {
       await mergeFeed(db, parsed.feed, parsed.articles);
       ids.push(meta.id);
       count++;
+    }
+    if (ids.length)
+      await this.request("/api/collection/ack", {
+        method: "POST",
+        account: state.account,
+        csrf,
+        body: { ids },
+      });
+    return count;
+  }
+  /**
+   * Save pages collected while closed so opening them needs no fetch. A page
+   * that cannot be read is released: opening the article fetches it as usual.
+   */
+  async importArticles(
+    db: IDBDatabase,
+    state: CloudCollectionState,
+    articles: FeedArticle[],
+  ) {
+    const pending = state.articlePending.slice(0, 5);
+    if (!pending.length) return 0;
+    const csrf = await this.csrf();
+    const ids: string[] = [];
+    let count = 0;
+    for (const meta of pending) {
+      let response;
+      try {
+        response = await this.request(`/api/collection/articles/${meta.id}`, {
+          account: state.account,
+        });
+      } catch (error) {
+        if (!(error instanceof CloudRequestError)) throw error;
+        if (error.code === "snapshot-invalid") ids.push(meta.id);
+        else if (error.code !== "snapshot-missing") throw error;
+        continue;
+      }
+      const result = articleMeta
+        .extend({
+          account: z.literal(state.account),
+          finalUrl: z.string().url().max(2048),
+          gzip: z.string().max(2_000_000),
+          validators: z
+            .custom<SourceValidators>(validSourceValidators)
+            .optional(),
+        })
+        .parse(response);
+      if (result.id !== meta.id || result.url !== meta.url)
+        throw Error("取得結果の配信元を確認できませんでした。");
+      const normalized = sourceURL(result.url);
+      // Never replace a body the reader already retained; updates have their own flow.
+      if (!(await currentDocument(normalized))) {
+        let content;
+        try {
+          content = extractArticle(await inflate(result.gzip), result.finalUrl);
+        } catch {
+          ids.push(meta.id);
+          continue;
+        }
+        const saved = await retainDocument(normalized, content, {
+          validators: result.validators,
+        });
+        // Fill only articles without a body; store-level checks keep newer saves.
+        for (const article of articles)
+          if (!article.content && sameSource(article.url, normalized))
+            await updateArticleContent(db, article, {
+              content: versionContent(saved.version),
+            });
+        count++;
+      }
+      ids.push(meta.id);
     }
     if (ids.length)
       await this.request("/api/collection/ack", {
