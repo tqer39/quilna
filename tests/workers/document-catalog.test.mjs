@@ -444,7 +444,10 @@ test(`explicit revalidation repairs ${legacyStructure ? "heading-only" : "plain"
       if (calls === 1)
         return { content: legacy, validators: { url, etag: '"same"' } };
       assert.equal(previous.validators, undefined);
-      return { content: repaired, validators: { url, etag: '"same"' } };
+      return {
+        content: structuredClone(repaired),
+        validators: { url, etag: '"same"' },
+      };
     },
   });
   const first = await f.catalog.acquire("alice");
