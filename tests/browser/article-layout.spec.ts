@@ -153,3 +153,30 @@ test("code ranges across many blocks render once and in place", async ({ page })
   });
   expect(result).toEqual(Array.from({ length: 40 }, (_, i) => `code${i}`));
 });
+
+test("list and span attributes follow HTML's integer rules", async ({ page }) => {
+  await page.goto("/?view=feeds");
+  const values = await page.evaluate(async () => {
+    const path = "/src/article-structure.ts";
+    const { htmlInteger, validArticleOrdinal, validArticleSpan } = await import(path);
+    return {
+      integers: ["9 ", " 4", "+3", "-2", "7abc", "\u00a05", "abc", ""].map(htmlInteger),
+      ordinals: ["9 ", "\u00a05", "2000000"].map(validArticleOrdinal),
+      columns: [" 2", "0", "101"].map((value: string) => validArticleSpan("colspan", value)),
+      rows: [" 0", "-1"].map((value: string) => validArticleSpan("rowspan", value)),
+    };
+  });
+  expect(values).toEqual({
+    integers: [9, 4, 3, -2, 7, null, null, null],
+    ordinals: [true, false, false],
+    columns: [true, false, false],
+    rows: [true, false],
+  });
+  const html = `<article><h1>Guide</h1><p>${filler}</p><ol start="9 "><li>One</li></ol><table><caption>Data</caption><tr><th>A</th><th>B</th></tr><tr><td colspan=" 2">Wide</td></tr></table></article>`;
+  const blocks = await page.evaluate(async (html) => {
+    const path = "/src/article-content.ts";
+    return (await import(path)).extractArticle(html, "https://publisher.example.org/guide").structure.blocks;
+  }, html);
+  expect(blocks[0].ordinal).toBe(9);
+  expect(JSON.stringify(blocks[1])).toContain('"colspan":2');
+});

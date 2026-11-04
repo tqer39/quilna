@@ -4,6 +4,7 @@ import {
   articleBlockChildren,
   type ArticleBlock,
   type ArticleStructure,
+  htmlInteger,
   validArticleBlocks,
   validArticleOrdinal,
   validArticleSpan,
@@ -118,14 +119,14 @@ export function serializeArticle(
         ordinal !== null &&
         validArticleOrdinal(ordinal)
       )
-        block.ordinal = Number(ordinal);
+        block.ordinal = htmlInteger(ordinal)!;
       if (tag === "ol" && element.hasAttribute("reversed"))
         block.reversed = true;
       if (["th", "td"].includes(tag))
         for (const attr of ["colspan", "rowspan"] as const) {
           const value = element.getAttribute(attr);
           if (value !== null && validArticleSpan(attr, value))
-            block[attr] = Number(value);
+            block[attr] = htmlInteger(value)!;
         }
       (containers.at(-1)?.children ?? blocks).push(block);
       containers.push(block);
