@@ -128,6 +128,22 @@ test("the renderer ignores invalid structural metadata and keeps the text", asyn
   expect(rendered.html).not.toContain("<ol");
 });
 
+// A disallowed tag would reject the whole array before the reversed check runs.
+test("the renderer ignores a list whose reversed metadata is not true", async ({ page }) => {
+  await page.goto("/?view=feeds");
+  const rendered = await page.evaluate(async () => {
+    const path = "/src/article-code.ts";
+    const root = document.createElement("div");
+    (await import(path)).appendArticleText(root, "example text", [], (text: string) => document.createTextNode(text), {
+      version: 1, links: [], headings: [],
+      blocks: [{ tag: "ol", start: 0, end: 12, children: [], reversed: "yes" }],
+    });
+    return { html: root.innerHTML, text: root.textContent };
+  });
+  expect(rendered.text).toBe("example text");
+  expect(rendered.html).not.toContain("<ol");
+});
+
 test("code ranges across many blocks render once and in place", async ({ page }) => {
   await page.goto("/?view=feeds");
   const result = await page.evaluate(async () => {
