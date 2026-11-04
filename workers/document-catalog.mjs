@@ -373,7 +373,7 @@ export class DocumentCatalog {
           ? {
               content: structuredClone(work.current.content),
               validators:
-                force && !work.current.content.structure
+                force && work.current.content.structure?.blocks === undefined
                   ? undefined
                   : work.state.validators &&
                     structuredClone(work.state.validators),

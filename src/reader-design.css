@@ -1496,6 +1496,28 @@
   padding: 0;
 }
 
+/* Retained article structure shares the source's text offsets and semantics. */
+.rss-source-text :is(ul, ol) {
+  padding-inline-start: 1.6em;
+  margin-block: .8em;
+}
+.rss-source-text li { padding-inline-start: .2em; margin-block: .3em; }
+.rss-source-text li > p { margin-block: .3em; }
+.rss-source-text li > :is(ul, ol) { margin-block: .2em; }
+.rss-source-text li::marker { color: var(--viewer-muted); font-weight: 600; }
+.rss-table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+  margin-block: 1.3em;
+  border: 1px solid var(--viewer-line);
+  border-radius: 8px;
+}
+.rss-table-scroll table { width: 100%; border-collapse: collapse; font-size: .9em; line-height: 1.65; }
+.rss-table-scroll :is(th, td) { padding: .65em .85em; border: 1px solid var(--viewer-line); vertical-align: top; text-align: start; min-width: 8em; }
+.rss-table-scroll th { background: var(--viewer-soft); font-weight: 650; }
+.rss-table-scroll :is(th, td) > p { margin-block: .25em; }
+.rss-table-scroll caption { padding: .6em; font-weight: 650; text-align: start; }
+
 /* Keep card interaction visible for pointer and keyboard readers. */
 :root[data-reader-design] .rss-article-list li:hover,
 :root[data-reader-design] .rss-article-list li:focus-within {

@@ -1,5 +1,7 @@
 import {
   safeArticleLink,
+  validArticleOrdinal,
+  validArticleSpan,
   type ArticleStructure,
   type ArticleInfo,
 } from "./article-structure";
@@ -135,6 +137,20 @@ export function extractArticleDocument(
         else element.removeAttribute("href");
         continue;
       }
+      const tag = element.tagName.toLowerCase();
+      if (tag === "ol" && attr.name === "reversed") continue;
+      if (
+        ((tag === "ol" && attr.name === "start") ||
+          (tag === "li" && attr.name === "value")) &&
+        validArticleOrdinal(attr.value)
+      )
+        continue;
+      if (
+        ["th", "td"].includes(tag) &&
+        (attr.name === "colspan" || attr.name === "rowspan") &&
+        validArticleSpan(attr.name, attr.value)
+      )
+        continue;
       if (!["class", "id", "lang", "dir"].includes(attr.name))
         element.removeAttribute(attr.name);
     }
