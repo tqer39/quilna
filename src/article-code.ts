@@ -158,12 +158,17 @@ export function appendArticleText(
     while (firstRange < ranges.length && ranges[firstRange].end <= from)
       firstRange++;
     const selectedRanges = [];
-    for (let i = firstRange; i < ranges.length && ranges[i].start < to; i++)
-      selectedRanges.push({
-        ...ranges[i],
-        start: Math.max(ranges[i].start, from) - from,
-        end: Math.min(ranges[i].end, to) - from,
-      });
+    for (let i = firstRange; i < ranges.length && ranges[i].start < to; i++) {
+      const start = Math.max(ranges[i].start, from);
+      const end = Math.min(ranges[i].end, to);
+      // An empty flow at a block boundary clips a range that crosses it to nothing.
+      if (start < end)
+        selectedRanges.push({
+          ...ranges[i],
+          start: start - from,
+          end: end - from,
+        });
+    }
     for (const segment of articleSegments(
       text.slice(from, to),
       selectedRanges,

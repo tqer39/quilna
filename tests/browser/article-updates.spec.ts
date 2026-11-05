@@ -717,6 +717,58 @@ test("choosing a newer current catalog version replaces a stale update notice wi
   );
 });
 
+test("a structure-only source change reaches the reader's update notice", async ({
+  page,
+}) => {
+  const listed = html.replace(
+    "</article>",
+    "<ul><li>Repaired item one</li><li>Repaired item two</li></ul></article>",
+  );
+  await seed(page);
+  // Same text as the source, so only the retained structure differs.
+  await page.evaluate(
+    async ({ url, listed }) => {
+      const paths = ["/src/feed-store.ts", "/src/article-content.ts"];
+      const [api, content] = await Promise.all(paths.map((p) => import(p))),
+        db = await api.openFeedLibrary(),
+        [article] = (await api.readFeedLibrary(db)).articles;
+      await api.updateArticleContent(
+        db,
+        article,
+        {
+          content: {
+            ...content.extractArticle(listed, url),
+            fetchedAt: article.content.fetchedAt,
+            structure: { version: 1, links: [], headings: [] },
+          },
+        },
+        false,
+        undefined,
+        false,
+        "replace",
+      );
+      db.close();
+    },
+    { url, listed },
+  );
+  await page.route("**/api/feeds/fetch", (r) =>
+    r.request().postDataJSON().icon
+      ? r.fulfill({ status: 404, json: {} })
+      : r.fulfill({ json: { url, html: listed } }),
+  );
+  await run(page);
+  await page.goto("/?view=feeds");
+  await page
+    .getByRole("button", { name: "Updated source", exact: true })
+    .click();
+  await expect(page.locator(".rss-source-text li")).toHaveCount(0);
+  await page.getByRole("button", { name: "更新された本文を読む" }).click();
+  await expect(page.locator(".rss-source-text li")).toHaveText([
+    "Repaired item one",
+    "Repaired item two",
+  ]);
+});
+
 for (const newerCheck of [false, true])
   test(`manual selection and concurrent update notices retain the newest successful check (${newerCheck})`, async ({
     page,
