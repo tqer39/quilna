@@ -5,6 +5,67 @@ import TextbookCore
 
 @MainActor
 final class FeedReaderModelTests: XCTestCase {
+    func testPreparingSearchKeepsCacheSelectionAndBookmarkSavingAvailable() async throws {
+        let fixture = try Fixture()
+        let store = MemoryFeedStore(subscription: fixture.subscription, article: fixture.oldArticle)
+        await store.setPreparationGated()
+        let searcher = PreparationTestSearcher(article: fixture.oldArticle)
+        let model = FeedReaderModel(store: store, fetcher: UnchangedFetcher(), searcher: searcher,
+                                    searchDebounce: .zero)
+        await model.initialize()
+        XCTAssertFalse(model.isLoading)
+        XCTAssertTrue(model.isPreparingSearch)
+        XCTAssertTrue(model.preparationMessage?.contains("12件") == true)
+        model.selectedArticleID = fixture.oldArticle.id
+        model.searchText = "needle"
+        XCTAssertEqual(model.visibleArticles, [fixture.oldArticle])
+        XCTAssertEqual(model.selectedArticle, fixture.oldArticle)
+        XCTAssertFalse(model.isSearching)
+        await model.setBookmark(true, article: fixture.oldArticle)
+        XCTAssertEqual(model.bookmarkState(for: fixture.oldArticle), true)
+        let countBeforeReady = await searcher.calls
+        XCTAssertEqual(countBeforeReady, 0)
+
+        await store.finishPreparation()
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(3))
+        while (model.isPreparingSearch || model.searchResults.isEmpty) && clock.now < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertFalse(model.isPreparingSearch)
+        XCTAssertEqual(model.searchResults.map(\.article.id), [fixture.oldArticle.id])
+        XCTAssertTrue(model.showsSearchResults)
+    }
+
+    func testPreparationRetryStartsPendingQueryWhenAnotherSceneAlreadyFinished() async throws {
+        let fixture = try Fixture()
+        let store = MemoryFeedStore(subscription: fixture.subscription, article: fixture.oldArticle)
+        await store.setPreparationGated()
+        let searcher = PreparationTestSearcher(article: fixture.oldArticle)
+        let model = FeedReaderModel(store: store, fetcher: UnchangedFetcher(), searcher: searcher,
+                                    searchDebounce: .zero)
+        await model.initialize()
+        model.searchText = "needle"
+        await store.finishPreparation(fail: true)
+        let clock = ContinuousClock()
+        let failureDeadline = clock.now.advanced(by: .seconds(3))
+        while model.preparationFailure == nil && clock.now < failureDeadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertNotNil(model.preparationFailure)
+        XCTAssertEqual(model.visibleArticles, [fixture.oldArticle])
+        // Another scene completes after this scene's failure, before retry.
+        await store.finishPreparation()
+        await model.startSearchPreparation()
+        let resultDeadline = clock.now.advanced(by: .seconds(3))
+        while model.searchResults.isEmpty && clock.now < resultDeadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertNil(model.preparationFailure)
+        XCTAssertFalse(model.isPreparingSearch)
+        XCTAssertEqual(model.searchResults.map(\.article.id), [fixture.oldArticle.id])
+    }
+
     func testOldBookmarkedSnapshotSurvivesRecentArticleLimitAndReopen() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -577,7 +638,37 @@ private actor GatedFetcher: FeedFetching {
     }
 }
 
-private actor MemoryFeedStore: FeedLibraryStoring {
+private actor PreparationTestSearcher: ArticleSearching {
+    let article: FeedArticle
+    private(set) var calls = 0
+    init(article: FeedArticle) { self.article = article }
+    func searchArticles(_ request: ArticleSearchRequest) -> ArticleSearchPage {
+        calls += 1
+        return ArticleSearchPage(results: [ArticleSearchResult(article: article, translation: nil,
+                                                               cursor: 1, isBookmarked: true)], nextCursor: nil)
+    }
+}
+
+private actor MemoryFeedStore: FeedLibraryStoring, ArticleSearchPreparing {
+    private var preparationState: ArticleSearchPreparation = .ready
+    private var preparationGate: CheckedContinuation<Void, Never>?
+    private var preparationFails = false
+    func setPreparationGated() { preparationState = .preparing(processedArticles: 12) }
+    func searchPreparationStatus() -> ArticleSearchPreparation { preparationState }
+    func prepareSearchBatch() async throws -> ArticleSearchPreparation {
+        if !preparationState.isReady && !preparationFails {
+            await withCheckedContinuation { preparationGate = $0 }
+        }
+        if preparationFails { throw FeedError.unavailable }
+        return preparationState
+    }
+    func finishPreparation(fail: Bool = false) {
+        preparationFails = fail
+        preparationState = fail ? .preparing(processedArticles: 12) : .ready
+        preparationGate?.resume()
+        preparationGate = nil
+    }
+
     private var savedSubscriptions: [FeedSubscription]
     private var savedArticles: [FeedArticle]
     private var bookmarks: Set<String> = []

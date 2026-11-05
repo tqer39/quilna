@@ -18,6 +18,8 @@ final class FeedReaderModel: ObservableObject {
     @Published private(set) var searchMessage: String?
     @Published private(set) var searchFailed = false
     @Published private(set) var searchPreparing = false
+    @Published private(set) var searchPreparation: ArticleSearchPreparation?
+    @Published private(set) var preparationFailure: String?
     @Published var feedURL = ""
     @Published var isLoading = true
     @Published var isRefreshing = false
@@ -37,6 +39,8 @@ final class FeedReaderModel: ObservableObject {
     private var activeRefreshAll = false
     private var activeRequestEpochs: [String: Int] = [:]
     private var searchTask: Task<Void, Never>?
+    private var preparationTask: Task<Void, Never>?
+    private var isStartingPreparation = false
     private var searchGeneration: UInt64 = 0
     private var cacheGeneration: UInt64 = 0
     private var nextSearchCursor: Int64?
@@ -58,8 +62,19 @@ final class FeedReaderModel: ObservableObject {
         self.searchDebounce = searchDebounce
     }
 
+    var isPreparingSearch: Bool { searchPreparation?.isReady == false }
+    var showsSearchResults: Bool { hasSearchQuery && !isPreparingSearch }
+
+    var preparationMessage: String? {
+        guard case .preparing(let processed) = searchPreparation else { return nil }
+        if let preparationFailure { return "検索の準備を中断しました: " + preparationFailure }
+        return "検索を準備中（\(processed)件確認済み）。記事の閲覧・保存はできます。"
+    }
+
+    deinit { preparationTask?.cancel() }
+
     var visibleArticles: [FeedArticle] {
-        if hasSearchQuery { return searchResults.map(\.article) }
+        if showsSearchResults { return searchResults.map(\.article) }
         return articles.filter { article in
             (!showsBookmarksOnly || bookmarkedIDs.contains(article.id)) &&
             (selectedFeedID == nil || article.feedID == selectedFeedID)
@@ -67,7 +82,7 @@ final class FeedReaderModel: ObservableObject {
     }
 
     var selectedArticle: FeedArticle? {
-        if hasSearchQuery { return searchResults.first { $0.article.id == selectedArticleID }?.article }
+        if showsSearchResults { return searchResults.first { $0.article.id == selectedArticleID }?.article }
         return articles.first { $0.id == selectedArticleID }
     }
 
@@ -98,12 +113,13 @@ final class FeedReaderModel: ObservableObject {
             if store == nil {
                 let directory = try dataDirectory ?? Self.defaultDirectory()
                 store = try await Task.detached(priority: .utility) {
-                    try FeedLibraryStore(directory: directory)
+                    try FeedLibraryStore(directory: directory, deferSearchPreparation: true)
                 }.value
             }
             if searcher == nil { searcher = store as? any ArticleSearching }
             try await reloadCache()
             isLoading = false
+            await startSearchPreparation()
             let generationBeforeRefresh = searchGeneration
             await refresh()
             if hasSearchQuery, searchGeneration == generationBeforeRefresh {
@@ -112,6 +128,55 @@ final class FeedReaderModel: ObservableObject {
         } catch {
             isLoading = false
             message = "保存領域を利用できません: \(error.localizedDescription)"
+        }
+    }
+
+    func startSearchPreparation() async {
+        guard preparationTask == nil, !isStartingPreparation,
+              let preparer = store as? any ArticleSearchPreparing else { return }
+        isStartingPreparation = true
+        defer { isStartingPreparation = false }
+        let wasPreparing = isPreparingSearch
+        preparationFailure = nil
+        do {
+            searchPreparation = try await preparer.searchPreparationStatus()
+            guard isPreparingSearch else {
+                // Another scene may have finished while this scene showed a
+                // retry. Run the pending query even without starting a worker.
+                if wasPreparing { invalidateSearch(debounced: false) }
+                return
+            }
+            invalidateSearch(debounced: false)
+        } catch {
+            searchPreparation = .preparing(processedArticles: 0)
+            preparationFailure = error.localizedDescription
+            return
+        }
+        preparationTask = Task(priority: .utility) { [weak self] in
+            do {
+                let clock = ContinuousClock()
+                var lastPublished = clock.now
+                while !Task.isCancelled {
+                    let state = try await preparer.prepareSearchBatch()
+                    if state.isReady || lastPublished.duration(to: clock.now) >= .milliseconds(100) {
+                        self?.searchPreparation = state
+                        lastPublished = clock.now
+                    }
+                    if state.isReady {
+                        self?.preparationTask = nil
+                        self?.invalidateSearch(debounced: false)
+                        return
+                    }
+                    // Suspend outside the store actor and outside a transaction.
+                    // User reads and saves have an opportunity between batches.
+                    try await Task.sleep(for: .milliseconds(1))
+                }
+            } catch is CancellationError {
+                // The committed cursor is retained for the next open.
+            } catch {
+                self?.preparationFailure = error.localizedDescription
+            }
+            self?.preparationTask = nil
         }
     }
 
@@ -415,6 +480,12 @@ final class FeedReaderModel: ObservableObject {
 
     private func scheduleSearch(debounced: Bool) {
         guard hasSearchQuery else { return }
+        if isPreparingSearch {
+            isSearching = false
+            searchPreparing = true
+            searchMessage = "準備が完了すると入力した条件で検索します。現在は保存済み記事を表示しています。"
+            return
+        }
         searchGeneration &+= 1
         searchTask?.cancel()
         let generation = searchGeneration

@@ -64,3 +64,19 @@ public enum ArticleSearchError: Error, Equatable, Sendable, LocalizedError {
         }
     }
 }
+
+/// Progress counts scanned articles, not a percentage of a changing library.
+public enum ArticleSearchPreparation: Equatable, Sendable {
+    case ready
+    case preparing(processedArticles: Int64)
+
+    public var isReady: Bool {
+        if case .ready = self { return true }
+        return false
+    }
+}
+
+public protocol ArticleSearchPreparing: Sendable {
+    func searchPreparationStatus() async throws -> ArticleSearchPreparation
+    func prepareSearchBatch() async throws -> ArticleSearchPreparation
+}
