@@ -776,6 +776,47 @@ test("explicit refresh repairs legacy formatting without replacing its retained 
   expect(result.retained).toEqual(result.old.version);
 });
 
+test("explicit refresh still repairs legacy formatting after a concurrent unchanged response", async ({ page }) => {
+  await blank(page);
+  const requests: Record<string, unknown>[] = [];
+  let release = () => {};
+  const held = new Promise<void>(resolve => { release = resolve; });
+  await page.route("**/api/feeds/fetch", async r => {
+    requests.push(r.request().postDataJSON());
+    if (requests.length === 1) {
+      await held;
+      return r.fulfill({ json: { url: articleURL, notModified: true } });
+    }
+    return r.fulfill({ json: { url: articleURL, html: html().replace('</article>', '<ul><li>Retained list item</li></ul></article>') } });
+  });
+  await page.evaluate(async url => {
+    const path = '/src/source-document-store.ts', api = await import(path);
+    const fetchedAt = new Date(Date.now() - 2 * 86400000).toISOString();
+    await api.retainDocument(url, { text: 'Old flattened source', title: 'Document', url, language: 'en', fetchedAt, codeRanges: [], structure: {version: 1, links: [], headings: []} }, {seed: true, validators: {url, etag: '"unchanged-source"'}});
+    const state = window as unknown as { acquire: typeof api.acquireDocument; ordinary: Promise<unknown> };
+    state.acquire = api.acquireDocument;
+    state.ordinary = api.acquireDocument(url);
+  }, articleURL);
+  await expect.poll(() => requests.length).toBe(1);
+  // The forced request reads the revision before it queues behind the ordinary one.
+  await page.evaluate(async url => {
+    const state = window as unknown as { acquire: (url: string, options: {force: boolean}) => Promise<unknown>; forced: Promise<unknown> };
+    state.forced = state.acquire(url, {force: true});
+    await new Promise(resolve => setTimeout(resolve, 200));
+  }, articleURL);
+  release();
+  const forced = await page.evaluate(async () => {
+    const state = window as unknown as { ordinary: Promise<unknown>; forced: Promise<{ reused: boolean; content: { structure: { blocks: { tag: string }[] } } }> };
+    await state.ordinary;
+    return state.forced;
+  });
+  expect(requests).toHaveLength(2);
+  expect(requests[0].validators).toBeDefined();
+  expect(requests[1].validators).toBeUndefined();
+  expect(forced.reused).toBe(false);
+  expect(forced.content.structure.blocks.map(b => b.tag)).toEqual(['ul']);
+});
+
 test("large validator requests fall back to a full fetch within the existing body limit", async ({
   page,
 }) => {

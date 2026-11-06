@@ -58,6 +58,22 @@ test('invalid and deeply nested structural metadata is rejected without executin
   expect(values).toEqual([false,false,false]);
 });
 
+// The cycle above is rejected by the block count, so it says nothing about the depth limit.
+test("finite list nesting is accepted up to the depth limit and rejected beyond it", async ({ page }) => {
+  await page.goto("/?view=feeds");
+  const values = await page.evaluate(async () => {
+    const path = "/src/article-structure.ts";
+    const { validArticleStructure } = await import(path);
+    return [33, 34].map((depth) => {
+      let block: unknown;
+      for (let level = depth; level >= 1; level--)
+        block = { tag: level % 2 ? "ul" : "li", start: 0, end: 7, children: block ? [block] : [] };
+      return validArticleStructure("example", { version: 1, links: [], headings: [], blocks: [block] });
+    });
+  });
+  expect(values).toEqual([true, false]);
+});
+
 const filler = "Readable body text keeps this extraction above the article threshold. ".repeat(20);
 for (const [name, markup, expected] of [
   ["a list directly inside a list", "<ul><li>Outer</li><ul><li>Inner</li></ul></ul>", ["Outer", "Inner"]],
@@ -128,6 +144,22 @@ test("the renderer ignores invalid structural metadata and keeps the text", asyn
   expect(rendered.html).not.toContain("<ol");
 });
 
+// A disallowed tag would reject the whole array before the reversed check runs.
+test("the renderer ignores a list whose reversed metadata is not true", async ({ page }) => {
+  await page.goto("/?view=feeds");
+  const rendered = await page.evaluate(async () => {
+    const path = "/src/article-code.ts";
+    const root = document.createElement("div");
+    (await import(path)).appendArticleText(root, "example text", [], (text: string) => document.createTextNode(text), {
+      version: 1, links: [], headings: [],
+      blocks: [{ tag: "ol", start: 0, end: 12, children: [], reversed: "yes" }],
+    });
+    return { html: root.innerHTML, text: root.textContent };
+  });
+  expect(rendered.text).toBe("example text");
+  expect(rendered.html).not.toContain("<ol");
+});
+
 test("code ranges across many blocks render once and in place", async ({ page }) => {
   await page.goto("/?view=feeds");
   const result = await page.evaluate(async () => {
@@ -149,9 +181,37 @@ test("code ranges across many blocks render once and in place", async ({ page })
       version: 1, links: [], headings: [],
       blocks: [{ tag: "ul", start: 0, end: text.length - 2, children }],
     });
-    return Array.from(root.querySelectorAll("li code"), (node) => node.textContent);
+    return Array.from(root.querySelectorAll("li"), (item) => ({
+      text: item.textContent,
+      code: Array.from(item.querySelectorAll("code"), (node) => node.textContent),
+    }));
   });
-  expect(result).toEqual(Array.from({ length: 40 }, (_, i) => `code${i}`));
+  expect(result).toEqual(
+    Array.from({ length: 40 }, (_, i) => ({ text: `item ${i} code${i} end`, code: [`code${i}`] })),
+  );
+});
+
+test("a code range crossing touching list items still renders the whole text", async ({ page }) => {
+  await page.goto("/?view=feeds");
+  const result = await page.evaluate(async () => {
+    const path = "/src/article-code.ts";
+    const root = document.createElement("div");
+    (await import(path)).appendArticleText(root, "aaa bbbccc ddd", [{ start: 4, end: 10, block: false }], (value: string) => document.createTextNode(value), {
+      version: 1, links: [], headings: [],
+      blocks: [{ tag: "ul", start: 0, end: 14, children: [
+        { tag: "li", start: 0, end: 7, children: [] },
+        { tag: "li", start: 7, end: 14, children: [] },
+      ] }],
+    });
+    return Array.from(root.querySelectorAll("li"), (item) => ({
+      text: item.textContent,
+      code: item.querySelector("code")?.textContent,
+    }));
+  });
+  expect(result).toEqual([
+    { text: "aaa bbb", code: "bbb" },
+    { text: "ccc ddd", code: "ccc" },
+  ]);
 });
 
 test("list and span attributes follow HTML's integer rules", async ({ page }) => {

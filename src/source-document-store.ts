@@ -408,11 +408,14 @@ export async function acquireDocument(
         ? Date.now() - Date.parse(current.document.checkedAt)
         : Infinity;
       // A concurrent refresh already completed while this caller was waiting.
+      // An unchanged response also advances the revision without repairing
+      // legacy formatting, so a forced refresh still fetches HTML for it.
       if (
         current &&
         ((!options.force && age >= 0 && age < documentFreshnessMs) ||
           (options.force &&
-            current.document.revision !== before?.document.revision))
+            current.document.revision !== before?.document.revision &&
+            current.version.content.structure?.blocks !== undefined))
       )
         return { content: versionContent(current.version), reused: true };
       try {
