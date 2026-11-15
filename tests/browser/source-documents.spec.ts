@@ -165,11 +165,15 @@ for (const design of ["studio", "editorial", "focus"])
       return r.fulfill({ json: { url: articleURL, html: html(version) } });
     });
     await page.getByRole("button", { name: "Article a", exact: true }).click();
+    // 購読を設定しないテストでは、記事選択とは別に明示的に取得する。
+    await page.getByRole("button", { name: "本文を取り込む", exact: true }).click();
     await expect(page.locator(".rss-source-text")).toContainText(
       "Version 1 explains",
     );
     await page.getByRole("button", { name: /記事一覧へ/ }).click();
     await page.getByRole("button", { name: "Article b", exact: true }).click();
+    // 購読を設定しないテストでは、記事選択とは別に明示的に取得する。
+    await page.getByRole("button", { name: "本文を取り込む", exact: true }).click();
     await expect(page.locator(".rss-source-text")).toContainText(
       "Version 1 explains",
     );
@@ -441,6 +445,8 @@ test("document versions round-trip in backup v2 and dangling or altered referenc
     }),
   );
   await page.getByRole("button", { name: "Article a", exact: true }).click();
+  // 購読を設定しないテストでは、記事選択とは別に明示的に取得する。
+  await page.getByRole("button", { name: "本文を取り込む", exact: true }).click();
   await expect(page.locator(".rss-source-text")).toContainText(
     "Version 1 explains",
   );
@@ -601,6 +607,8 @@ test("a failed version switch keeps the selected source and retry succeeds", asy
     r.fulfill({ json: { url: articleURL, html: html(version) } }),
   );
   await page.getByRole("button", { name: "Article a", exact: true }).click();
+  // 購読を設定しないテストでは、記事選択とは別に明示的に取得する。
+  await page.getByRole("button", { name: "本文を取り込む", exact: true }).click();
   await expect(page.locator(".rss-source-text")).toContainText(
     "Version 1 explains",
   );
@@ -680,6 +688,8 @@ test("conditional refresh retains exact original and translation, survives reloa
     return r.fulfill({ json: { url: articleURL, html: html(2) } });
   });
   await page.getByRole("button", { name: "Article a", exact: true }).click();
+  // 購読を設定しないテストでは、記事選択とは別に明示的に取得する。
+  await page.getByRole("button", { name: "本文を取り込む", exact: true }).click();
   await expect(page.locator(".rss-source-text")).toContainText(
     "Version 1 explains",
   );
@@ -746,6 +756,8 @@ test("an unsolicited unchanged response cannot invent an original", async ({
     r.fulfill({ json: { url: articleURL, notModified: true } }),
   );
   await page.getByRole("button", { name: "Article a", exact: true }).click();
+  // 購読を設定しないテストでは、記事選択とは別に明示的に取得する。
+  await page.getByRole("button", { name: "本文を取り込む", exact: true }).click();
   await expect(page.locator(".rss-content-note")).toContainText(
     "更新確認の結果",
   );

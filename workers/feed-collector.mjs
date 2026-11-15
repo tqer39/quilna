@@ -13,6 +13,7 @@ const feedSchema = z
     failures: integer.max(8),
     error: z.string().max(100),
     digest: z.string().max(100),
+    articleDigest: z.string().max(100).optional(),
   })
   .strict();
 const snapshotSchema = z
@@ -192,6 +193,10 @@ export class FeedCollector {
         state.articles = config.articles;
         if (!config.articles) await this.prefetch.clearQueue(tx);
       }
+      // 購読先から外れた配信元の重複排除情報を残し続けない。
+      for (const feed of state.feeds)
+        if (!urls.includes(feed.url))
+          await tx.delete(`rss:article-seen:${await hash(feed.url)}`);
       state.feeds = urls.map(
         (url) =>
           state.feeds.find((feed) => feed.url === url) ?? {
@@ -268,6 +273,7 @@ export class FeedCollector {
         revision: state.revision,
         lease: feed.nextAt,
         digest: feed.digest,
+        articleDigest: feed.articleDigest,
         articles: state.articles === true,
       }));
     });
@@ -285,7 +291,7 @@ export class FeedCollector {
           )
             throw Error();
           digest = await hash(result.url + "\n" + result.xml);
-          if (ticket.articles && digest !== ticket.digest)
+          if (ticket.articles && digest !== ticket.articleDigest)
             links = await this.prefetch.scan(result.xml, result.url);
         } catch {
           failure = "feed-fetch-failed";
@@ -336,9 +342,14 @@ export class FeedCollector {
               state.pending.push(meta);
               state.bytes += size;
               feed.digest = digest;
-              if (state.articles && links)
-                await this.prefetch.add(tx, feed.url, links);
             }
+            // 前回キューに収まらなかった記事も、RSSが同じなら次回に引き継ぐ。
+            if (
+              state.articles &&
+              links &&
+              (await this.prefetch.add(tx, feed.url, links))
+            )
+              feed.articleDigest = digest;
             feed.lastSuccess = this.now();
             feed.failures = 0;
             feed.error = "";
@@ -349,7 +360,7 @@ export class FeedCollector {
       }),
     ]);
   }
-  /** A prefetch failure never affects RSS: reading falls back to a fetch on open. */
+  /** 本文の先行取得が失敗してもRSSの収集は継続する。 */
   async prefetchArticle(ticket) {
     if (!ticket) return;
     const outcome = await this.prefetch.load(ticket);

@@ -124,7 +124,7 @@ test("article links come from entries, not channel or embedded markup", () => {
       rss(...Array.from({ length: 9 }, (_, i) => `https://x.example.com/${i}`)),
       feed,
     ).length,
-    5,
+    9,
   );
   assert.deepEqual(articleLinks("<rss>not closed", feed), []);
 });
@@ -480,6 +480,12 @@ test("unsubscribing drops queued pages from that feed; a stopped schedule fetche
     urls: [other],
     articles: true,
   });
+  assert.equal(
+    [...f.storage.data.keys()].filter((key) =>
+      key.startsWith("rss:article-seen:"),
+    ).length,
+    0,
+  );
   f.state.xml = rss();
   f.advance(1000);
   await f.collector.alarm();
@@ -502,4 +508,59 @@ test("pages beyond the delivery limit are dropped instead of stored", async () =
   const status = await f.collector.status();
   assert.deepEqual(status.articlePending, []);
   assert.equal(status.articleQueued, 0);
+});
+
+test("先頭5件以降も取得し、容量待ちは同じRSSの次回収集で再登録する", async () => {
+  const f = fixture();
+  const urls = Array.from(
+    { length: 105 },
+    (_, i) => `https://news.example.com/${i}`,
+  );
+  f.state.xml = rss(...urls);
+  await enable(f);
+  await f.collector.alarm();
+  assert.equal((await f.collector.status()).articleQueued, 100);
+  for (let i = 0; i < 6; i++) {
+    f.advance(30_000);
+    await f.restart().alarm();
+  }
+  assert.deepEqual(f.fetched, urls.slice(0, 6));
+  f.advance(15 * 60_000);
+  await f.restart().alarm();
+  const state = await f.storage.get("rss:articles");
+  assert.equal(state.queue.length, 98);
+  assert.equal(state.queue.at(-1).url, urls.at(-1));
+  assert.equal(state.seen.length, 105);
+  assert.equal((await f.collector.status()).pending.length, 1);
+});
+
+test("他フィードによって取得済み履歴が消えても同じRSSの本文を再取得しない", async () => {
+  const f = fixture();
+  await enable(f);
+  await f.collector.alarm();
+  f.advance(30_000);
+  await f.collector.alarm();
+  await f.collector.acknowledge({
+    ids: (await f.collector.status()).articlePending.map((p) => p.id),
+  });
+  // 別フィードの新着によって直近500件の履歴が置き換わった状態を再現する。
+  await f.storage.transaction(async (tx) => {
+    const state = await tx.get("rss:articles");
+    state.seen = Array.from({ length: 500 }, (_, i) =>
+      i.toString(16).padStart(16, "0"),
+    );
+    await tx.put("rss:articles", state);
+  });
+  f.advance(15 * 60_000);
+  await f.restart().alarm();
+  f.advance(30_000);
+  await f.restart().alarm();
+  assert.deepEqual(f.fetched, [a]);
+  assert.equal((await f.collector.status()).articleQueued, 0);
+  f.state.xml = rss(a, b);
+  f.advance(15 * 60_000);
+  await f.restart().alarm();
+  f.advance(30_000);
+  await f.restart().alarm();
+  assert.deepEqual(f.fetched, [a, b]);
 });

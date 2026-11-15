@@ -794,7 +794,11 @@ async function collectedPage(
     }
     if (path.includes("/snapshots/"))
       return route.fulfill({
-        json: { ...state.pending[0], account, xml: pageRSS },
+        json: {
+          ...state.pending.find((item) => path.endsWith(item.id)),
+          account,
+          xml: pageRSS,
+        },
       });
     if (path.includes("/articles/")) {
       const value = await article();
@@ -834,9 +838,12 @@ test("a page collected while closed opens without a fetch and is acknowledged on
   expect(foreground).toEqual([]);
 });
 
-test("an unreadable collected page is released and opening it fetches as before", async ({
+test("読めない先行取得結果を受領しても記事選択だけでは取得しない", async ({
   page,
 }) => {
+  await page.addInitScript(() =>
+    localStorage.setItem("quilna.article.updates.v1", "false"),
+  );
   const { acknowledged, foreground } = await collectedPage(page, async () => ({
     json: {
       ...pageMeta,
@@ -850,7 +857,10 @@ test("an unreadable collected page is released and opening it fetches as before"
   await page
     .getByRole("button", { name: "Prefetched page", exact: true })
     .click();
-  await expect.poll(() => foreground).toContain(pageURL);
+  await expect(
+    page.getByRole("button", { name: "本文を取り込む", exact: true }),
+  ).toBeVisible();
+  expect(foreground).toEqual([]);
 });
 
 test("a failed local save keeps the collected page on the server for retry", async ({
@@ -932,4 +942,85 @@ test("the prefetch choice is sent with the schedule and reflects the saved state
   await expect.poll(() => bodies.at(-1)?.articles).toBe(false);
   await page.reload();
   await expect(option).not.toBeChecked();
+});
+
+test("文書保存後の記事保存失敗を再配送で回復し、本文設定後に受領する", async ({
+  page,
+}) => {
+  const { acknowledged, foreground } = await collectedPage(page, async () => ({
+    json: {
+      ...pageMeta,
+      account,
+      finalUrl: pageURL,
+      gzip: await gzipBase64(pageHTML),
+    },
+  }));
+  await page.addInitScript(() => {
+    localStorage.setItem("quilna.article.updates.v1", "false");
+    const original = IDBObjectStore.prototype.put;
+    IDBObjectStore.prototype.put = function (...args) {
+      if (
+        this.name === "articles" &&
+        args[0]?.content &&
+        !sessionStorage.getItem("allow-article-save")
+      )
+        throw Error("Synthetic article save failure");
+      return original.apply(this, args);
+    };
+  });
+  await page.goto("/?view=feeds");
+  await expect.poll(() => acknowledged.flat()).toContain(snapshotId);
+  await expect
+    .poll(() =>
+      page.evaluate(async () => {
+        const path = "/src/source-document-store.ts";
+        return !!(await (
+          await import(path)
+        ).currentDocument("https://news.example.org/prefetched"));
+      }),
+    )
+    .toBe(true);
+  expect(acknowledged.flat()).not.toContain(pageId);
+  await page.evaluate(() =>
+    sessionStorage.setItem("allow-article-save", "true"),
+  );
+  await page.reload();
+  await expect.poll(() => acknowledged.flat()).toContain(pageId);
+  await page
+    .getByRole("button", { name: "Prefetched page", exact: true })
+    .click();
+  await expect(page.locator(".rss-source-text")).toContainText(
+    "Collected while the browser was closed",
+  );
+  expect(foreground).toEqual([]);
+});
+
+test("不正なRSS結果が残っても同じ配信元の正常な本文配送を止めない", async ({
+  page,
+}) => {
+  const { state, acknowledged } = await collectedPage(page, async () => ({
+    json: {
+      ...pageMeta,
+      account,
+      finalUrl: pageURL,
+      gzip: await gzipBase64(pageHTML),
+    },
+  }));
+  const invalid = {
+    ...state.pending[0],
+    id: "5b0f8a1e-52a4-4a37-9a33-0f2f1e7e0a11",
+  };
+  state.pending.unshift(invalid);
+  await page.route(`**/api/collection/snapshots/${invalid.id}`, (route) =>
+    route.fulfill({ json: { ...invalid, account, xml: "not XML" } }),
+  );
+  await page.goto("/?view=feeds");
+  await expect.poll(() => acknowledged.flat()).toContain(pageId);
+  expect(acknowledged.flat()).not.toContain(invalid.id);
+  await page
+    .getByRole("button", { name: "Prefetched page", exact: true })
+    .click();
+  await expect(page.locator(".rss-source-text")).toContainText(
+    "Collected while the browser was closed",
+  );
 });

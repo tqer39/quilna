@@ -11,7 +11,7 @@ const retryDelays = [5 * 60_000, 20 * 60_000];
 const maxAttempts = 3;
 const maxRetryAfter = 86_400;
 const robotsLifetime = 86_400_000;
-const entryLinks = 5;
+const entryLinks = 200;
 const entryScan = 256_000;
 const partSize = 16_000;
 const stateSchema = z
@@ -90,9 +90,8 @@ function withoutCdata(text) {
   }
 }
 /**
- * A deliberately small scan: full parsing stays in the browser, and a missed
- * link only means that article is fetched when it is opened, as before. Feeds
- * are untrusted, so the work stays linear in their size: no scan rescans input.
+ * ブラウザーと同じ最大200項目を候補にする。取得は永続キューで間隔を空ける。
+ * 外部入力を繰り返し走査せず、フィードの大きさに比例する処理量に制限する。
  */
 export function articleLinks(xml, base) {
   const links = [];
@@ -261,14 +260,38 @@ export class ArticlePrefetch {
   }
   async add(tx, feedUrl, links) {
     const state = await this.read(tx);
+    // フィードに載り続ける記事は、他フィードが共通履歴を押し出しても保持する。
+    const receiptKey = `rss:article-seen:${await hash(feedUrl)}`;
+    const previous = z
+      .array(z.string().max(16))
+      .max(200)
+      .parse((await tx.get(receiptKey)) ?? []);
+    const retained = new Set(
+      previous.filter((key) => links.some((link) => link.key === key)),
+    );
+    let complete = true;
     for (const { url, key } of links) {
-      if (state.seen.includes(key)) continue;
-      // Over capacity this item stays unseen, so a later feed change can retry.
-      if (state.queue.length >= 100 || byteLength(state) > 200_000) break;
+      if (
+        retained.has(key) ||
+        state.seen.includes(key) ||
+        state.queue.some((item) => item.url === url) ||
+        state.pending.some((item) => item.url === url)
+      ) {
+        retained.add(key);
+        continue;
+      }
+      // 容量待ちの記事を未登録のまま残し、同じRSSの次回収集で再試行する。
+      if (state.queue.length >= 100 || byteLength(state) > 200_000) {
+        complete = false;
+        continue;
+      }
+      retained.add(key);
       state.seen = [...state.seen, key].slice(-500);
       state.queue.push({ url, feedUrl, attempts: 0, notBefore: this.now() });
     }
     await tx.put(stateKey, stateSchema.parse(state));
+    await tx.put(receiptKey, [...retained]);
+    return complete;
   }
   available(state, item) {
     return Math.max(

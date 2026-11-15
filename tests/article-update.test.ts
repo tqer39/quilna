@@ -39,7 +39,8 @@ describe("source change scheduling", () => {
   });
   it("checks a body after one day without relying on RSS changes", () => {
     expect(nextArticleUpdate(article)).toBe(Date.parse("2026-10-31T00:00:00Z"));
-    expect(nextArticleUpdate({ ...article, content: undefined })).toBe(
+    expect(nextArticleUpdate({ ...article, content: undefined })).toBe(0);
+    expect(nextArticleUpdate({ ...article, content: undefined, url: "" })).toBe(
       Infinity,
     );
   });

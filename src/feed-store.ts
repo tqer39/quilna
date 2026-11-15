@@ -442,6 +442,11 @@ export function updateArticleContent(
         tx.abort();
         return;
       }
+      // 配送・取得中に別URLへ変わった記事へ、古い出典の本文を付けない。
+      if (patch.content && old && old.url !== article.url) {
+        tx.abort();
+        return;
+      }
       // A slower import in another tab must not replace an already saved original.
       if (patch.content && old?.content) {
         if (contentMode !== "preserve") {

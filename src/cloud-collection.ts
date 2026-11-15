@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { parseFeed } from "./feed-parser";
-import { mergeFeed, updateArticleContent } from "./feed-store";
+import { mergeFeed, readArticle, updateArticleContent } from "./feed-store";
 import type { FeedArticle } from "./feed-parser";
 import { extractArticle } from "./article-content";
 import { sourceURL } from "./feed-discovery";
@@ -291,15 +291,23 @@ export class CloudCollectionClient {
     return count;
   }
   /**
-   * Save pages collected while closed so opening them needs no fetch. A page
-   * that cannot be read is released: opening the article fetches it as usual.
+   * 先行取得した本文を記事へ保存してから受領する。読めないページは
+   * 自動取得の再試行または利用者の明示操作で取得する。
    */
   async importArticles(
     db: IDBDatabase,
     state: CloudCollectionState,
     articles: FeedArticle[],
   ) {
-    const pending = state.articlePending.slice(0, 5);
+    const rejected = new Set(this.failures(state).map((item) => item.id));
+    const pending = state.articlePending
+      .filter(
+        (meta) =>
+          !state.pending.some(
+            (item) => item.feedUrl === meta.feedUrl && !rejected.has(item.id),
+          ),
+      )
+      .slice(0, 5);
     if (!pending.length) return 0;
     const csrf = await this.csrf();
     const ids: string[] = [];
@@ -329,8 +337,8 @@ export class CloudCollectionClient {
       if (result.id !== meta.id || result.url !== meta.url)
         throw Error("取得結果の配信元を確認できませんでした。");
       const normalized = sourceURL(result.url);
-      // Never replace a body the reader already retained; updates have their own flow.
-      if (!(await currentDocument(normalized))) {
+      let saved = await currentDocument(normalized);
+      if (!saved) {
         let content;
         try {
           content = extractArticle(await inflate(result.gzip), result.finalUrl);
@@ -338,17 +346,25 @@ export class CloudCollectionClient {
           ids.push(meta.id);
           continue;
         }
-        const saved = await retainDocument(normalized, content, {
+        saved = await retainDocument(normalized, content, {
           validators: result.validators,
         });
-        // Fill only articles without a body; store-level checks keep newer saves.
-        for (const article of articles)
-          if (!article.content && sameSource(article.url, normalized))
+      }
+      // 文書の保存後に記事保存だけ失敗した場合も、既存の版から再開する。
+      // 本文がすでにある記事はストアの競合検査で保持する。
+      for (const article of articles)
+        if (!article.content && sameSource(article.url, normalized)) {
+          try {
             await updateArticleContent(db, article, {
               content: versionContent(saved.version),
             });
-        count++;
-      }
+          } catch (error) {
+            // 配送中の削除は復活させない。容量などの保存失敗は受領せず再試行する。
+            const live = await readArticle(db, article.id);
+            if (live && sameSource(live.url, normalized)) throw error;
+          }
+          count++;
+        }
       ids.push(meta.id);
     }
     if (ids.length)
