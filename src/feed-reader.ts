@@ -285,7 +285,7 @@ export async function feedReader(root: HTMLElement) {
     ),
     el(
       "p",
-      "記事を開くと選択した取得先から本文を取り込み、このブラウザに保存します。取得できないときは理由と元のRSS情報を表示します。翻訳は対応ブラウザの端末内機能を使い、初回に翻訳データをダウンロードする場合があります。読み上げは端末内の音声を使います。",
+      "自動取得が有効な場合はRSS収集後、選択した取得先から本文を順に取り込み、このブラウザに保存します。取得できないときは理由と元のRSS情報を表示します。翻訳は対応ブラウザの端末内機能を使い、初回に翻訳データをダウンロードする場合があります。読み上げは端末内の音声を使います。",
     ),
   );
   if (hasAccountLibrary()) {
@@ -436,7 +436,7 @@ export async function feedReader(root: HTMLElement) {
     refreshSelect,
     refreshNotice,
   );
-  const bodyUpdateLabel = el("label", "取り込み済み本文の更新を自動確認");
+  const bodyUpdateLabel = el("label", "本文の取得・更新確認を自動で行う");
   const bodyUpdateToggle = el("input");
   bodyUpdateToggle.type = "checkbox";
   bodyUpdateToggle.id = "rss-body-auto-update";
@@ -445,7 +445,7 @@ export async function feedReader(root: HTMLElement) {
   bodyUpdateToggle.disabled = !feedLockSupported();
   const bodyUpdateNotice = el(
     "p",
-    "RSSの変更時と前回の本文確認から24時間後に、表示中のブラウザで順に確認します。新しい版は「本文の更新あり」から開けます。PC停止中はRSSを収集し、本文は次回この画面を開いたときに確認します。",
+    "RSS収集後に本文も順に取得します。取得間隔は30秒以上です。保存済みの本文はRSSの変更時と24時間後に更新を確認します。PC停止中も取得する場合は、クラウド収集の「新着記事の本文も先に取得する」を有効にしてください。",
     "muted",
   );
   bodyUpdateNotice.setAttribute("role", "status");
@@ -457,8 +457,8 @@ export async function feedReader(root: HTMLElement) {
         String(bodyUpdateToggle.checked),
       );
       bodyUpdateNotice.textContent = bodyUpdateToggle.checked
-        ? "本文の自動確認を有効にしました。表示中の本文はそのまま残し、更新があれば通知します。"
-        : "本文の自動確認を停止しました。保存履歴から手動で確認できます。";
+        ? "本文の自動取得・更新確認を有効にしました。保存済みの本文は残し、更新があれば通知します。"
+        : "本文の自動取得・更新確認を停止しました。記事内の取り込み・保存履歴から手動で取得できます。";
       bodyUpdater.start();
     } catch {
       bodyUpdateToggle.checked = automaticArticleUpdates();
@@ -1069,6 +1069,7 @@ export async function feedReader(root: HTMLElement) {
     } finally {
       cloudBusy = false;
       cloudChecked = true;
+      bodyUpdater.wake();
       renderCloud();
       render();
       scheduleCloud();
@@ -1278,7 +1279,9 @@ export async function feedReader(root: HTMLElement) {
         ? "本文の更新あり。表示中の本文はそのままです。新しい版を開いても以前の版・引用・メモは残ります。"
         : "",
       update?.error
-        ? `自動確認できませんでした：${update.error} 自動再試行は ${new Date(update.retryAt).toLocaleString("ja-JP")} 以降です。`
+        ? !article?.content && update.failures >= 3
+          ? `本文を自動取得できなかったため停止しました：${update.error} 必要なときに手動で再試行できます。`
+          : `自動確認できませんでした：${update.error} 自動再試行は ${new Date(update.retryAt).toLocaleString("ja-JP")} 以降です。`
         : "",
     ]
       .filter(Boolean)
@@ -1296,18 +1299,33 @@ export async function feedReader(root: HTMLElement) {
       );
       return articles.filter(
         (a) =>
-          a.content &&
-          !importing.has(a.id) &&
-          (!a.feedUrl || subscribed.has(a.feedUrl)),
+          !importing.has(a.id) && (!a.feedUrl || subscribed.has(a.feedUrl)),
       );
     },
     canRun: () =>
-      !!db && !document.hidden && navigator.onLine && automaticArticleUpdates(),
+      !!db &&
+      cloudChecked &&
+      !document.hidden &&
+      navigator.onLine &&
+      automaticArticleUpdates(),
+    canStart: () => !cloudBusy,
     acquisition: documentAcquisition,
     changed: async (ids) => {
+      const missingBodyIds = new Set(
+        ids.filter((id) => !articles.find((a) => a.id === id)?.content),
+      );
       for (const id of ids) {
         await load(id);
         announceChange(id);
+      }
+      if (selected && missingBodyIds.has(selected)) {
+        cancelReading();
+        originalLanguage = articleLanguage(
+          articles.find((a) => a.id === selected)?.content?.language,
+        );
+        render();
+        autoTranslateSelected();
+        return;
       }
       // Keep the live reading DOM, selection and scroll position in place.
       if (selected) {
@@ -1444,6 +1462,8 @@ export async function feedReader(root: HTMLElement) {
     for (const article of articles) countArticleMetadata(article, 1);
     searchProblem = "";
     searchPreparation = searchIndex.prepare(articles);
+    // RSSの保存後に待機を解除する。タブ間の排他と取得間隔は更新器で守る。
+    bodyUpdater.wake();
     void searchPreparation
       .then((current) => {
         if (current) render();
@@ -2207,9 +2227,7 @@ export async function feedReader(root: HTMLElement) {
   }
   function openArticle(article: FeedArticle) {
     showArticle(article);
-    if (article.url && !article.content && !article.contentError)
-      void importContent(article);
-    else autoTranslateSelected();
+    autoTranslateSelected();
     if (!article.read) void change(article, "read", true);
     if (needsTagClassification(article))
       void updateTags(article, undefined, true);

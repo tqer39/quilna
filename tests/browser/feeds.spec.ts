@@ -7,6 +7,7 @@ test("a site or article URL discovers choices without embedding HTML; only the c
   page,
 }, info) => {
   const calls: { url: string; discover?: boolean }[] = [];
+  const bodyRequests: string[] = [];
   const trackers: string[] = [];
   page.on("request", (request) => {
     if (request.url().includes("tracker.example.org"))
@@ -17,6 +18,16 @@ test("a site or article URL discovers choices without embedding HTML; only the c
     if (route.request().postDataJSON().icon === true)
       return route.fulfill({ status: 404, json: {} });
     const body = route.request().postDataJSON();
+    if (
+      [
+        "https://example.org/articles/1",
+        "https://example.org/articles/2",
+      ].includes(body.url)
+    ) {
+      bodyRequests.push(body.url);
+      // This discovery fixture supplies RSS only; failed originals retain it.
+      return route.fulfill({ status: 404, json: {} });
+    }
     calls.push(body);
     return route.fulfill({
       json: body.discover
@@ -74,6 +85,7 @@ test("a site or article URL discovers choices without embedding HTML; only the c
       { url: "https://publisher.example.org/story", discover: true },
       { url: chosen },
     ]);
+  await expect.poll(() => bodyRequests.length).toBe(1);
   await page
     .getByRole("button", { name: "保存して読み返す記事", exact: true })
     .click();

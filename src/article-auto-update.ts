@@ -1,6 +1,8 @@
+import type { ArticleContent } from "./article-content";
 import { libraryName } from "./library-context";
 import type { FeedArticle } from "./feed-parser";
 import { validArticle } from "./feed-store";
+import { classifyArticle } from "./article-tags";
 import { DocumentAcquisition } from "./document-acquisition";
 import { currentDocument, retainDocument } from "./source-document-store";
 import { versionContent, type DocumentReference } from "./source-document";
@@ -11,7 +13,9 @@ import {
 } from "./article-update";
 
 const failed = () =>
-  Error("本文の更新確認を保存できませんでした。以前の本文は保持しています。");
+  Error(
+    "本文の更新確認を保存できませんでした。保存済みの記事は保持しています。",
+  );
 
 async function currentCandidates(db: IDBDatabase, candidates: FeedArticle[]) {
   return new Promise<FeedArticle[]>((resolve, reject) => {
@@ -32,7 +36,6 @@ async function currentCandidates(db: IDBDatabase, candidates: FeedArticle[]) {
         if (
           a.url === candidate.url &&
           a.feedUrl === candidate.feedUrl &&
-          a.content &&
           (!a.feedUrl || (feed?.result && !feed.result.unsubscribed))
         )
           result.push(a);
@@ -48,6 +51,7 @@ async function commit(
   snapshots: FeedArticle[],
   updates: Map<string, ArticleUpdate>,
   originals: Map<string, DocumentReference>,
+  initial: ArticleContent | undefined,
   check: () => void,
 ) {
   check();
@@ -73,14 +77,18 @@ async function commit(
           const original = originals.get(a.id),
             update = updates.get(a.id);
           if (!update) return;
+          const fill = !a.content && initial && !update.error;
           const next = {
             ...a,
             bodyUpdate: update,
-            content:
-              original && a.content
+            contentError: fill ? undefined : a.contentError,
+            content: fill
+              ? initial
+              : original && a.content
                 ? { ...a.content, document: original }
                 : a.content,
           };
+          if (fill) next.tags = classifyArticle(next);
           if (!validArticle(next)) throw failed();
           store.put(next);
           changed.push(a.id);
@@ -120,6 +128,7 @@ export async function checkArticleUpdates(
     (a) => !a.feedRevision || a.feedRevision.url === a.url,
   );
   let latest: DocumentReference | undefined, error: string | undefined;
+  let initial: ArticleContent | undefined;
   try {
     for (const a of eligible) {
       active();
@@ -138,7 +147,8 @@ export async function checkArticleUpdates(
           : undefined;
       const changedAt = Math.max(
         ...eligible.map(
-          (a) => Date.parse(a.feedRevision?.changedAt ?? "") || 0,
+          (a) =>
+            (a.content && Date.parse(a.feedRevision?.changedAt ?? "")) || 0,
         ),
       );
       const force =
@@ -146,13 +156,17 @@ export async function checkArticleUpdates(
           ? changedAt > (Date.parse(cached?.document.checkedAt ?? "") || 0)
           : eligible.some(
               (a) =>
+                a.content &&
                 a.feedRevision &&
                 a.feedRevision.fingerprint !== a.bodyUpdate?.fingerprint,
             );
       const result = await acquisition.acquire(first.url, !!force, snapshot);
       active();
       if (result.warning) error = result.warning;
-      else latest = result.content.document;
+      else {
+        latest = result.content.document;
+        initial = result.content;
+      }
       if (!error && !latest) throw failed();
     }
   } catch (e) {
@@ -182,7 +196,7 @@ export async function checkArticleUpdates(
       ...(message ? { error: message.slice(0, 2000) } : {}),
     });
   }
-  return commit(db, group, updates, originals, active);
+  return commit(db, group, updates, originals, initial, active);
 }
 
 const lastAttemptKey = libraryName("quilna.article.updates.last-attempt.v1");
@@ -197,6 +211,7 @@ export class ArticleAutoUpdate {
       db: () => IDBDatabase | null;
       articles: () => FeedArticle[];
       canRun: () => boolean;
+      canStart?: () => boolean;
       acquisition: DocumentAcquisition;
       changed: (ids: string[]) => Promise<void>;
       failed: (error: unknown) => void;
@@ -241,7 +256,12 @@ export class ArticleAutoUpdate {
           if (!lock) return;
           check();
           const db = this.options.db();
-          if (!db || Date.now() < this.blockedUntil) return;
+          if (
+            !db ||
+            this.options.canStart?.() === false ||
+            Date.now() < this.blockedUntil
+          )
+            return;
           const last = Number(localStorage.getItem(lastAttemptKey)),
             now = Date.now();
           if (last > now - 30_000 && last <= now + 30_000) return;

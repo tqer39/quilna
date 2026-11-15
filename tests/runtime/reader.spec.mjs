@@ -70,7 +70,7 @@ async function subscribe(page, address = feedURL) {
     .click();
   await page.getByRole("button", { name: "登録して読む", exact: true }).click();
   await expect(
-    page.getByRole("button", { name: "Runtime article", exact: true }),
+    page.locator(".rss-article-title"),
   ).toBeVisible();
 }
 async function storedArticles(page, database = "tsumiki.rss.v1") {
@@ -421,15 +421,15 @@ async function runReaderScenario(browser, info, aliasMode) {
     await b.page.getByRole("button", { name: "閉じる", exact: true }).click();
     await settings(a.page, "shared");
     await settings(b.page, "shared");
-    await subscribe(a.page, aliasMode ? aliasFeed : feedURL);
-    await subscribe(b.page);
     const firstResponse = a.page.waitForResponse(
       (r) => r.url() === origin + "/api/documents/acquire",
     );
-    await a.page
-      .getByRole("button", { name: "Runtime article", exact: true })
-      .click();
+    await subscribe(a.page, aliasMode ? aliasFeed : feedURL);
     expect((await firstResponse).status()).toBe(200);
+    await expect.poll(async () => (await storedArticles(a.page))[0]?.content?.text).toContain("Runtime version 1");
+    await a.page
+      .locator(".rss-article-title")
+      .click();
     await expect(a.page.locator(".rss-source-text")).toContainText(
       "Runtime version 1",
     );
@@ -483,16 +483,18 @@ async function runReaderScenario(browser, info, aliasMode) {
       admin.getByLabel("共有する利用者ID（1行に1人）", { exact: true }),
     ).toHaveValue([a.account, b.account].sort().join("\n"));
     await a.page.getByRole("button", { name: "閉じる", exact: true }).click();
-    const bBefore = await storedArticles(b.page);
-    expect(bBefore[0].read).toBe(false);
-    expect(bBefore[0].saved).toBe(false);
     const secondResponse = b.page.waitForResponse(
       (r) => r.url() === origin + "/api/documents/acquire",
     );
-    await b.page
-      .getByRole("button", { name: "Runtime article", exact: true })
-      .click();
+    await subscribe(b.page);
     expect((await secondResponse).status()).toBe(200);
+    await expect.poll(async () => (await storedArticles(b.page))[0]?.content?.text).toContain("Runtime version 1");
+    const bBefore = await storedArticles(b.page);
+    expect(bBefore[0].read).toBe(false);
+    expect(bBefore[0].saved).toBe(false);
+    await b.page
+      .locator(".rss-article-title")
+      .click();
     await expect(b.page.locator(".rss-source-text")).toContainText(
       "Runtime version 1",
     );
@@ -809,7 +811,7 @@ test("closed reader receives a durable RSS revision and retains the old body unt
     await page.goto(origin + "/?view=feeds");
     await subscribe(page);
     await page
-      .getByRole("button", { name: "Runtime article", exact: true })
+      .locator(".rss-article-title")
       .click();
     await expect(page.locator(".rss-source-text")).toContainText(
       "Collected version 1",
@@ -831,6 +833,8 @@ test("closed reader receives a durable RSS revision and retains the old body unt
     holdCollection = true;
     version = 2;
     await page.getByRole("button", { name: "設定", exact: true }).click();
+    // RSS更新の旧版保持を検証する。本文先行取得は別の接続シナリオで確認する。
+    await page.getByRole("checkbox", { name: /本文も先に取得する/ }).uncheck();
     await page
       .getByRole("button", {
         name: "クラウド収集を開始・設定を更新",
@@ -870,11 +874,13 @@ test("closed reader receives a durable RSS revision and retains the old body unt
     await expect.poll(async () => (await cloudState()).pending.length).toBe(0);
     await expect
       .poll(
-        async () =>
-          (await storedArticles(page))[0]?.bodyUpdate?.latest?.versionId,
+        async () => {
+          const latest = (await storedArticles(page))[0]?.bodyUpdate?.latest?.versionId;
+          return !!latest && latest !== before.content.document.versionId;
+        },
         { timeout: 45_000 },
       )
-      .toBeTruthy();
+      .toBe(true);
     const [updated] = await storedArticles(page);
     expect(updated.content).toEqual(before.content);
     expect(updated.body).toBe(before.body);
@@ -1046,7 +1052,7 @@ test("one browser profile switches real accounts without mixing retained article
       aDB = `tsumiki.rss.v1.account.${a}`;
     await subscribe(page);
     await page
-      .getByRole("button", { name: "Runtime article", exact: true })
+      .locator(".rss-article-title")
       .click();
     await expect(page.locator(".rss-source-text")).toContainText(
       "Retained local evidence",
@@ -1074,7 +1080,7 @@ test("one browser profile switches real accounts without mixing retained article
     expect(separate[0].saved).toBe(false);
     expect(separate[0].read).toBe(false);
     await page
-      .getByRole("button", { name: "Runtime article", exact: true })
+      .locator(".rss-article-title")
       .click();
     await expect(page.locator(".rss-source-text")).toContainText(
       "Retained local evidence",
@@ -1103,5 +1109,135 @@ test("one browser profile switches real accounts without mixing retained article
     expect(
       [...closed, ...disposed].filter((r) => r.status === "rejected"),
     ).toEqual([]);
+  }
+});
+
+test("画面を閉じて本文を収集し、再起動後に受領して選択時の再取得なしで読む", async ({
+  browser,
+}, info) => {
+  test.setTimeout(90_000);
+  const cleanup = [];
+  const port = await freePort(),
+    origin = `https://127.0.0.1:${port}`;
+  let context,
+    release,
+    entered = false,
+    fetched = 0;
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  try {
+    const f = await authWorkerFixture(
+      { after: (fn) => cleanup.push(fn) },
+      {
+        entry: "tests/runtime/reader-entry.mjs",
+        documents: true,
+        missing: { RSS_COLLECTION_ENABLED: "true" },
+        origin,
+        server: { host: "127.0.0.1", port, https: true, logRequests: false },
+        assets: await assets(),
+        sourceResponses: {
+          [feedURL]: () =>
+            new Response(xml, {
+              headers: { "Content-Type": "application/rss+xml" },
+            }),
+          ["https://publisher.example.org/robots.txt"]: () =>
+            new Response("User-agent: *\nAllow: /"),
+          ["https://publisher.example.org/favicon.ico"]: () =>
+            new Response("", { status: 404 }),
+        },
+        articleResponse: async () => {
+          entered = true;
+          await gate;
+          expect(context.pages()).toHaveLength(0);
+          fetched++;
+          return new Response(
+            `<html><title>Closed collection</title><article><p>${"本文は画面を閉じた後にクラウドで取得しました。".repeat(60)}</p></article></html>`,
+            { headers: { "Content-Type": "text/html" } },
+          );
+        },
+      },
+    );
+    await f.ready();
+    context = await browser.newContext({
+      ignoreHTTPSErrors: true,
+      serviceWorkers: "block",
+      viewport: info.project.use.viewport,
+      isMobile: info.project.use.isMobile,
+      locale: "ja-JP",
+    });
+    await context.addInitScript(() =>
+      globalThis.localStorage.setItem("quilna.article.updates.v1", "false"),
+    );
+    await context.route("**/*", async (route) => {
+      const url = new URL(route.request().url());
+      if (url.origin === origin) return route.continue();
+      if (
+        url.origin === "https://accounts.google.com" &&
+        url.pathname === "/o/oauth2/v2/auth"
+      )
+        return route.fulfill({
+          status: 302,
+          headers: {
+            Location:
+              origin + f.callback(f.rememberAuthorization(url.href), "a"),
+          },
+          body: "",
+        });
+      return route.abort();
+    });
+    let page = await context.newPage();
+    await page.goto(origin);
+    await page
+      .getByRole("button", { name: "Googleでログイン", exact: true })
+      .click();
+    await page.waitForURL(origin + "/?auth=success");
+    await page.goto(origin + "/?view=feeds");
+    await subscribe(page);
+    await page.getByRole("button", { name: "設定", exact: true }).click();
+    await page
+      .getByRole("button", {
+        name: "クラウド収集を開始・設定を更新",
+        exact: true,
+      })
+      .click();
+    await expect.poll(() => entered).toBe(true);
+    await page.close();
+    release();
+    const state = async () =>
+      (
+        await context.request.get(origin + "/api/collection", {
+          headers: { Origin: origin },
+        })
+      ).json();
+    await expect
+      .poll(async () => (await state()).articlePending.length)
+      .toBe(1);
+    const pending = (await state()).articlePending;
+    expect(fetched).toBe(1);
+    await f.restart();
+    expect((await state()).articlePending).toEqual(pending);
+    page = await context.newPage();
+    await page.goto(origin + "/?view=feeds");
+    await expect
+      .poll(async () => (await state()).articlePending.length)
+      .toBe(0);
+    await expect
+      .poll(async () => (await storedArticles(page))[0]?.content?.text)
+      .toContain("本文は画面を閉じた後");
+    expect((await storedArticles(page))[0].read).toBe(false);
+    await page.locator(".rss-article-title").click();
+    await expect(page.locator(".rss-source-text")).toContainText(
+      "本文は画面を閉じた後",
+    );
+    await page.reload();
+    await expect(page.locator(".rss-source-text")).toContainText(
+      "本文は画面を閉じた後",
+    );
+    expect(fetched).toBe(1);
+  } finally {
+    release?.();
+    await context?.close();
+    for (const close of cleanup.reverse()) await close();
   }
 });

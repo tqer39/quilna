@@ -44,8 +44,12 @@ export function validArticleUpdate(v: unknown): v is ArticleUpdate | undefined {
   );
 }
 export function nextArticleUpdate(a: FeedArticle): number {
-  if (!a.content || !a.url) return Infinity;
-  if (a.bodyUpdate?.error) return a.bodyUpdate.retryAt;
+  if (!a.url) return Infinity;
+  if (a.bodyUpdate?.error)
+    return !a.content && a.bodyUpdate.failures >= 3
+      ? Infinity
+      : a.bodyUpdate.retryAt;
+  if (!a.content) return 0;
   if (
     a.feedRevision &&
     (a.bodyUpdate

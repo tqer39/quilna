@@ -1,3 +1,4 @@
+import type { FeedArticle } from "../../src/feed-parser";
 import { openReaderTools } from "./reader-tools";
 import { test, expect, type Page } from "@playwright/test";
 const url = "https://example.org/update",
@@ -224,7 +225,7 @@ for (const design of ["studio", "editorial", "focus"])
     );
     await page.getByRole("button", { name: "設定", exact: true }).click();
     await page
-      .getByLabel("取り込み済み本文の更新を自動確認", { exact: true })
+      .getByLabel("本文の取得・更新確認を自動で行う", { exact: true })
       .check();
     await page.getByRole("button", { name: "閉じる", exact: true }).click();
     await expect(
@@ -248,7 +249,9 @@ for (const design of ["studio", "editorial", "focus"])
       page.getByRole("button", { name: "更新された本文を読む" }),
     ).toBeHidden();
     await page.reload();
-  await expect(page.getByRole("heading", { name: "Updated source", exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("heading", { name: "Updated source", exact: true }),
+    ).toBeVisible();
     await expect(page.locator(".rss-source-text")).toContainText(
       "New version with corrected",
     );
@@ -655,6 +658,9 @@ test("opening a cached original does not acknowledge an unseen RSS revision", as
   await page
     .getByRole("button", { name: "Saved original a", exact: true })
     .click();
+  await page
+    .getByRole("button", { name: "本文を取り込む", exact: true })
+    .click();
   await expect(page.locator(".rss-source-text")).toContainText("Old body kept");
   expect(calls).toBe(0);
   await run(page);
@@ -842,3 +848,268 @@ for (const newerCheck of [false, true])
       newerCheck ? result.concurrent : result.selected,
     );
   });
+
+test("RSS bodies are collected before selection and duplicate URLs reuse one request", async ({
+  page,
+}) => {
+  await seed(page, { duplicate: true });
+  await page.evaluate(async () => {
+    const path = "/src/feed-store.ts",
+      api = await import(path),
+      db = await api.openFeedLibrary();
+    const rows = (await api.readFeedLibrary(db)).articles;
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction("articles", "readwrite");
+      for (const row of rows) {
+        delete row.content;
+        row.saved = true;
+        row.read = true;
+        row.manualTags = ["手動で残すタグ"];
+        tx.objectStore("articles").put(row);
+      }
+      tx.oncomplete = () => resolve();
+      tx.onabort = tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+    localStorage.setItem("quilna.article.updates.v1", "true");
+  });
+  let requests = 0;
+  await page.route("**/api/feeds/fetch", (route) => {
+    if (route.request().postDataJSON().icon)
+      return route.fulfill({ status: 404, json: {} });
+    requests++;
+    return route.fulfill({
+      json: { url, html: html.replace("<p>", "<p>TypeScript programming ") },
+    });
+  });
+  await page.goto("/?view=feeds");
+  await expect
+    .poll(
+      async () =>
+        (await stored(page)).filter((a: FeedArticle) =>
+          a.content?.text.includes("New version"),
+        ).length,
+    )
+    .toBe(2);
+  expect(requests).toBe(1);
+  for (const article of await stored(page)) {
+    expect(
+      article.tags.suggestions.map((s: { tag: string }) => s.tag),
+    ).toContain("技術・開発");
+    expect(article.manualTags).toEqual(["手動で残すタグ"]);
+  }
+  expect(
+    (await stored(page)).every((a: FeedArticle) => a.saved && a.read),
+  ).toBe(true);
+  await page
+    .getByRole("button", { name: "Updated source", exact: true })
+    .first()
+    .click();
+  await expect(page.locator(".rss-source-text")).toContainText("New version");
+  expect(requests).toBe(1);
+});
+
+test("同じ旧URLでも配信URLが変わった記事には他記事の先行取得本文を設定しない", async ({
+  page,
+}) => {
+  await seed(page, { duplicate: true });
+  await page.evaluate(async () => {
+    const path = "/src/feed-store.ts",
+      api = await import(path),
+      db = await api.openFeedLibrary();
+    const rows = (await api.readFeedLibrary(db)).articles;
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction("articles", "readwrite");
+      for (const row of rows) {
+        delete row.content;
+        if (row.id === "b")
+          row.feedRevision.url = "https://example.org/changed";
+        tx.objectStore("articles").put(row);
+      }
+      tx.oncomplete = () => resolve();
+      tx.onabort = tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+  });
+  await page.route("**/api/feeds/fetch", (route) =>
+    route.fulfill({ json: { url, html } }),
+  );
+  await run(page);
+  const rows = await stored(page);
+  expect(rows.find((a: FeedArticle) => a.id === "a").content.text).toContain(
+    "New version",
+  );
+  expect(rows.find((a: FeedArticle) => a.id === "b").content).toBeUndefined();
+  expect(
+    rows.find((a: FeedArticle) => a.id === "b").bodyUpdate.error,
+  ).toContain("URLが変更");
+});
+
+test("初回の本文取得は3回失敗したら自動再試行を止める", async ({ page }) => {
+  await seed(page);
+  await page.evaluate(async () => {
+    const p = "/src/feed-store.ts",
+      api = await import(p),
+      db = await api.openFeedLibrary();
+    const a = await api.readArticle(db, "a");
+    delete a.content;
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction("articles", "readwrite");
+      tx.objectStore("articles").put(a);
+      tx.oncomplete = () => resolve();
+      tx.onabort = () => reject(tx.error);
+    });
+    db.close();
+  });
+  let requests = 0;
+  await page.route("**/api/feeds/fetch", (route) => {
+    requests++;
+    return route.fulfill({ status: 404, json: {} });
+  });
+  for (let i = 0; i < 4; i++) {
+    await page.evaluate(async () => {
+      const p = "/src/feed-store.ts",
+        api = await import(p),
+        db = await api.openFeedLibrary();
+      const a = await api.readArticle(db, "a");
+      if (a.bodyUpdate) a.bodyUpdate.retryAt = 0;
+      await new Promise<void>((resolve, reject) => {
+        const tx = db.transaction("articles", "readwrite");
+        tx.objectStore("articles").put(a);
+        tx.oncomplete = () => resolve();
+        tx.onabort = () => reject(tx.error);
+      });
+      db.close();
+    });
+    await run(page);
+  }
+  expect(requests).toBe(3);
+  expect((await stored(page))[0].content).toBeUndefined();
+  expect((await stored(page))[0].saved).toBe(true);
+});
+
+test("取り込み中に記事URLが変わったら保存失敗を返し、新しい記事を保持する", async ({
+  page,
+}) => {
+  await seed(page);
+  const result = await page.evaluate(async () => {
+    const p = "/src/feed-store.ts",
+      api = await import(p),
+      db = await api.openFeedLibrary();
+    const original = await api.readArticle(db, "a");
+    const changed = {
+      ...original,
+      url: "https://example.org/changed",
+      content: undefined,
+    };
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction("articles", "readwrite");
+      tx.objectStore("articles").put(changed);
+      tx.oncomplete = () => resolve();
+      tx.onabort = () => reject(tx.error);
+    });
+    let rejected = false;
+    try {
+      await api.updateArticleContent(db, original, {
+        content: original.content,
+      });
+    } catch {
+      rejected = true;
+    }
+    const after = await api.readArticle(db, "a");
+    db.close();
+    return { rejected, after };
+  });
+  expect(result.rejected).toBe(true);
+  expect(result.after.url).toBe("https://example.org/changed");
+  expect(result.after.content).toBeUndefined();
+});
+
+test("要約の翻訳中に初回本文が届いても本文の自動翻訳を開始する", async ({
+  page,
+}) => {
+  await seed(page);
+  await page.evaluate(async () => {
+    const path = "/src/feed-store.ts",
+      api = await import(path),
+      db = await api.openFeedLibrary();
+    const a = await api.readArticle(db, "a");
+    delete a.content;
+    delete a.translation;
+    a.body =
+      "Summary of the original article before the full body arrives. ".repeat(
+        4,
+      );
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction("articles", "readwrite");
+      tx.objectStore("articles").put(a);
+      tx.oncomplete = () => resolve();
+      tx.onabort = () => reject(tx.error);
+    });
+    db.close();
+    localStorage.setItem("quilna.article.updates.v1", "true");
+    localStorage.setItem(
+      "quilna.reader.preferences.v1",
+      JSON.stringify({ targetLanguage: "ja", automatic: true }),
+    );
+  });
+  await page.addInitScript(() => {
+    const w = window as unknown as {
+      Translator: unknown;
+      LanguageDetector: unknown;
+      summaryStarted: boolean;
+      releaseSummary?: () => void;
+    };
+    w.LanguageDetector = {
+      availability: async () => "available",
+      create: async () => ({
+        detect: async () => [{ detectedLanguage: "en", confidence: 0.99 }],
+        destroy() {},
+      }),
+    };
+    w.Translator = {
+      availability: async () => "available",
+      create: async () => ({
+        translate: async (text: string) => {
+          if (text.startsWith("Summary of the original")) {
+            w.summaryStarted = true;
+            await new Promise<void>((resolve) => {
+              w.releaseSummary = resolve;
+            });
+            return "古い要約の訳";
+          }
+          return "先行取得した本文の訳";
+        },
+        destroy() {},
+      }),
+    };
+  });
+  let release!: () => void;
+  const ready = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/api/feeds/fetch", async (route) => {
+    if (route.request().postDataJSON().icon)
+      return route.fulfill({ status: 404, json: {} });
+    await ready;
+    await route.fulfill({ json: { url, html } });
+  });
+  await page.goto("/?view=feeds&article=a");
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (window as unknown as { summaryStarted: boolean }).summaryStarted,
+      ),
+    )
+    .toBe(true);
+  release();
+  await expect(page.locator(".rss-article-body")).toContainText(
+    "先行取得した本文の訳",
+  );
+  await page.evaluate(() =>
+    (window as unknown as { releaseSummary?: () => void }).releaseSummary?.(),
+  );
+  await expect
+    .poll(async () => (await stored(page))[0].translation.text)
+    .toBe("先行取得した本文の訳");
+});

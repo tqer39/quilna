@@ -77,12 +77,29 @@ export function validArticle(a: FeedArticle) {
         a.translation.targetLanguage.length <= 35))
   );
 }
-export function readArticle(db: IDBDatabase, id: string): Promise<FeedArticle> {
+export async function readArticle(
+  db: IDBDatabase,
+  id: string,
+): Promise<FeedArticle> {
+  const article = await findArticle(db, id);
+  if (!article)
+    throw Error(
+      "記事の保存形式を確認できませんでした。既存データは保持しています。",
+    );
+  return article;
+}
+
+/** 削除済みと読み込み失敗を区別し、配送中の削除だけを安全に無視する。 */
+export function findArticle(
+  db: IDBDatabase,
+  id: string,
+): Promise<FeedArticle | undefined> {
   return new Promise((resolve, reject) => {
     const tx = db.transaction("articles", "readonly");
     const request = tx.objectStore("articles").get(id);
     tx.oncomplete = () => {
-      if (validArticle(request.result)) resolve(request.result);
+      if (request.result === undefined || validArticle(request.result))
+        resolve(request.result);
       else
         reject(
           Error(
@@ -439,6 +456,11 @@ export function updateArticleContent(
     request.onsuccess = () => {
       const old = request.result as FeedArticle | undefined;
       if (!old && !insert) {
+        tx.abort();
+        return;
+      }
+      // 配送・取得中に別URLへ変わった記事へ、古い出典の本文を付けない。
+      if (patch.content && old && old.url !== article.url) {
         tx.abort();
         return;
       }
