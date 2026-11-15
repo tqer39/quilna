@@ -752,6 +752,7 @@ const pageMeta = {
 async function collectedPage(
   page: Page,
   article: () => Promise<{ status?: number; json: unknown }>,
+  xml = pageRSS,
 ) {
   const state = {
     ...initial(),
@@ -767,7 +768,7 @@ async function collectedPage(
         url: address,
         fetchedAt: time,
         parts: 1,
-        size: pageRSS.length,
+        size: xml.length,
       },
     ],
   };
@@ -797,7 +798,7 @@ async function collectedPage(
         json: {
           ...state.pending.find((item) => path.endsWith(item.id)),
           account,
-          xml: pageRSS,
+          xml,
         },
       });
     if (path.includes("/articles/")) {
@@ -1021,6 +1022,60 @@ test("不正なRSS結果が残っても同じ配信元の正常な本文配送�
     .getByRole("button", { name: "Prefetched page", exact: true })
     .click();
   await expect(page.locator(".rss-source-text")).toContainText(
+    "Collected while the browser was closed",
+  );
+});
+
+test("本文配送中に削除された記事を復活させず、後続記事を保存して受領する", async ({
+  page,
+}) => {
+  const { acknowledged } = await collectedPage(
+    page,
+    async () => {
+      await page.evaluate(async () => {
+        const path = "/src/feed-store.ts",
+          api = await import(path),
+          db = await api.openFeedLibrary();
+        const rows = (await api.readFeedLibrary(db)).articles;
+        const target = rows.find(
+          (a: { url: string }) =>
+            a.url === "https://news.example.org/prefetched",
+        );
+        await new Promise<void>((resolve, reject) => {
+          const tx = db.transaction("articles", "readwrite");
+          tx.objectStore("articles").delete(target.id);
+          tx.oncomplete = () => resolve();
+          tx.onabort = () => reject(tx.error);
+        });
+        db.close();
+      });
+      return {
+        json: {
+          ...pageMeta,
+          account,
+          finalUrl: pageURL,
+          gzip: await gzipBase64(pageHTML),
+        },
+      };
+    },
+    pageRSS.replace(
+      "</channel>",
+      `<item><guid>second</guid><title>後続記事</title><link>${pageURL}</link></item></channel>`,
+    ),
+  );
+  await page.goto("/?view=feeds");
+  await expect.poll(() => acknowledged.flat()).toContain(pageId);
+  const rows = await page.evaluate(async () => {
+    const path = "/src/feed-store.ts",
+      api = await import(path),
+      db = await api.openFeedLibrary();
+    const rows = (await api.readFeedLibrary(db)).articles;
+    db.close();
+    return rows;
+  });
+  const matches = rows.filter((a: { url: string }) => a.url === pageURL);
+  expect(matches).toHaveLength(1);
+  expect(matches[0].content.text).toContain(
     "Collected while the browser was closed",
   );
 });

@@ -2,6 +2,7 @@ import type { ArticleContent } from "./article-content";
 import { libraryName } from "./library-context";
 import type { FeedArticle } from "./feed-parser";
 import { validArticle } from "./feed-store";
+import { classifyArticle } from "./article-tags";
 import { DocumentAcquisition } from "./document-acquisition";
 import { currentDocument, retainDocument } from "./source-document-store";
 import { versionContent, type DocumentReference } from "./source-document";
@@ -87,6 +88,7 @@ async function commit(
                 ? { ...a.content, document: original }
                 : a.content,
           };
+          if (fill) next.tags = classifyArticle(next);
           if (!validArticle(next)) throw failed();
           store.put(next);
           changed.push(a.id);

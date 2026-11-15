@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { parseFeed } from "./feed-parser";
-import { mergeFeed, readArticle, updateArticleContent } from "./feed-store";
+import { mergeFeed, findArticle, updateArticleContent } from "./feed-store";
 import type { FeedArticle } from "./feed-parser";
 import { extractArticle } from "./article-content";
 import { sourceURL } from "./feed-discovery";
@@ -360,8 +360,9 @@ export class CloudCollectionClient {
             });
           } catch (error) {
             // 配送中の削除は復活させない。容量などの保存失敗は受領せず再試行する。
-            const live = await readArticle(db, article.id);
+            const live = await findArticle(db, article.id);
             if (live && sameSource(live.url, normalized)) throw error;
+            continue;
           }
           count++;
         }

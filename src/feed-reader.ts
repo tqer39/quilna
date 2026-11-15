@@ -1311,12 +1311,18 @@ export async function feedReader(root: HTMLElement) {
     canStart: () => !cloudBusy,
     acquisition: documentAcquisition,
     changed: async (ids) => {
-      const hadBody = !!articles.find((a) => a.id === selected)?.content;
+      const missingBodyIds = new Set(
+        ids.filter((id) => !articles.find((a) => a.id === id)?.content),
+      );
       for (const id of ids) {
         await load(id);
         announceChange(id);
       }
-      if (selected && ids.includes(selected) && !hadBody) {
+      if (selected && missingBodyIds.has(selected)) {
+        cancelReading();
+        originalLanguage = articleLanguage(
+          articles.find((a) => a.id === selected)?.content?.language,
+        );
         render();
         autoTranslateSelected();
         return;

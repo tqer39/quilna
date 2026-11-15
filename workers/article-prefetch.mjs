@@ -14,6 +14,9 @@ const robotsLifetime = 86_400_000;
 const entryLinks = 200;
 const entryScan = 256_000;
 const partSize = 16_000;
+const metadataLimit = 200_000;
+// 取得リースのホスト情報と、キューから配送結果への変換で増える分を残す。
+const metadataHeadroom = 1024;
 const stateSchema = z
   .object({
     version: z.literal(1),
@@ -241,7 +244,9 @@ export class ArticlePrefetch {
       state.pending.length >= 100 ||
       // Keep room for the largest page: a fetched page is never discarded for space.
       state.bytes + this.articleSizeLimit + 10_000 > this.articleBytesLimit ||
-      byteLength(state) > 200_000
+      // 旧版が上限を超えたキューも、まず1件配送して受領で容量を回復できる。
+      (state.pending.length > 0 &&
+        byteLength(state) + metadataHeadroom > metadataLimit)
     );
   }
   /** Hash outside the storage transaction, then enqueue with `add`. */
@@ -281,13 +286,24 @@ export class ArticlePrefetch {
         continue;
       }
       // 容量待ちの記事を未登録のまま残し、同じRSSの次回収集で再試行する。
-      if (state.queue.length >= 100 || byteLength(state) > 200_000) {
+      const candidate = {
+        ...state,
+        seen: [...state.seen, key].slice(-500),
+        queue: [
+          ...state.queue,
+          { url, feedUrl, attempts: 0, notBefore: this.now() },
+        ],
+      };
+      if (
+        candidate.queue.length > 100 ||
+        byteLength(candidate) + metadataHeadroom > metadataLimit
+      ) {
         complete = false;
         continue;
       }
       retained.add(key);
-      state.seen = [...state.seen, key].slice(-500);
-      state.queue.push({ url, feedUrl, attempts: 0, notBefore: this.now() });
+      state.seen = candidate.seen;
+      state.queue = candidate.queue;
     }
     await tx.put(stateKey, stateSchema.parse(state));
     await tx.put(receiptKey, [...retained]);

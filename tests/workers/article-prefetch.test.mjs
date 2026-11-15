@@ -564,3 +564,33 @@ test("他フィードによって取得済み履歴が消えても同じRSSの�
   await f.restart().alarm();
   assert.deepEqual(f.fetched, [a, b]);
 });
+
+test("長いURLでメタデータ上限に達しても本文キューを取得・受領して進める", async () => {
+  const f = fixture();
+  const longFeed = "https://zenn.dev/feed?" + "f".repeat(1900);
+  const urls = Array.from(
+    { length: 100 },
+    (_, i) => `https://news.example.com/${i}?${"q".repeat(950)}`,
+  );
+  f.state.xml = rss(...urls);
+  await f.collector.configure({
+    expectedRevision: 0,
+    interval: 15,
+    urls: [longFeed],
+    articles: true,
+  });
+  await f.collector.alarm();
+  const initial = (await f.collector.status()).articleQueued;
+  assert.ok(initial > 0 && initial < 100);
+  for (let i = 0; i < initial; i++) {
+    f.advance(30_000);
+    await f.restart().alarm();
+    const state = await f.storage.get("rss:articles");
+    assert.ok(
+      new TextEncoder().encode(JSON.stringify(state)).byteLength <= 200_000,
+    );
+    assert.equal(state.pending.length, 1);
+    await f.collector.acknowledge({ ids: state.pending.map((p) => p.id) });
+  }
+  assert.deepEqual(f.fetched, urls.slice(0, initial));
+});
