@@ -129,7 +129,12 @@ function hasLinkLayout(db: IDBDatabase): boolean {
 let connection: Promise<IDBDatabase> | undefined;
 /** 記事DBと分離して開き、記事検索や教材ファイルに個人の関連情報を混ぜない。 */
 export function openTextbookLinks(): Promise<IDBDatabase> {
-  if (connection) return connection;
+  if (connection)
+    return connection.then((db) => {
+      // 復元が他の保存領域へ書く前に、通知のなかったcloseも検出する。
+      db.transaction("links");
+      return db;
+    });
   let failed = false;
   const pending = new Promise<IDBDatabase>((resolve, reject) => {
     const request = openLibraryDatabase(textbookLinkDatabase, 1);
@@ -183,8 +188,10 @@ export function openTextbookLinks(): Promise<IDBDatabase> {
           if (
             error instanceof DOMException &&
             error.name === "InvalidStateError"
-          )
+          ) {
             db.close();
+            throw unavailable();
+          }
           throw error;
         }
       }) as IDBDatabase["transaction"];
