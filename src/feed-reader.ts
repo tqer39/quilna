@@ -57,6 +57,7 @@ import { articlePage } from "./article-page";
 import { ArticleListView, type ArticleListPosition } from "./article-list-view";
 import { ArticleHighlightView } from "./article-highlight-view";
 import { ArticleLearningView } from "./article-learning-view";
+import { ArticleTextbookView } from "./article-textbook-view";
 import { LibraryBackupView } from "./library-backup-view";
 import { SourceDocumentView } from "./source-document-view";
 import { DocumentAcquisition } from "./document-acquisition";
@@ -581,6 +582,7 @@ export async function feedReader(root: HTMLElement) {
     (quote) => quoteConnections.begin(quote),
     (quote) => learningRecords.begin(quote),
   );
+  const textbookConnections = new ArticleTextbookView();
   const learningRecords = new ArticleLearningView((quote, signal) =>
     highlights.revealSaved(quote, signal),
   );
@@ -2847,6 +2849,7 @@ export async function feedReader(root: HTMLElement) {
           quoteConnections.mount(article.id),
           learningRecords.mount(article.id),
           learning.mount(readingView),
+          textbookConnections.mount(readingView),
           connections.mount(article, relationLibraryRevision),
           graph.mount(article, relationLibraryRevision),
           tagsPanel,
@@ -2857,6 +2860,7 @@ export async function feedReader(root: HTMLElement) {
         highlights.detach();
         quoteConnections.detach();
         learningRecords.detach();
+        textbookConnections.detach();
         learning.detach();
         connections.detach();
         graph.detach();
@@ -2874,6 +2878,7 @@ export async function feedReader(root: HTMLElement) {
       highlights.detach();
       quoteConnections.detach();
       learningRecords.detach();
+      textbookConnections.detach();
       learning.detach();
       connections.detach();
       graph.detach();

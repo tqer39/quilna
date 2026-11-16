@@ -20,6 +20,7 @@ const names = {
   connections: "記事の関連",
   quoteConnections: "引用の関連",
   learning: "学び",
+  textbookLinks: "教材の関連づけ",
 };
 function countsText(counts: BackupCounts) {
   return backupKinds.map((k) => `${names[k]} ${counts[k]}件`).join(" / ");

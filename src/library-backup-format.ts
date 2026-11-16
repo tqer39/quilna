@@ -5,6 +5,11 @@ import { validHighlight } from "./article-highlights";
 import { validConnection } from "./article-connections";
 import { validQuoteConnection } from "./quote-connections";
 import { validLearningRecord } from "./article-learning";
+import {
+  validTextbookLink,
+  textbookLinkLimit,
+  textbookLinkTotalLimit,
+} from "./article-textbooks";
 import { validSourceDocument, validDocumentVersion } from "./source-document";
 
 export const backupKinds = [
@@ -16,6 +21,7 @@ export const backupKinds = [
   "connections",
   "quoteConnections",
   "learning",
+  "textbookLinks",
 ] as const;
 export type BackupKind = (typeof backupKinds)[number];
 export type BackupCounts = Record<BackupKind, number>;
@@ -26,7 +32,7 @@ export type BackupEntry = {
 };
 export type BackupHeader = {
   format: "quilna-reader-library";
-  version: 1 | 2;
+  version: 1 | 2 | 3;
   createdAt: string;
 };
 export type BackupPreview = {
@@ -48,6 +54,7 @@ export const emptyBackupCounts = (): BackupCounts => ({
   connections: 0,
   quoteConnections: 0,
   learning: 0,
+  textbookLinks: 0,
 });
 const object = (v: unknown): v is Record<string, unknown> =>
   !!v && typeof v === "object" && !Array.isArray(v);
@@ -55,16 +62,24 @@ export function validBackupHeader(v: unknown): v is BackupHeader {
   return (
     object(v) &&
     v.format === "quilna-reader-library" &&
-    (v.version === 1 || v.version === 2) &&
+    (v.version === 1 || v.version === 2 || v.version === 3) &&
     typeof v.createdAt === "string" &&
     Number.isFinite(Date.parse(v.createdAt))
   );
 }
-export function validBackupCounts(v: unknown, version = 2): v is BackupCounts {
+export function validBackupCounts(v: unknown, version = 3): v is BackupCounts {
+  if (![1, 2, 3].includes(version)) return false;
   const kinds =
     version === 1
-      ? backupKinds.filter((k) => k !== "documents" && k !== "documentVersions")
-      : backupKinds;
+      ? backupKinds.filter(
+          (k) =>
+            k !== "documents" &&
+            k !== "documentVersions" &&
+            k !== "textbookLinks",
+        )
+      : version === 2
+        ? backupKinds.filter((k) => k !== "textbookLinks")
+        : backupKinds;
   return (
     object(v) &&
     Object.keys(v).length === kinds.length &&
@@ -83,7 +98,7 @@ export function validBackupPreview(v: unknown): v is BackupPreview {
     /^[\da-f-]{36}$/.test(v.id) &&
     validBackupHeader(v.header) &&
     (validBackupCounts(v.counts) ||
-      (v.header.version === 1 && validBackupCounts(v.counts, 1))) &&
+      validBackupCounts(v.counts, v.header.version)) &&
     typeof v.fileName === "string" &&
     v.fileName.length <= 1000
   );
@@ -116,6 +131,8 @@ export function validBackupValue(
       return validQuoteConnection(v);
     case "learning":
       return validLearningRecord(v);
+    case "textbookLinks":
+      return validTextbookLink(v);
   }
 }
 export function backupEntry(kind: BackupKind, value: unknown): BackupEntry {
@@ -177,6 +194,15 @@ export function capacityKeys(
       return [["", "", 50]];
     case "articles":
       return [];
+    case "textbookLinks":
+      return [
+        [
+          "articleId",
+          String((v.source as { articleId: string }).articleId),
+          textbookLinkLimit,
+        ],
+        ["", "", textbookLinkTotalLimit],
+      ];
     case "highlights":
     case "learning":
       return [["articleId", String(v.articleId), 200]];

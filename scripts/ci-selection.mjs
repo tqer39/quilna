@@ -77,8 +77,12 @@ export function checkResults(needs) {
     errors.push("selection did not succeed");
   if (needs.checks?.result !== "success")
     errors.push("maintained checks did not succeed");
-  for (const job of ["harness", "apple"]) {
-    const selected = needs.selection?.outputs?.[job];
+  for (const [job, scope] of [
+    ["harness", "harness"],
+    ["apple", "apple"],
+    ["watcher-macos", "web"],
+  ]) {
+    const selected = needs.selection?.outputs?.[scope];
     if (selected !== "true" && selected !== "false") {
       errors.push(`${job}: missing selection`);
       continue;
@@ -89,8 +93,6 @@ export function checkResults(needs) {
         `${job}: expected ${expected}, got ${needs[job]?.result ?? "missing"}`,
       );
   }
-  if (!["true", "false"].includes(needs.selection?.outputs?.web))
-    errors.push("web: missing selection");
   return errors;
 }
 
