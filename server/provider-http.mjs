@@ -54,7 +54,12 @@ export async function postJson(
       bytes.set(chunk, offset);
       offset += chunk.byteLength;
     }
-    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    const parsed = JSON.parse(
+      new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+    );
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+      throw Error("provider-unknown");
+    return parsed;
   } catch {
     await reader.cancel().catch(() => {});
     throw Error("provider-unknown");

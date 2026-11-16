@@ -29,10 +29,15 @@ export function openaiTopicTextbookTransport({
   send,
   secret,
   model,
+  reasoningEffort,
   mockOnly = false,
 }) {
   const configured =
-    typeof model === "string" && /^[A-Za-z0-9._:-]{1,200}$/.test(model);
+    typeof model === "string" &&
+    /^[A-Za-z0-9._:-]{1,200}$/.test(model) &&
+    ["none", "minimal", "low", "medium", "high", "xhigh", "max"].includes(
+      reasoningEffort,
+    );
   const run = async (stage, requestRaw, draftRaw, inputOptions) => {
     const checked = optionsSchema.safeParse(inputOptions);
     if (
@@ -50,6 +55,7 @@ export function openaiTopicTextbookTransport({
     const headers = secretHeaders(secret, "openai");
     const common = {
       model,
+      reasoning: { effort: reasoningEffort },
       input: [{ role: "user", content: JSON.stringify(prepared.payload) }],
       instructions:
         stage === "generate"
@@ -116,12 +122,19 @@ export function openaiTopicTextbookTransport({
       usage.outputTokens > options.outputTokens ||
       !Array.isArray(response.output) ||
       response.output.some(
-        (item) => !["message", "reasoning"].includes(item.type),
+        (item) =>
+          !item ||
+          typeof item !== "object" ||
+          !["message", "reasoning"].includes(item.type),
       )
     )
       throw Error("usage-unconfirmed");
+    if (options.signal.aborted)
+      return { json: "", usage, outcome: "cancelled" };
     const messages = response.output.filter((item) => item.type === "message");
-    const content = messages.flatMap((item) => item.content ?? []);
+    const content = messages.flatMap((item) =>
+      Array.isArray(item.content) ? item.content : [],
+    );
     let json = "",
       outcome = "invalid-output",
       allChecksPassed;
@@ -132,7 +145,7 @@ export function openaiTopicTextbookTransport({
       messages[0].role === "assistant" &&
       messages[0].status === "completed" &&
       content.length === 1 &&
-      content[0].type === "output_text"
+      content[0]?.type === "output_text"
     ) {
       try {
         if (stage === "generate")
@@ -150,7 +163,7 @@ export function openaiTopicTextbookTransport({
       } catch {
         /* 使用量を保持し、不正な有料出力を採用しない。 */
       }
-    } else if (content.some((c) => c.type === "refusal")) outcome = "refused";
+    } else if (content.some((c) => c?.type === "refusal")) outcome = "refused";
     else if (response.status === "incomplete") outcome = "incomplete";
     return {
       json,

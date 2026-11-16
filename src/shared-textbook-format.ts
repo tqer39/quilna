@@ -234,10 +234,14 @@ export function sharedEnvelopeRecord(raw: string) {
   return sharedEnvelope(raw).record;
 }
 
+/** 埋め込みJSONはBOMを構文解析時だけ外し、hashには元のbyte列を保持する。 */
+const parseEmbeddedJSON = (raw: string) =>
+  parseSharedJSON(raw.startsWith("\uFEFF") ? raw.slice(1) : raw);
+
 /** 生成前にも完成ファイルと同じ出典の形・重複・snapshot整合を検査する。 */
 export async function parseTextbookRequest(raw: string) {
   if (typeof raw !== "string" || utf8(raw).length > 48_000) throw invalid();
-  const request = requestSchema.parse(parseSharedJSON(raw));
+  const request = requestSchema.parse(parseEmbeddedJSON(raw));
   if (!unique(request.sources.map((s) => s.id.toLowerCase()))) throw invalid();
   if (
     request.schemaVersion === 1 &&
@@ -269,7 +273,7 @@ export async function parseTextbookCandidate(
   if (typeof draftRaw !== "string" || utf8(draftRaw).length > 96_000)
     throw invalid();
   const request = await parseTextbookRequest(requestRaw),
-    draft = draftSchema.parse(parseSharedJSON(draftRaw));
+    draft = draftSchema.parse(parseEmbeddedJSON(draftRaw));
   const earlier = new Set<string>(),
     questions = new Set<string>();
   for (const lesson of draft.lessons) {
@@ -327,7 +331,7 @@ export async function parseReviewedTextbookCandidate(
   if (typeof reviewRaw !== "string" || utf8(reviewRaw).length > 120_000)
     throw invalid();
   const candidate = await parseTextbookCandidate(requestRaw, draftRaw),
-    review = reviewSchema.parse(parseSharedJSON(reviewRaw));
+    review = reviewSchema.parse(parseEmbeddedJSON(reviewRaw));
   if (
     review.requestDigest !== candidate.requestDigest ||
     review.draftDigest !== candidate.draftDigest ||
@@ -363,9 +367,15 @@ export async function parseSharedTextbook(raw: string) {
       reviewBytes = decode(record.review, 120_000);
     const { request, draft, review, allChecksPassed } =
       await parseReviewedTextbookCandidate(
-        new TextDecoder("utf-8", { fatal: true }).decode(requestBytes),
-        new TextDecoder("utf-8", { fatal: true }).decode(draftBytes),
-        new TextDecoder("utf-8", { fatal: true }).decode(reviewBytes),
+        new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+          requestBytes,
+        ),
+        new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+          draftBytes,
+        ),
+        new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(
+          reviewBytes,
+        ),
       );
     if (
       envelope.schemaVersion !== record.schemaVersion ||

@@ -152,3 +152,37 @@ it("出典snapshotの変更・引用の不整合・検証不合格をhash整合�
     ),
   ).rejects.toThrow();
 });
+
+it("BOM付きの埋め込みJSONでも保持したbyte列そのものを照合し、BOMを落としたhashを拒否する", async () => {
+  for (const base of [fixture, legacy]) {
+    const record = decode(base.record);
+    const requestRaw =
+      "\uFEFF" + new TextDecoder().decode(bytes(record.request));
+    const draftRaw = "\uFEFF" + new TextDecoder().decode(bytes(record.draft));
+    const review = decode(record.review);
+    review.requestDigest = await sharedTextbookDigest(
+      new TextEncoder().encode(requestRaw),
+    );
+    review.draftDigest = await sharedTextbookDigest(
+      new TextEncoder().encode(draftRaw),
+    );
+    const base64 = (raw: string) =>
+      btoa(
+        Array.from(new TextEncoder().encode(raw), (n) =>
+          String.fromCharCode(n),
+        ).join(""),
+      );
+    record.request = base64(requestRaw);
+    record.draft = base64(draftRaw);
+    record.review = base64("\uFEFF" + JSON.stringify(review));
+    const raw = JSON.stringify({ ...base, record: encode(record) });
+    expect((await parseSharedTextbook(raw)).raw).toBe(raw);
+    review.requestDigest = await sharedTextbookDigest(
+      new TextEncoder().encode(requestRaw.slice(1)),
+    );
+    record.review = base64("\uFEFF" + JSON.stringify(review));
+    await expect(
+      parseSharedTextbook(JSON.stringify({ ...base, record: encode(record) })),
+    ).rejects.toThrow();
+  }
+});

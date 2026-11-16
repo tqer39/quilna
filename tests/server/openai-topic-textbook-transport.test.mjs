@@ -50,6 +50,7 @@ function transport(response = output(JSON.stringify(wire))) {
   const calls = [];
   const api = openaiTopicTextbookTransport({
     model,
+    reasoningEffort: "none",
     mockOnly: true,
     secret: "synthetic-credential-not-live",
     send: async (url, init) => {
@@ -74,7 +75,14 @@ test("生成前に全promptとschemaを数え、同じ入力を保存・stream�
     "https://api.openai.com/v1/responses/input_tokens",
   );
   assert.equal(calls[1].url, "https://api.openai.com/v1/responses");
-  for (const key of ["model", "input", "instructions", "text", "tools"])
+  for (const key of [
+    "model",
+    "input",
+    "instructions",
+    "text",
+    "tools",
+    "reasoning",
+  ])
     assert.deepEqual(calls[0].body[key], calls[1].body[key]);
   assert.deepEqual(
     {
@@ -89,21 +97,23 @@ test("生成前に全promptとschemaを数え、同じ入力を保存・stream�
   assert.equal(calls[0].body.text.format.name, "topic_textbook");
   assert.ok(calls.every((c) => c.init.redirect === "error"));
 });
-test("別段階のreviewへ候補と正確なdigestを渡し、否定レビューの使用量とbytesを保持する", async () => {
-  const negative = JSON.parse(review);
-  negative.sections[0].checks[0].passed = false;
-  const raw = JSON.stringify(negative),
-    { api, calls } = transport(output(raw));
+test("別段階のreviewへ候補を送り、digestをモデルに書かせず否定の結果と使用量を保持する", async () => {
+  const { requestDigest, draftDigest, ...wire } = JSON.parse(review);
+  wire.sections[0].checks[0].passed = false;
+  const { api, calls } = transport(output(JSON.stringify(wire)));
   const result = await api.review(request, draft, options());
-  assert.deepEqual(result, {
-    json: raw,
-    usage: { inputTokens: 1000, outputTokens: 500 },
-    outcome: "complete",
-    allChecksPassed: false,
+  assert.equal(result.allChecksPassed, false);
+  assert.equal(result.outcome, "complete");
+  assert.deepEqual(result.usage, { inputTokens: 1000, outputTokens: 500 });
+  assert.deepEqual(JSON.parse(result.json), {
+    requestDigest,
+    draftDigest,
+    ...wire,
   });
   const payload = JSON.parse(calls[0].body.input[0].content);
-  assert.equal(payload.requestDigest, negative.requestDigest);
-  assert.equal(payload.draftDigest, negative.draftDigest);
+  assert.deepEqual(payload.draft, JSON.parse(draft));
+  assert.equal(payload.requestDigest, undefined);
+  assert.equal(payload.draftDigest, undefined);
   assert.equal(calls[0].body.text.format.name, "topic_textbook_review");
 });
 test("個人情報の混入と未確認の送信条件をHTTP前に拒否する", async () => {
@@ -138,6 +148,7 @@ test("token計数が中断を無視して返っても、その後に生成を送
     calls = [];
   const api = openaiTopicTextbookTransport({
     model,
+    reasoningEffort: "none",
     mockOnly: true,
     secret: "synthetic-credential-not-live",
     send: async (url) => {
@@ -210,6 +221,7 @@ test("大きめの教材応答は有界に読み、過大な応答とredirectは
   let calls = 0;
   const api = openaiTopicTextbookTransport({
     model,
+    reasoningEffort: "none",
     secret: "synthetic-credential-not-live",
     send: async () => {
       calls++;
@@ -219,4 +231,174 @@ test("大きめの教材応答は有界に読み、過大な応答とredirectは
   assert.equal(api.kind, "prepared");
   await assert.rejects(api.generate(request, options()), /provider-unknown/);
   assert.equal(calls, 1);
+});
+
+for (const stage of ["generate", "review"]) {
+  test(`${stage}: 不完全・拒否・不正出力でもusageを保持し、複数messageを混ぜない`, async () => {
+    const invoke = (api) =>
+      stage === "generate"
+        ? api.generate(request, options())
+        : api.review(request, draft, options());
+    for (const [response, outcome] of [
+      [output("{}", { status: "incomplete" }), "incomplete"],
+      [
+        output("{}", {
+          output: [
+            {
+              type: "message",
+              role: "assistant",
+              status: "completed",
+              content: [{ type: "refusal", refusal: "fixture" }],
+            },
+          ],
+        }),
+        "refused",
+      ],
+      [output("{}"), "invalid-output"],
+      [
+        output("{}", {
+          output: [output("{}").output[0], output("{}").output[0]],
+        }),
+        "invalid-output",
+      ],
+    ]) {
+      const { api, calls } = transport(response),
+        result = await invoke(api);
+      assert.equal(result.outcome, outcome);
+      assert.equal(result.json, "");
+      assert.deepEqual(result.usage, { inputTokens: 1000, outputTokens: 500 });
+      assert.equal(calls.length, 2);
+    }
+    const { api, calls } = transport(
+      output("{}", { service_tier: "priority" }),
+    );
+    await assert.rejects(invoke(api), /usage-unconfirmed/);
+    assert.equal(calls.length, 2);
+    const limited = transport();
+    const result =
+      stage === "generate"
+        ? await limited.api.generate(request, options({ inputTokens: 1000 }))
+        : await limited.api.review(
+            request,
+            draft,
+            options({ inputTokens: 1000 }),
+          );
+    assert.equal(result.outcome, "input-limit");
+    assert.equal(limited.calls.length, 1);
+  });
+  test(`${stage}: 生成要求中の中断後に返った応答を教材として使わず、既知の費用情報を残す`, async () => {
+    const controller = new AbortController(),
+      calls = [];
+    const response = output(JSON.stringify(wire), {
+      output: [
+        { type: "reasoning", summary: [] },
+        ...output(JSON.stringify(wire)).output,
+      ],
+      usage: {
+        input_tokens: 1000,
+        output_tokens: 500,
+        total_tokens: 1500,
+        output_tokens_details: { reasoning_tokens: 200 },
+      },
+    });
+    const api = openaiTopicTextbookTransport({
+      model,
+      reasoningEffort: "none",
+      mockOnly: true,
+      secret: "synthetic-credential-not-live",
+      send: async (url) => {
+        calls.push(url);
+        if (url.endsWith("input_tokens"))
+          return Response.json({ input_tokens: 1000 });
+        controller.abort();
+        return Response.json(response);
+      },
+    });
+    const result =
+      stage === "generate"
+        ? await api.generate(request, options({ signal: controller.signal }))
+        : await api.review(
+            request,
+            draft,
+            options({ signal: controller.signal }),
+          );
+    assert.deepEqual(result, {
+      json: "",
+      usage: { inputTokens: 1000, outputTokens: 500 },
+      outcome: "cancelled",
+    });
+    assert.equal(calls.length, 2);
+  });
+}
+test("壊れたtoken数・応答・messageを分類したエラーへ閉じ、例外の詳細を返さない", async () => {
+  for (const counted of [null, [], {}, { input_tokens: -1 }]) {
+    let calls = 0;
+    const api = openaiTopicTextbookTransport({
+      model,
+      reasoningEffort: "none",
+      secret: "synthetic-credential-not-live",
+      send: async () => {
+        calls++;
+        return Response.json(counted);
+      },
+    });
+    await assert.rejects(
+      api.generate(request, options()),
+      /provider-unknown|usage-unconfirmed/,
+    );
+    assert.equal(calls, 1);
+  }
+  const { api } = transport(output("{}", { output: [null] }));
+  await assert.rejects(api.generate(request, options()), /usage-unconfirmed/);
+  const content = transport(
+    output("{}", {
+      output: [
+        {
+          type: "message",
+          role: "assistant",
+          status: "completed",
+          content: [null],
+        },
+      ],
+    }),
+  );
+  assert.equal(
+    (await content.api.generate(request, options())).outcome,
+    "invalid-output",
+  );
+});
+test("明示的な推論設定・資格情報がないと送信しない", async () => {
+  let calls = 0;
+  const send = async () => {
+    calls++;
+    throw Error("fixture sender must not run");
+  };
+  for (const config of [
+    {},
+    { reasoningEffort: "unsupported" },
+    { reasoningEffort: "none", secret: "short" },
+  ]) {
+    const api = openaiTopicTextbookTransport({
+      model,
+      secret: "synthetic-credential-not-live",
+      send,
+      ...config,
+    });
+    await assert.rejects(
+      api.generate(request, options()),
+      /transport-unconfigured|credential-unconfigured/,
+    );
+  }
+  assert.equal(calls, 0);
+});
+
+test("reasoning項目は本文へ混ぜず、推論tokenをoutput tokenへ二重加算しない", async () => {
+  const response = output(JSON.stringify(wire));
+  response.output.unshift({ type: "reasoning", summary: [] });
+  response.usage.output_tokens_details = { reasoning_tokens: 200 };
+  const { api } = transport(response),
+    result = await api.generate(request, options());
+  assert.equal(result.outcome, "complete");
+  assert.deepEqual(result.usage, { inputTokens: 1000, outputTokens: 500 });
+  assert.deepEqual(JSON.parse(result.json), JSON.parse(draft));
 });

@@ -114,11 +114,11 @@ test("候補の選択肢根拠を一度正規化し、再読込できる正確�
   const input = await topicReviewInput(requestRaw, raw);
   assert.deepEqual(input.payload.draft, JSON.parse(draftRaw));
   assert.equal(
-    input.payload.draftDigest,
+    input.draftDigest,
     await sharedTextbookDigest(new TextEncoder().encode(raw)),
   );
   assert.equal(
-    input.payload.requestDigest,
+    input.requestDigest,
     await sharedTextbookDigest(new TextEncoder().encode(requestRaw)),
   );
 });
@@ -145,15 +145,25 @@ test("重複根拠や欠けた選択肢・存在しない引用・未来の前�
     await assert.rejects(normalizeTopicDraft(requestRaw, JSON.stringify(d)));
   }
 });
-test("否定レビューの正確なbytesと結果を保持し、共有教材としては受け入れない", async () => {
-  const review = JSON.parse(reviewRaw);
-  review.sections[0].checks[0].passed = false;
-  const raw = JSON.stringify(review);
-  assert.deepEqual(await normalizeTopicReview(requestRaw, draftRaw, raw), {
-    raw,
-    allChecksPassed: false,
+test("レビューのdigestをサーバーで付け、否定の結果を合格教材へ読み替えない", async () => {
+  const original = JSON.parse(reviewRaw),
+    { requestDigest, draftDigest, ...wire } = original;
+  wire.sections[0].checks[0].passed = false;
+  const result = await normalizeTopicReview(
+    requestRaw,
+    draftRaw,
+    JSON.stringify(wire),
+  );
+  assert.equal(result.allChecksPassed, false);
+  assert.deepEqual(JSON.parse(result.raw), {
+    requestDigest,
+    draftDigest,
+    ...wire,
   });
-  const changed = { ...record, review: Buffer.from(raw).toString("base64") };
+  const changed = {
+    ...record,
+    review: Buffer.from(result.raw).toString("base64"),
+  };
   await assert.rejects(
     parseSharedTextbook(
       JSON.stringify({
@@ -162,18 +172,26 @@ test("否定レビューの正確なbytesと結果を保持し、共有教材と
       }),
     ),
   );
-  assert.deepEqual(
-    await normalizeTopicReview(requestRaw, draftRaw, reviewRaw),
-    { raw: reviewRaw, allChecksPassed: true },
+  wire.sections[0].checks[0].passed = true;
+  assert.equal(
+    (await normalizeTopicReview(requestRaw, draftRaw, JSON.stringify(wire)))
+      .allChecksPassed,
+    true,
   );
+  assert.equal(topicReviewOutputSchema.properties.requestDigest, undefined);
+  assert.equal(topicReviewOutputSchema.properties.draftDigest, undefined);
 });
-test("別候補へのreview差し替えと重複した検証項目を拒否する", async () => {
+test("モデルからのhash指定・異なる対象節・重複した検証項目を拒否する", async () => {
+  const { requestDigest, draftDigest, ...wire } = JSON.parse(reviewRaw);
   for (const mutate of [
     (r) => {
-      r.draftDigest = "0".repeat(64);
+      r.draftDigest = draftDigest;
     },
     (r) => {
-      r.requestDigest = "0".repeat(64);
+      r.requestDigest = requestDigest;
+    },
+    (r) => {
+      r.sections[0].sectionID = "other";
     },
     (r) => {
       r.sections[0].checks[1].criterion = r.sections[0].checks[0].criterion;
@@ -182,10 +200,11 @@ test("別候補へのreview差し替えと重複した検証項目を拒否す�
       r.sections.push(r.sections[0]);
     },
   ]) {
-    const r = JSON.parse(reviewRaw);
+    const r = structuredClone(wire);
     mutate(r);
     await assert.rejects(
       normalizeTopicReview(requestRaw, draftRaw, JSON.stringify(r)),
+      /textbook-input-invalid/,
     );
   }
 });

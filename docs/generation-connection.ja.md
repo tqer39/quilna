@@ -22,9 +22,11 @@ AI 生成は未接続です。通常UIに生成成功のfixtureや自動生成�
 
 ### 準備したテーマ教材の生成・レビュー境界
 
-ローカルのブラウザー生成ブランチで、version 2のテーマ要求向けに`server/topic-textbook-format.mjs`と`server/openai-topic-textbook-transport.mjs`を準備しています。出典・引用・前提節・問題の検査はファイルのparserと共通化します。wire上の候補は選択肢の根拠を配列にし、選択肢IDの重複を拒否して一度だけ正規化し、候補のdigestを計算します。レビューは保持した要求と正規化した候補の正確なbyte列に対応させ、否定されたレビューは否定のまま保持し、合格教材として取り込めません。構造の検査は事実の正しさを証明しません。
+ローカルのブラウザー生成ブランチで、version 2のテーマ要求向けに`server/topic-textbook-format.mjs`と`server/openai-topic-textbook-transport.mjs`を準備しています。出典・引用・前提節・問題の検査はファイルのparserと共通化します。wire上の候補は選択肢の根拠を配列にし、選択肢IDの重複を拒否して一度だけ正規化し、候補のdigestを計算します。レビューのwire出力は各節の検査だけとし、モデルにdigestを書き写させず、サーバーが保持した要求・候補の正確なdigestを付けます。否定されたレビューは否定のまま保持し、合格教材として取り込めません。UTF-8 BOMを含む埋め込みJSONは、古い取り込み済みファイルを含め、元のbyte列そのもののdigestを保持します。構造の検査は事実の正しさを証明しません。
 
-transportにはモデル・資格情報・HTTP送信処理を明示的に渡す必要があります。生成とレビューの各段階でprompt全体と出力schemaを固定したOpenAIの入力token数APIへ渡して数え、その後に厳密なJSON出力・`store: false`・toolなし・streamingなしで最大1回のResponses要求を行います。自動再送やredirectはしません。モデル・tier・使用量が一致しない応答は未確認のままにし、不正・拒否・途中終了の出力でも確認済みの使用量を保持します。資源上限は入力32,000 token・出力16,000 token・応答192,000 byteで、既存のCAA用transportの小さい上限は保持します。公式の[入力token数API](https://developers.openai.com/api/reference/resources/responses/subresources/input_tokens/methods/count)と[Structured Outputsガイド](https://developers.openai.com/api/docs/guides/structured-outputs)を参照してください。
+transportにはモデル・推論量・資格情報・HTTP送信処理を明示的に渡す必要があります。生成とレビューの各段階でprompt全体と出力schemaを固定したOpenAIの入力token数APIへ渡して数え、その後に厳密なJSON出力・`store: false`・toolなし・streamingなしで最大1回のResponses要求を行います。自動再送やredirectはしません。モデル・tier・使用量が一致しない応答は未確認のままです。上限内の完全な応答で使用量を検証できた場合は、不正・拒否・途中終了・中断でもその使用量を保持し、中断した出力を候補として返しません。上限を超えた応答、不正な応答、その他の未確認な応答からは使用量を確定できず、照合が済むまで予算予約を保持する必要があります。資源上限は入力32,000 token・出力16,000 token・応答192,000 byteで、既存のCAA用transportの小さい上限は保持します。公式の[入力token数API](https://developers.openai.com/api/reference/resources/responses/subresources/input_tokens/methods/count)と[Structured Outputsガイド](https://developers.openai.com/api/docs/guides/structured-outputs)を参照してください。
+
+生成とレビューは会話状態を共有しない別の要求であり、モデルが異なることや意味の正しさは保証しません。実送信を有効にする前に、registry・予算の接続で正確なモデル識別子と適用単価を承認する必要があります。別名が異なる応答モデルへ解決された場合は未確認のままにします。test-onlyの表示は呼び出し元が合成応答を注入する構成を表し、ネットワークを遮断する仕組みではありません。
 
 固定したNode実行系で合成応答を注入して検査する準備段階であり、通常起動・ブラウザー設定・Workers・共通予算サービスには接続していません。予算予約・認証済みの利用者別資格情報・生成／レビューの操作ID・読書と保存の画面・実内容の評価は接続する必要があります。資源上限を支出許可や月額予算の保証にはしません。この検査でモデル・送信範囲・資格情報の保存先・実リクエストが承認されたとは扱いません。
 
