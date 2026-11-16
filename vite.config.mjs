@@ -13,6 +13,54 @@ import { feedMiddleware } from "./server/feed-fetch.mjs";
 
 export default defineConfig(() => {
   let registeringServer;
+  const sourceStats = new Map(),
+    sourceInodes = new Map(),
+    checking = new Map();
+  // 属性だけの通知を除き、内容の更新・置換に関係する属性を比較する。
+  const fingerprint = (info) =>
+    JSON.stringify([info.mtimeMs, info.size, info.ino]);
+  const recheckSource = async (server, file) => {
+    const pending = checking.get(file);
+    if (pending) {
+      pending.again = true;
+      return;
+    }
+    const state = { again: true };
+    checking.set(file, state);
+    try {
+      while (state.again && !server.watcher.closed) {
+        state.again = false;
+        // 通常通知を先行させ、同梱Chokidarの50msのchange抑制後に確認する。
+        await delay(60);
+        if (server.watcher.closed) return;
+        const info = await stat(file).catch(() => null);
+        // 消失中のファイルは既存のatomic/unlink処理に任せる。
+        if (!info?.isFile() || server.watcher.closed) continue;
+        // macOSのfs.watchは置換前のinodeに残り得るため、新しい実体を監視し直す。
+        if (
+          process.platform === "darwin" &&
+          sourceInodes.get(file) !== info.ino &&
+          !server.watcher._pendingUnlinks?.has(file)
+        ) {
+          sourceInodes.set(file, info.ino);
+          server.watcher.unwatch(file);
+          server.watcher.add(file);
+          state.again = true;
+        }
+        const next = fingerprint(info);
+        if (sourceStats.get(file) !== next) {
+          // 同梱Chokidarの正規化経路を使い、all・atomic・書き込み完了待ちを保つ。
+          await server.watcher._emit("change", file, info);
+        }
+      }
+    } catch (error) {
+      server.config.logger.error(
+        `Source watcher recovery failed: ${error instanceof Error ? error.message : "unknown error"}`,
+      );
+    } finally {
+      checking.delete(file);
+    }
+  };
   return {
     plugins: [
       {
@@ -66,11 +114,45 @@ export default defineConfig(() => {
                 );
               await delay(10);
             }
+            const info = await stat(file).catch(() => null);
+            // 別クエリのloadで、既存URLのキャッシュの比較基準を上書きしない。
+            if (info?.isFile() && !sourceStats.has(resolve(file))) {
+              sourceStats.set(resolve(file), fingerprint(info));
+              sourceInodes.set(resolve(file), info.ino);
+            }
           },
         },
         configureServer(server) {
           if (server.config.server.watch === null) return;
           registeringServer = server;
+          if (typeof server.watcher._emit !== "function") {
+            server.config.logger.warn(
+              "Source watcher recovery is unavailable for this Vite version.",
+            );
+          }
+          server.watcher.on("unlink", (file) => {
+            sourceStats.delete(resolve(file));
+            sourceInodes.delete(resolve(file));
+          });
+          server.watcher.on("change", (file, info) => {
+            const key = resolve(file);
+            if (sourceStats.has(key) && info?.isFile())
+              sourceStats.set(key, fingerprint(info));
+          });
+          if (typeof server.watcher._emit === "function")
+            server.watcher.on("raw", (_event, path, details) => {
+              // Chokidarの通知抑制を補う。既に読み込んだソース以外はstatもしない。
+              const candidates = new Set();
+              if (typeof details?.watchedPath === "string") {
+                candidates.add(resolve(details.watchedPath));
+                if (typeof path === "string")
+                  candidates.add(resolve(details.watchedPath, path));
+              }
+              if (typeof path === "string" && isAbsolute(path))
+                candidates.add(resolve(path));
+              for (const file of candidates)
+                if (sourceStats.has(file)) void recheckSource(server, file);
+            });
           if (!resolve(server.config.root).split(sep).includes("test-results"))
             return;
           // Vite prepends a global test-results ignore before our rooted predicate.

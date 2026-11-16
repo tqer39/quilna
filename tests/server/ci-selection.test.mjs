@@ -132,18 +132,26 @@ test("real git comparison includes deletion, rename origins and newline filename
     changedPaths("push", { before: "a".repeat(40), after: head }, root),
   );
 });
-const result = (harness = "false", apple = "false") => ({
-  selection: { result: "success", outputs: { web: "false", harness, apple } },
+const result = (harness = "false", apple = "false", web = "false") => ({
+  selection: { result: "success", outputs: { web, harness, apple } },
   checks: { result: "success" },
   harness: { result: harness === "true" ? "success" : "skipped" },
   apple: { result: apple === "true" ? "success" : "skipped" },
+  "watcher-macos": { result: web === "true" ? "success" : "skipped" },
 });
 test("required result accepts intentional skips but rejects missing, failed, cancelled or wrongly skipped work", () => {
   assert.deepEqual(checkResults(result()), []);
   assert.deepEqual(checkResults(result("true", "true")), []);
-  for (const job of ["selection", "checks", "harness", "apple"])
+  assert.deepEqual(checkResults(result("false", "false", "true")), []);
+  for (const job of [
+    "selection",
+    "checks",
+    "harness",
+    "apple",
+    "watcher-macos",
+  ])
     for (const state of ["failure", "cancelled", "skipped", undefined]) {
-      const needs = result("true", "true");
+      const needs = result("true", "true", "true");
       needs[job].result = state;
       assert.ok(checkResults(needs).length > 0, `${job}: ${state}`);
     }
@@ -165,7 +173,7 @@ test("the selected web job retains functional and 200ms search gates plus failur
   );
   const checks = workflow.slice(
     workflow.indexOf("  checks:\n"),
-    workflow.indexOf("  harness:\n"),
+    workflow.indexOf("  watcher-macos:\n"),
   );
   // These reviewed workflows use explicit block-style steps (also checked by actionlint).
   const steps = checks.split(/(?=^ {6}- )/m).slice(1);
@@ -203,4 +211,19 @@ test("the selected web job retains functional and 200ms search gates plus failur
   );
   assert.match(evidence, /include-hidden-files: true/);
   assert.match(evidence, /if-no-files-found: error/);
+});
+
+test("selected web changes execute watcher regressions on macOS", () => {
+  const workflow = readFileSync(
+    new URL("../../.github/workflows/ci.yml", import.meta.url),
+    "utf8",
+  );
+  const job = workflow.slice(
+    workflow.indexOf("  watcher-macos:\n"),
+    workflow.indexOf("  harness:\n"),
+  );
+  assert.match(job, /runs-on: macos-26/);
+  assert.match(job, /if: needs\.selection\.outputs\.web == 'true'/);
+  assert.match(job, /run: node --test tests\/server\/vite-watch\.test\.mjs/);
+  assert.doesNotMatch(job, /continue-on-error:/);
 });
