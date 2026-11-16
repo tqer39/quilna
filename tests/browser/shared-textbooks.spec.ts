@@ -69,6 +69,10 @@ async function releaseAnswerCompletion(page: Page) {
 
 const fixturePath = "tests/fixtures/shared-textbook-v1.json";
 const fixture = new TextDecoder().decode(await readFile(fixturePath));
+const topicFixture = new TextDecoder().decode(
+  await readFile("tests/fixtures/shared-textbook-v2.json"),
+);
+const topicTitle = "テーマ別の合成教材：モデルと実行";
 const title = "合成教材：モデルと実行";
 /** Vary an outer immutable record while retaining the fixed nested source and review bytes. */
 function modifiedRecord(
@@ -118,10 +122,10 @@ async function importBook(page: Page, raw = fixture) {
   await expect(page.getByRole("status")).toContainText("教材を取り込みました");
 }
 /** Open the specified immutable edition and wait for its readable content. */
-async function openBook(page: Page, version = 7) {
+async function openBook(page: Page, version = 7, bookTitle = title) {
   await page
     .getByRole("button", {
-      name: `${title} · 版 ${version}を読む`,
+      name: `${bookTitle} · 版 ${version}を読む`,
       exact: true,
     })
     .click();
@@ -1113,4 +1117,146 @@ test("a direct edition URL opens without waiting for the library list", async ({
   });
   await page.goto(url);
   await expect(page.getByRole("navigation", { name: "教材の目次" })).toBeVisible();
+});
+
+test("テーマ教材を記事なしで読み、旧教材と回答を分離して正確なファイルを再利用する", async ({
+  page,
+  browser,
+}) => {
+  const external: string[] = [];
+  await page.route("**/*", async (route) => {
+    if (new URL(route.request().url()).origin === "http://127.0.0.1:5197")
+      await route.continue();
+    else {
+      external.push(route.request().url());
+      await route.abort();
+    }
+  });
+  await page.goto("/?view=textbooks");
+  await importBook(page);
+  await importBook(page, topicFixture);
+  await openBook(page, 7, topicTitle);
+  await page.getByText("教材ファイルを書き出す", { exact: true }).click();
+  await expect(
+    page
+      .locator("details")
+      .filter({
+        has: page.getByText("教材ファイルを書き出す", { exact: true }),
+      })
+      .getByText("テーマ：モデルと実行の役割分担", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.locator("details").filter({
+      has: page.getByText("教材ファイルを書き出す", { exact: true }),
+    }),
+  ).toContainText("テーマ識別子：d3468597-7d13-4e87-9d5b-fad7af5bb11d");
+  await page.screenshot({
+    path: test.info().outputPath("topic-textbook.png"),
+    fullPage: true,
+  });
+  const group = page
+    .getByRole("group", {
+      name: "モデルの文章だけで確認できるのは？",
+      exact: true,
+    })
+    .first();
+  await group.getByLabel("文章が出力された", { exact: true }).check();
+  await group
+    .getByRole("button", { name: "回答して保存", exact: true })
+    .click();
+  await expect(
+    page.getByText("正答です。回答を保存しました。", { exact: true }),
+  ).toBeVisible();
+  await page.reload();
+  await expect(page.getByText(/文章が出力された · 正答/)).toHaveCount(1);
+  const raw = await exported(page);
+  expect(raw).toBe(topicFixture);
+  await page
+    .getByRole("button", { name: "教材一覧へ戻る", exact: true })
+    .click();
+  await openBook(page);
+  await expect(
+    page.getByText("まだ回答を保存していません。", { exact: true }),
+  ).toHaveCount(2);
+  const recipient = await browser.newContext({
+    viewport: page.viewportSize() ?? undefined,
+  });
+  try {
+    await recipient.route("**/*", async (route) => {
+      if (new URL(route.request().url()).origin === "http://127.0.0.1:5197")
+        await route.continue();
+      else {
+        external.push(route.request().url());
+        await route.abort();
+      }
+    });
+    const other = await recipient.newPage();
+    await other.goto("http://127.0.0.1:5197/?view=textbooks");
+    await importBook(other, raw);
+    await openBook(other, 7, topicTitle);
+    await expect(
+      other.getByText("まだ回答を保存していません。", { exact: true }),
+    ).toHaveCount(2);
+    expect(await exported(other)).toBe(raw);
+  } finally {
+    await recipient.close();
+  }
+  expect(external).toEqual([]);
+});
+
+test("テーマの個人リンク混入と根拠改変を取り込まず、保存済み教材を残す", async ({
+  page,
+}) => {
+  const bytes = (s: string) => Uint8Array.from(atob(s), (c) => c.charCodeAt(0));
+  const decode = (s: string) => JSON.parse(new TextDecoder().decode(bytes(s)));
+  const encode = (v: unknown) =>
+    btoa(
+      Array.from(new TextEncoder().encode(JSON.stringify(v)), (n) =>
+        String.fromCharCode(n),
+      ).join(""),
+    );
+  await page.goto("/?view=textbooks");
+  await importBook(page, topicFixture);
+  for (const kind of ["private", "snapshot"] as const) {
+    const envelope = JSON.parse(topicFixture),
+      record = decode(envelope.record),
+      request = decode(record.request),
+      review = decode(record.review);
+    if (kind === "private") request.topic.confirmedLinks = ["PRIVATE"];
+    else request.sources[0].excerpt += "根拠を改変";
+    record.request = encode(request);
+    review.requestDigest = await sharedTextbookDigest(bytes(record.request));
+    record.review = encode(review);
+    envelope.record = encode(record);
+    await selectFile(page, JSON.stringify(envelope));
+    await expect(page.getByRole("status")).toContainText(
+      "形式・出典・版の対応を確認できません",
+    );
+    await expect(
+      page.getByRole("button", {
+        name: "確認してこのブラウザに取り込む",
+        exact: true,
+      }),
+    ).toHaveCount(0);
+  }
+  await upload(
+    page,
+    modifiedRecord((record) => {
+      record.bookID = "dc74d775-eab8-4384-81ae-d741162c0d49";
+    }),
+  );
+  await page
+    .getByRole("button", {
+      name: "確認してこのブラウザに取り込む",
+      exact: true,
+    })
+    .click();
+  await expect(page.getByRole("status")).toContainText(
+    "同じ教材・版で内容の異なるファイル",
+  );
+  await openBook(page, 7, topicTitle);
+  await expect(
+    page.getByRole("heading", { name: topicTitle, exact: true }),
+  ).toBeVisible();
+  expect(await exported(page)).toBe(topicFixture);
 });

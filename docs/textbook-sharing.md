@@ -29,7 +29,7 @@ These text fields can themselves contain personal or licensed material: inspect 
 The download does not send it to a recipient. A recipient's answers remain in that recipient's browser and are absent from re-export.
 
 Source-to-textbook generation is still unconnected in the browser ([Issue #7](https://github.com/tqer39/quilna/issues/7)).
-This reader accepts the existing portable textbook-file contract and re-exports accepted files; it does not turn collected articles or the fixed CAA demo into a generated textbook.
+This reader accepts the existing version-1 textbook-file contract and version-2 [topic textbooks](topic-textbooks.md), and re-exports accepted files; it does not turn collected articles or the fixed CAA demo into a generated textbook.
 Hosted sharing links, collaborative editing and a shared results dashboard are not implemented.
 Owner usability acceptance and a live, end-to-end creator/recipient workflow remain unfinished ([Issue #30](https://github.com/tqer39/quilna/issues/30)).
 
@@ -39,6 +39,13 @@ The version-1 envelope retains `format: "TsumikiText"`, `schemaVersion: 1` and a
 The immutable record preserves its original UUID, positive integer version, creation time, exact request/draft/review bytes and distinct generator/reviewer invocation identities.
 Numeric source and creation dates use seconds since 2001-01-01, including fractional seconds.
 Missing source dates/URLs are displayed as unknown rather than invented.
+
+Version 2 retains `format: "TsumikiText"` and the same immutable record/answer storage, with `schemaVersion: 2` in the envelope, record and request; mismatched versions are refused.
+Its request adds `topic: { id, name }` (a UUID and a nonempty name up to 500 UTF-8 bytes), and source snapshots omit `articleID`, `feedID`, `remoteID` and `translation` entirely.
+The remaining source fields keep the version-1 bounds and date representation. In version 2, `sourceFingerprint` must be SHA-256 of the exact UTF-8 `excerpt`; no article or subscription is needed or invented.
+Draft schema version 1, content-bound review checks, exact-quote references and all byte limits remain unchanged. Neither portable format defines fields for private referring links, dismissed suggestions or answers, or automatically adds them from private storage. Text and source URLs can still contain sensitive information; inspect their content before sharing.
+The preview and export review show the topic name and identifier. No topic-catalog merging occurs; different topic IDs are retained even when names match. The storage key remains book ID plus edition across formats, so different version-1 and version-2 records with the same book/edition also conflict. Changing content to make it topic-based requires a new edition too.
+Older version-1-only readers, including the existing native reader, cannot import version 2; no automatic conversion or native change is included.
 
 The complete UTF-8 file is bounded to 540,000 bytes; the decoded record to 400,000 bytes; request, draft and review to 48,000, 96,000 and 120,000 bytes respectively.
 All nested JSON rejects unknown fields, duplicate decoded keys and nesting beyond 32 levels.
@@ -62,6 +69,8 @@ Capacity, read/write failure, corrupt retained data and unsupported database ver
 Deletion and answer-history backup are not provided by this workflow.
 
 `tests/shared-textbook.test.ts` checks the format and adversarial nested payloads.
+`tests/topic-textbook.test.ts` covers standalone topic identity, matching format versions, exact source snapshots, privacy extras and retained evidence/review checks.
+The browser suite also imports both formats together, keeps their answers separate, reloads a version-2 edition, rejects changed/private payloads and re-exports exact bytes to a separate recipient profile without source or provider requests.
 `tests/browser/shared-textbooks.spec.ts` uses disposable profiles and synthetic version-1 data for preview/cancel, two-recipient answer isolation, exact re-export/reload, concurrent conflict/capacity, corruption, failed storage/retry, stale file reads, markup and narrow-width behavior.
 The synthetic record is derived from the existing native-format fixture; its successful sender checks are test data, not model-quality or fresh native-runtime evidence.
 Run the maintained [browser checks](browser-validation.md); the existing native development and owner-acceptance gates remain unchanged.

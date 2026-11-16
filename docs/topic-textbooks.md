@@ -8,8 +8,8 @@ The owner's clarification on 2026-11-17 in [Issue #7](https://github.com/tqer39/
 An article can lead to “explore this topic with this textbook”; the textbook teaches the underlying topic and can serve readers arriving from different articles.
 Stable technical material can remain fixed between deliberate revisions. Reading an article or receiving an RSS update must not require generating a new textbook.
 
-This page specifies the next browser workflow, not an implemented catalog or accepted experience.
-The existing CAA lesson is a fixed demo; imported version-1 textbook files remain readable through the [file workflow](textbook-sharing.md).
+This page specifies the next browser workflow, not an implemented catalog or accepted experience. The [version-2 file workflow](textbook-sharing.md#file-contract-and-validation) now supports reading standalone topic textbooks with independent source snapshots; article links and authoring remain unimplemented.
+The existing CAA lesson is a fixed demo; imported version-1 textbook files remain readable through the same file workflow.
 OpenAI was selected for the next generation integration, and the owner requested secure creation of a new key.
 Key setup, sending scope, model selection and a concrete live-run spending allowance are not yet complete.
 No live-generation result is claimed. The existing [budget and sending controls](generation-connection.md) still apply.
@@ -43,7 +43,7 @@ Changing a textbook's explanation or answer creates a deliberate new edition wit
 Existing links keep their selected edition. If an edition has a known correction, show the correction and an explicit action to open the replacement edition; do not silently redirect or transfer answers.
 Mark a withdrawn edition as unsuitable for continued learning, retain its historical record, and avoid suggesting it for new links.
 Existing version-1 files require article-source excerpts and exact quotations; keep that format and its validation intact.
-Do not make a topic textbook fit that format by fabricating a referring article or quotations. Any new portable format requires an explicit compatible contract and tests before implementation.
+Version 2 defines a separate topic request without article fields while retaining the old format. Do not fabricate a referring article or quotations to fit version 1, or silently convert existing files.
 
 ## Preparing and maintaining a textbook
 
