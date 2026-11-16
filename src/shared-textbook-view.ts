@@ -46,6 +46,11 @@ function overview(book: SharedTextbook) {
     ),
     el("p", `学習目標：${book.request.learningGoal}`),
   );
+  if (book.request.schemaVersion === 2)
+    content.append(
+      el("p", `テーマ：${book.request.topic.name}`),
+      el("p", `テーマ識別子：${book.request.topic.id}`),
+    );
   const sections = el("ol");
   for (const lesson of book.draft.lessons)
     sections.append(el("li", lesson.content.title));
@@ -73,7 +78,7 @@ function overview(book: SharedTextbook) {
         `公開日時 ${sourceDate(source.publishedAt)} · 更新日時 ${sourceDate(source.updatedAt)} · 取得日時 ${sourceDate(source.capturedAt)}`,
       ),
     );
-    if (source.translation)
+    if ("translation" in source && source.translation)
       detail.append(
         el(
           "p",

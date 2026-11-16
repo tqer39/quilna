@@ -26,11 +26,8 @@ const citation = object({ sourceID: uuid, quote: text(1500) });
 const citations = z.array(citation).min(1).max(4);
 /** Allow missing source metadata to stay unknown instead of inventing values. */
 const nullable = <T extends z.ZodType>(schema: T) => schema.nullish();
-const sourceSchema = object({
+const sourceFields = {
   id: uuid,
-  articleID: text(1024),
-  feedID: text(1024),
-  remoteID: nullable(text(4096)),
   title: text(2000),
   url: nullable(
     text(4096).refine((s) => {
@@ -52,6 +49,12 @@ const sourceSchema = object({
   capturedAt: z.number().finite(),
   sourceFingerprint: digest,
   excerpt: text(6000),
+};
+const sourceSchema = object({
+  ...sourceFields,
+  articleID: text(1024),
+  feedID: text(1024),
+  remoteID: nullable(text(4096)),
   translation: nullable(
     object({
       articleID: text(1024),
@@ -61,12 +64,25 @@ const sourceSchema = object({
     }),
   ),
 });
-const requestSchema = object({
+const articleRequestSchema = object({
   schemaVersion: z.literal(1),
   id: uuid,
   learningGoal: text(1000),
   sources: z.array(sourceSchema).min(1).max(3),
 });
+// 記事への入口と教材の根拠を分け、私的なリンクを教材ファイルへ混入させない。
+const topicSourceSchema = object(sourceFields);
+const topicRequestSchema = object({
+  schemaVersion: z.literal(2),
+  id: uuid,
+  topic: object({ id: uuid, name: text(500) }),
+  learningGoal: text(1000),
+  sources: z.array(topicSourceSchema).min(1).max(3),
+});
+const requestSchema = z.discriminatedUnion("schemaVersion", [
+  articleRequestSchema,
+  topicRequestSchema,
+]);
 const lessonSchema = object({
   content: object({
     id: identifier,
@@ -128,8 +144,9 @@ const reviewSchema = object({
     .max(8),
 });
 const invocation = object({ id: uuid, provider: text(100), model: text(200) });
+const fileVersion = z.union([z.literal(1), z.literal(2)]);
 const recordSchema = object({
-  schemaVersion: z.literal(1),
+  schemaVersion: fileVersion,
   bookID: uuid,
   version: z.number().int().min(1).max(2147483647),
   createdAt: z.number().finite(),
@@ -141,7 +158,7 @@ const recordSchema = object({
 });
 const envelopeSchema = object({
   format: z.literal("TsumikiText"),
-  schemaVersion: z.literal(1),
+  schemaVersion: fileVersion,
   record: z.string(),
 });
 /** Report a bounded validation failure without disclosing untrusted payloads or parser details. */
@@ -200,23 +217,28 @@ export async function sharedTextbookDigest(bytes: Uint8Array) {
   ).join("");
 }
 export type SharedLesson = z.infer<typeof lessonSchema>;
-export type SharedSource = z.infer<typeof sourceSchema>;
+export type SharedSource =
+  z.infer<typeof sourceSchema> | z.infer<typeof topicSourceSchema>;
 export type SharedCitation = z.infer<typeof citation>;
 export type SharedTextbook = Awaited<ReturnType<typeof parseSharedTextbook>>;
 
 // Used inside an IndexedDB transaction to compare immutable record bytes; the
 // incoming archive has already passed the asynchronous digest/semantic checks.
 /** Read a strict bounded envelope for synchronous transaction-time record comparison. */
-export function sharedEnvelopeRecord(raw: string) {
+function sharedEnvelope(raw: string) {
   if (utf8(raw).length > sharedTextbookMaximumBytes) throw invalid();
-  return envelopeSchema.parse(parseSharedJSON(raw)).record;
+  return envelopeSchema.parse(parseSharedJSON(raw));
+}
+/** 不変記録の同期比較でも、対応形式と外側のbyte上限を確認する。 */
+export function sharedEnvelopeRecord(raw: string) {
+  return sharedEnvelope(raw).record;
 }
 
 /** Validate immutable content, source links and sender-reported checks without asserting semantic truth. */
 export async function parseSharedTextbook(raw: string) {
   try {
-    const encoded = sharedEnvelopeRecord(raw),
-      recordBytes = decode(encoded, 400_000);
+    const envelope = sharedEnvelope(raw),
+      recordBytes = decode(envelope.record, 400_000);
     const record = recordSchema.parse(jsonBytes(recordBytes));
     const requestBytes = decode(record.request, 48_000),
       draftBytes = decode(record.draft, 96_000),
@@ -225,16 +247,32 @@ export async function parseSharedTextbook(raw: string) {
       draft = draftSchema.parse(jsonBytes(draftBytes)),
       review = reviewSchema.parse(jsonBytes(reviewBytes));
     if (
-      !unique(request.sources.map((s) => s.id.toLowerCase())) ||
-      !unique(request.sources.map((s) => s.articleID)) ||
-      request.sources.some(
-        (s) =>
-          s.translation &&
-          (s.translation.articleID !== s.articleID ||
-            s.translation.sourceFingerprint !== s.sourceFingerprint),
-      )
+      envelope.schemaVersion !== record.schemaVersion ||
+      record.schemaVersion !== request.schemaVersion ||
+      !unique(request.sources.map((s) => s.id.toLowerCase()))
     )
       throw invalid();
+    if (
+      request.schemaVersion === 1 &&
+      (!unique(request.sources.map((s) => s.articleID)) ||
+        request.sources.some(
+          (s) =>
+            s.translation &&
+            (s.translation.articleID !== s.articleID ||
+              s.translation.sourceFingerprint !== s.sourceFingerprint),
+        ))
+    )
+      throw invalid();
+    if (request.schemaVersion === 2) {
+      // テーマ教材は根拠の抜粋自体をsnapshotとし、変更を見逃さない。
+      const fingerprints = await Promise.all(
+        request.sources.map((s) => sharedTextbookDigest(utf8(s.excerpt))),
+      );
+      if (
+        request.sources.some((s, i) => s.sourceFingerprint !== fingerprints[i])
+      )
+        throw invalid();
+    }
     const earlier = new Set<string>(),
       questions = new Set<string>();
     for (const lesson of draft.lessons) {
