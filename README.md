@@ -148,6 +148,7 @@ Traces are saved on failure. See the [investigation log](docs/browser-timeout-in
 
 See the [generation API connection decision and ¥500 limit](docs/generation-connection.md).
 Questions and manual diffs can be saved and applied locally; AI generation is not connected.
+The next textbook direction is [reusable topic textbooks](docs/topic-textbooks.md): optional article links to stable learning content. This workflow is planned, not implemented.
 
 ## Optional server with provider communication disabled
 

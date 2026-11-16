@@ -10,7 +10,17 @@ Secret files, key values, and tokens were not searched. Availability of API acco
 The design is BYOK: service users configure their own keys. A shared operator-owned LLM key is not assumed.
 The [BYOK mock screen and storage design](byok.md) have been implemented and documented. Real-key entry is disabled.
 
-## Connection proposal and required prior owner approval
+## Current textbook direction — 2026-11-17
+
+The owner selected OpenAI for the next integration and requested secure creation of a new API key; setup is pending.
+The intended product is [reusable topic textbooks](topic-textbooks.md), with article-to-topic entry points and stable editions that can serve multiple articles.
+This supersedes treating a new article as a requirement to generate an article-specific textbook. It does not enable live calls or change the existing BYOK and monthly-budget boundaries.
+The exact submitted material, model and live-run spending allowance remain unagreed. Key creation is separate from permission to send or incur charges.
+The secure key-setup flow requires a separately confirmed local secret destination; no destination has been confirmed or key written. Never put a key in chat, source control, browser storage, URLs or logs.
+This development setup does not enable service users' real-key input or bypass the pending per-user encrypted-storage integration.
+The earlier proposal and communication-off implementation below retain their original fixed-CAA scope; they are not a completed implementation of the new workflow.
+
+## Earlier connection proposal and required prior owner approval
 
 The owner selected OpenAI and Anthropic as the initial providers. Model choices for each purpose and live requests are not yet approved.
 A registry and adapter boundary support choosing multiple providers/models for each purpose.
@@ -87,7 +97,7 @@ Before approval for billing/sending, the following were implemented locally with
 - Offline stubs and both providers' HTTP mocks testing limits, races, timeouts, no retries, and no secret exposure.
 
 At this stage the adapter displays disconnected status; prepared transports, API keys, payments, and live requests are not enabled.
-The next owner decision is: "Which provider/model may receive the public technical question shown in the preview?"
+For that earlier fixed-CAA workflow, the pending decision was: "Which provider/model may receive the public technical question shown in the preview?" The current topic-workflow sending scope remains to be agreed as described above.
 Permission for an initial deposit and for live sending are separate approvals after reviewing the yen amount and request body.
 After that decision, the owner must check API project/access permissions, configure payment and disable auto-recharge if needed,
 and use authentication/encrypted storage that lets users safely register/manage their own keys through the service's settings screen.
@@ -141,9 +151,9 @@ The transport factory uses only an explicitly passed secret for the Authorizatio
 Normal startup does not register the factory; GenerationService also rejects prepared transports.
 Server code, key names, and ledgers are excluded from the frontend bundle.
 
-## Minimum owner setup and draft approval wording
+## Earlier fixed-CAA setup and draft approval wording
 
-OpenAI / Anthropic have been selected. Next, the owner checks billing projects/workspaces and model availability for each API.
+The earlier proposal selected OpenAI / Anthropic candidates; the current next integration selects OpenAI as described above. Billing-project access and model availability remain unverified.
 Models for terminology explanations, lesson additions, and evidence checks remain unselected.
 There is no need to send account IDs or key values in chat. Existing OpenAI projects will not be searched either.
 If there is no existing balance, confirm the yen amount of the initial deposit and how it fits the ¥500 constraint separately.
@@ -161,7 +171,7 @@ Draft approval wording:
 > or fall back to another provider. I will separately approve key configuration and initial deposits after reviewing the method and yen amount,
 > and choose whether to apply lesson changes after reviewing the diff.
 
-This is a draft. It does not establish approval for sending/retention conditions, key configuration, or payment at this time.
+This is historical fixed-CAA draft wording, not an approval request for topic textbooks. It does not establish approval for sending/retention conditions, key configuration, or payment at this time; a topic request needs a new preview and agreed sending scope.
 
 ## Keep owner-controlled application separate after connection
 

@@ -148,6 +148,7 @@ npx playwright test --config=playwright.chrome.config.ts
 [調査記録](docs/browser-timeout-investigation.ja.md) を参照してください。
 
 [生成APIの接続判断と500円上限](docs/generation-connection.ja.md)。
+次の教材の方針は[再利用するテーマ別教材](docs/topic-textbooks.ja.md)です。記事から任意で普遍的な教材へ進む導線であり、計画段階・未実装です。
 質問と手動差分の保存・反映はローカルで利用可能、AI生成は未接続です。
 
 ## 通信offサーバー（任意）
