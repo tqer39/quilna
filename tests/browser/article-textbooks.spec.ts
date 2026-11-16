@@ -1124,6 +1124,16 @@ for (const operation of ["export", "restore"])
           new File([exported.blob], "known.quilna.gz"),
         ),
         db = await links.openTextbookLinks();
+      const feedPath = "/src/feed-store.ts",
+        feed = await import(feedPath),
+        articleDb = await feed.openFeedLibrary();
+      if (operation === "restore")
+        await new Promise<void>((resolve, reject) => {
+          const tx = articleDb.transaction("articles", "readwrite");
+          tx.objectStore("articles").delete("b");
+          tx.oncomplete = () => resolve();
+          tx.onerror = tx.onabort = () => reject(tx.error);
+        });
       IDBDatabase.prototype.close.call(db);
       const run = () =>
         operation === "export"
@@ -1136,6 +1146,10 @@ for (const operation of ["export", "restore"])
       } catch (error) {
         first = String(error);
       }
+      const articleAddedBeforeFailure = await new Promise<boolean>((resolve) => {
+        const r = articleDb.transaction("articles").objectStore("articles").get("b");
+        r.onsuccess = () => resolve(!!r.result);
+      });
       try {
         await run();
       } catch (error) {
@@ -1152,10 +1166,15 @@ for (const operation of ["export", "restore"])
         r.onsuccess = () => resolve(r.result);
       });
       raw.close();
-      return { first, retry, disk };
+      articleDb.close();
+      return { first, retry, disk, articleAddedBeforeFailure };
     }, operation);
     expect(result.disk).toEqual(before);
-    expect(result.first).not.toBe("");
+    expect(result.first).toContain(
+      "教材との関連づけを読み書きできません。保存済みの記録は保持しています。再試行してください。",
+    );
+    if (operation === "restore")
+      expect(result.articleAddedBeforeFailure).toBe(false);
     expect(result.retry).toBe("");
   });
 
