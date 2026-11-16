@@ -177,10 +177,30 @@ export class ArticleTextbookView {
   }
   mount(view: TextbookReading) {
     if (this.view?.articleId !== view.articleId) this.detach();
+    const readingChanged =
+      this.view &&
+      ["original", "text", "view", "language"].some(
+        (key) =>
+          this.view?.[key as keyof TextbookReading] !==
+          view[key as keyof TextbookReading],
+      );
+    const shouldReload = !!readingChanged || !this.ready;
+    if (readingChanged) {
+      this.generation++;
+      this.ready = false;
+      this.list.replaceChildren();
+      this.rowButtons = [];
+      this.summary.textContent = "深掘りできる教材";
+    }
     this.view = view;
     this.draft = this.drafts.get(view.articleId);
     this.renderDraft();
-    if (this.details.open && !this.busy) void this.load();
+    this.controls();
+    // 記事の再描画ではmount時点で未接続なので、再接続後に現在の表示を照合する。
+    queueMicrotask(() => {
+      if (shouldReload && this.view === view && this.details.open && !this.busy)
+        void this.load();
+    });
     return this.root;
   }
   detach() {
@@ -310,6 +330,8 @@ export class ArticleTextbookView {
         this.status.textContent = this.message(error);
     } finally {
       this.busy = false;
+      // 候補待ち中の再描画で無効になった照合を、処理完了時にも回復する。
+      if (!this.ready) await this.load();
       this.controls();
       if (
         context === this.context &&
@@ -354,6 +376,7 @@ export class ArticleTextbookView {
         this.status.textContent = this.message(error);
     } finally {
       this.busy = false;
+      if (!this.ready) await this.load();
       this.controls();
     }
   }
@@ -374,6 +397,7 @@ export class ArticleTextbookView {
         this.status.textContent = this.message(error);
     } finally {
       this.busy = false;
+      if (!this.ready) await this.load();
       this.controls();
     }
   }
