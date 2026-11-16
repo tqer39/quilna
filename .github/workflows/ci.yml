@@ -31,7 +31,9 @@ jobs:
   checks:
     needs: selection
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    # #163: 通常16〜22分のジョブに、Playwright導入の遅延（上限15分）と4分の診断の余裕を確保する。
+    # 共通ルールの3分目標は超えるが、npmキャッシュ利用後もブラウザ・実行環境・10万記事検索に時間を要する。
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -57,6 +59,8 @@ jobs:
       - if: needs.selection.outputs.web == 'true'
         run: npm run test:workers
       - if: needs.selection.outputs.web == 'true'
+        # #163で約10分を要したapt導入に余裕を持たせ、15分を超える停止はこのステップで失敗させる。
+        timeout-minutes: 15
         run: npm exec --no -- playwright install --with-deps chromium
       - name: Record browser validation source
         id: browser-source
