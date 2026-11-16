@@ -14,7 +14,10 @@ Existing CI and necessary security maintenance may still validate native code an
 
 ## Reading, curiosity and connections
 
-Implementation and acceptance are tracked in [Issue #72](https://github.com/tqer39/quilna/issues/72) for viewer designs and [Issue #73](https://github.com/tqer39/quilna/issues/73) for highlights and connections.
+The owner's 2026-11-17 clarification in [Issue #7](https://github.com/tqer39/quilna/issues/7) makes [reusable topic textbooks](topic-textbooks.md) the next textbook direction: articles lead to deeper knowledge in independently maintained textbooks, whose stable content can be reused across articles.
+This workflow is planned; existing article-bound learning cues and imported textbooks remain available and do not establish its completion.
+
+Implementation and acceptance of viewer designs are tracked in [Issue #72](https://github.com/tqer39/quilna/issues/72), and highlights/article connections in [Issue #73](https://github.com/tqer39/quilna/issues/73). Reusable topic textbooks are tracked separately in #7, with file sharing in #30.
 
 The owner's priority clarification on 2026-10-27 makes RSS reading and subscriptions to news and SNS feeds the product's center.
 Translation and read-aloud support reading; their controls and development work must remain secondary to collecting and reading articles.
