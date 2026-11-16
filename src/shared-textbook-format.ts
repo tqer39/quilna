@@ -234,6 +234,124 @@ export function sharedEnvelopeRecord(raw: string) {
   return sharedEnvelope(raw).record;
 }
 
+/** 生成前にも完成ファイルと同じ出典の形・重複・snapshot整合を検査する。 */
+export async function parseTextbookRequest(raw: string) {
+  if (typeof raw !== "string" || utf8(raw).length > 48_000) throw invalid();
+  const request = requestSchema.parse(parseSharedJSON(raw));
+  if (!unique(request.sources.map((s) => s.id.toLowerCase()))) throw invalid();
+  if (
+    request.schemaVersion === 1 &&
+    (!unique(request.sources.map((s) => s.articleID)) ||
+      request.sources.some(
+        (s) =>
+          s.translation &&
+          (s.translation.articleID !== s.articleID ||
+            s.translation.sourceFingerprint !== s.sourceFingerprint),
+      ))
+  )
+    throw invalid();
+  if (request.schemaVersion === 2) {
+    // テーマ教材は根拠の抜粋自体をsnapshotとし、変更を見逃さない。
+    const fingerprints = await Promise.all(
+      request.sources.map((s) => sharedTextbookDigest(utf8(s.excerpt))),
+    );
+    if (request.sources.some((s, i) => s.sourceFingerprint !== fingerprints[i]))
+      throw invalid();
+  }
+  return request;
+}
+
+/** 生成候補を保存・検証へ渡す前に、引用と問題・前提の対応を検査する。 */
+export async function parseTextbookCandidate(
+  requestRaw: string,
+  draftRaw: string,
+) {
+  if (typeof draftRaw !== "string" || utf8(draftRaw).length > 96_000)
+    throw invalid();
+  const request = await parseTextbookRequest(requestRaw),
+    draft = draftSchema.parse(parseSharedJSON(draftRaw));
+  const earlier = new Set<string>(),
+    questions = new Set<string>();
+  for (const lesson of draft.lessons) {
+    const { content } = lesson,
+      q = content.question;
+    if (
+      earlier.has(content.id) ||
+      questions.has(q.id) ||
+      !unique(lesson.prerequisiteSectionIDs) ||
+      lesson.prerequisiteSectionIDs.some((id) => !earlier.has(id))
+    )
+      throw invalid();
+    earlier.add(content.id);
+    questions.add(q.id);
+    if (
+      !unique(q.options.map((o) => o.id)) ||
+      !q.options.some((o) => o.id === q.correctOptionID) ||
+      !unique(
+        q.options.map((o) => o.text.replace(/\p{White_Space}+/gu, " ").trim()),
+      ) ||
+      Object.keys(lesson.optionEvidence).sort().join("\0") !==
+        q.options
+          .map((o) => o.id)
+          .sort()
+          .join("\0")
+    )
+      throw invalid();
+    for (const refs of [
+      lesson.explanationEvidence,
+      lesson.exampleEvidence,
+      lesson.questionEvidence,
+      ...Object.values(lesson.optionEvidence),
+    ]) {
+      for (const ref of refs) {
+        const source = request.sources.find(
+          (s) => s.id.toLowerCase() === ref.sourceID.toLowerCase(),
+        );
+        if (!source || !source.excerpt.includes(ref.quote)) throw invalid();
+      }
+    }
+  }
+  const [requestDigest, draftDigest] = await Promise.all([
+    sharedTextbookDigest(utf8(requestRaw)),
+    sharedTextbookDigest(utf8(draftRaw)),
+  ]);
+  return { request, draft, requestDigest, draftDigest };
+}
+
+/** 否定されたレビューも保持できるよう、形式・対象の一致と合否を区別する。 */
+export async function parseReviewedTextbookCandidate(
+  requestRaw: string,
+  draftRaw: string,
+  reviewRaw: string,
+) {
+  if (typeof reviewRaw !== "string" || utf8(reviewRaw).length > 120_000)
+    throw invalid();
+  const candidate = await parseTextbookCandidate(requestRaw, draftRaw),
+    review = reviewSchema.parse(parseSharedJSON(reviewRaw));
+  if (
+    review.requestDigest !== candidate.requestDigest ||
+    review.draftDigest !== candidate.draftDigest ||
+    !unique(review.sections.map((s) => s.sectionID)) ||
+    review.sections
+      .map((s) => s.sectionID)
+      .sort()
+      .join("\0") !==
+      candidate.draft.lessons
+        .map((s) => s.content.id)
+        .sort()
+        .join("\0") ||
+    review.sections.some((s) => !unique(s.checks.map((c) => c.criterion)))
+  )
+    throw invalid();
+  return {
+    ...candidate,
+    review,
+    allChecksPassed: review.sections.every((s) =>
+      s.checks.every((c) => c.passed),
+    ),
+  };
+}
+
 /** Validate immutable content, source links and sender-reported checks without asserting semantic truth. */
 export async function parseSharedTextbook(raw: string) {
   try {
@@ -243,104 +361,20 @@ export async function parseSharedTextbook(raw: string) {
     const requestBytes = decode(record.request, 48_000),
       draftBytes = decode(record.draft, 96_000),
       reviewBytes = decode(record.review, 120_000);
-    const request = requestSchema.parse(jsonBytes(requestBytes)),
-      draft = draftSchema.parse(jsonBytes(draftBytes)),
-      review = reviewSchema.parse(jsonBytes(reviewBytes));
+    const { request, draft, review, allChecksPassed } =
+      await parseReviewedTextbookCandidate(
+        new TextDecoder("utf-8", { fatal: true }).decode(requestBytes),
+        new TextDecoder("utf-8", { fatal: true }).decode(draftBytes),
+        new TextDecoder("utf-8", { fatal: true }).decode(reviewBytes),
+      );
     if (
       envelope.schemaVersion !== record.schemaVersion ||
       record.schemaVersion !== request.schemaVersion ||
-      !unique(request.sources.map((s) => s.id.toLowerCase()))
+      !allChecksPassed ||
+      record.generator.id.toLowerCase() === record.reviewer.id.toLowerCase()
     )
       throw invalid();
-    if (
-      request.schemaVersion === 1 &&
-      (!unique(request.sources.map((s) => s.articleID)) ||
-        request.sources.some(
-          (s) =>
-            s.translation &&
-            (s.translation.articleID !== s.articleID ||
-              s.translation.sourceFingerprint !== s.sourceFingerprint),
-        ))
-    )
-      throw invalid();
-    if (request.schemaVersion === 2) {
-      // テーマ教材は根拠の抜粋自体をsnapshotとし、変更を見逃さない。
-      const fingerprints = await Promise.all(
-        request.sources.map((s) => sharedTextbookDigest(utf8(s.excerpt))),
-      );
-      if (
-        request.sources.some((s, i) => s.sourceFingerprint !== fingerprints[i])
-      )
-        throw invalid();
-    }
-    const earlier = new Set<string>(),
-      questions = new Set<string>();
-    for (const lesson of draft.lessons) {
-      const { content } = lesson,
-        q = content.question;
-      if (
-        earlier.has(content.id) ||
-        questions.has(q.id) ||
-        !unique(lesson.prerequisiteSectionIDs) ||
-        lesson.prerequisiteSectionIDs.some((id) => !earlier.has(id))
-      )
-        throw invalid();
-      earlier.add(content.id);
-      questions.add(q.id);
-      if (
-        !unique(q.options.map((o) => o.id)) ||
-        !q.options.some((o) => o.id === q.correctOptionID) ||
-        !unique(
-          q.options.map((o) =>
-            o.text.replace(/\p{White_Space}+/gu, " ").trim(),
-          ),
-        ) ||
-        Object.keys(lesson.optionEvidence).sort().join("\0") !==
-          q.options
-            .map((o) => o.id)
-            .sort()
-            .join("\0")
-      )
-        throw invalid();
-      for (const refs of [
-        lesson.explanationEvidence,
-        lesson.exampleEvidence,
-        lesson.questionEvidence,
-        ...Object.values(lesson.optionEvidence),
-      ]) {
-        for (const ref of refs) {
-          const source = request.sources.find(
-            (s) => s.id.toLowerCase() === ref.sourceID.toLowerCase(),
-          );
-          if (!source || !source.excerpt.includes(ref.quote)) throw invalid();
-        }
-      }
-    }
-    const [requestHash, draftHash, recordHash] = await Promise.all([
-      sharedTextbookDigest(requestBytes),
-      sharedTextbookDigest(draftBytes),
-      sharedTextbookDigest(recordBytes),
-    ]);
-    if (
-      review.requestDigest !== requestHash ||
-      review.draftDigest !== draftHash ||
-      record.generator.id.toLowerCase() === record.reviewer.id.toLowerCase() ||
-      !unique(review.sections.map((s) => s.sectionID)) ||
-      review.sections
-        .map((s) => s.sectionID)
-        .sort()
-        .join("\0") !==
-        draft.lessons
-          .map((s) => s.content.id)
-          .sort()
-          .join("\0") ||
-      review.sections.some(
-        (s) =>
-          !unique(s.checks.map((c) => c.criterion)) ||
-          s.checks.some((c) => !c.passed),
-      )
-    )
-      throw invalid();
+    const recordHash = await sharedTextbookDigest(recordBytes);
     return {
       raw,
       record,
@@ -354,3 +388,9 @@ export async function parseSharedTextbook(raw: string) {
     throw invalid();
   }
 }
+
+// 生成用のwire形式も同じ構造定義を使い、ファイルの検査条件との乖離を防ぐ。
+export {
+  lessonSchema as textbookLessonSchema,
+  reviewSchema as textbookReviewSchema,
+};

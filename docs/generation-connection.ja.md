@@ -20,6 +20,14 @@ AI 生成は未接続です。通常UIに生成成功のfixtureや自動生成�
 この開発用の設定で、サービス利用者の実キー入力を有効にしたり、未接続の利用者別暗号化保存を省略したりしません。
 以下の過去の接続案と通信停止中の実装は、従来の固定CAA教材を対象にした範囲を保持するもので、新しい導線の実装完了ではありません。
 
+### 準備したテーマ教材の生成・レビュー境界
+
+ローカルのブラウザー生成ブランチで、version 2のテーマ要求向けに`server/topic-textbook-format.mjs`と`server/openai-topic-textbook-transport.mjs`を準備しています。出典・引用・前提節・問題の検査はファイルのparserと共通化します。wire上の候補は選択肢の根拠を配列にし、選択肢IDの重複を拒否して一度だけ正規化し、候補のdigestを計算します。レビューは保持した要求と正規化した候補の正確なbyte列に対応させ、否定されたレビューは否定のまま保持し、合格教材として取り込めません。構造の検査は事実の正しさを証明しません。
+
+transportにはモデル・資格情報・HTTP送信処理を明示的に渡す必要があります。生成とレビューの各段階でprompt全体と出力schemaを固定したOpenAIの入力token数APIへ渡して数え、その後に厳密なJSON出力・`store: false`・toolなし・streamingなしで最大1回のResponses要求を行います。自動再送やredirectはしません。モデル・tier・使用量が一致しない応答は未確認のままにし、不正・拒否・途中終了の出力でも確認済みの使用量を保持します。資源上限は入力32,000 token・出力16,000 token・応答192,000 byteで、既存のCAA用transportの小さい上限は保持します。公式の[入力token数API](https://developers.openai.com/api/reference/resources/responses/subresources/input_tokens/methods/count)と[Structured Outputsガイド](https://developers.openai.com/api/docs/guides/structured-outputs)を参照してください。
+
+固定したNode実行系で合成応答を注入して検査する準備段階であり、通常起動・ブラウザー設定・Workers・共通予算サービスには接続していません。予算予約・認証済みの利用者別資格情報・生成／レビューの操作ID・読書と保存の画面・実内容の評価は接続する必要があります。資源上限を支出許可や月額予算の保証にはしません。この検査でモデル・送信範囲・資格情報の保存先・実リクエストが承認されたとは扱いません。
+
 ## 過去の接続案と、先に必要な本人承認
 
 本人は最初のproviderにOpenAIとAnthropicを選びました。用途ごとのmodel採用・実送信は未承認です。

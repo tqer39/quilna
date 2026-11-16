@@ -20,6 +20,14 @@ The secure key-setup flow requires a separately confirmed local secret destinati
 This development setup does not enable service users' real-key input or bypass the pending per-user encrypted-storage integration.
 The earlier proposal and communication-off implementation below retain their original fixed-CAA scope; they are not a completed implementation of the new workflow.
 
+### Prepared topic generation and review boundary
+
+The local browser-generation branch now prepares `server/topic-textbook-format.mjs` and `server/openai-topic-textbook-transport.mjs` for version-2 topic requests. They share the file parser's source, citation, prerequisite and question validation. The wire draft uses an array for option evidence, rejects duplicate option IDs and normalizes it once before computing candidate digests. A review is bound to the exact retained request and normalized draft bytes; a negative review remains negative and cannot be imported as an accepted textbook. These structural checks do not prove factual quality.
+
+The transport requires an explicitly supplied model, credential and HTTP sender. Each generation/review stage counts the complete prompt and output schema through the fixed OpenAI input-token endpoint, then makes at most one Responses request with strict JSON output, `store: false`, no tools, no streaming and no automatic retry or redirect. Model/tier/usage mismatches remain unconfirmed; invalid, refused or incomplete output preserves confirmed usage. Resource caps are 32,000 input tokens, 16,000 output tokens and 192,000 response bytes. The existing CAA transport keeps its smaller caps. See the official [input-token endpoint](https://developers.openai.com/api/reference/resources/responses/subresources/input_tokens/methods/count) and [Structured Outputs guide](https://developers.openai.com/api/docs/guides/structured-outputs).
+
+This is a prepared, injected boundary tested with synthetic responses on the pinned Node runtime. It is not installed in normal startup, browser settings, Workers or the shared budget service. Budget reservation, authenticated per-user credentials, generation/review operation identity, reading/save UI and live content evaluation remain to be connected. The resource caps are not a spending allowance or a monthly-budget guarantee. No model, sending scope, credential destination or live request is approved by these tests.
+
 ## Earlier connection proposal and required prior owner approval
 
 The owner selected OpenAI and Anthropic as the initial providers. Model choices for each purpose and live requests are not yet approved.
