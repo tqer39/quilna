@@ -7,6 +7,7 @@ import {
   quoteConnectionDatabase,
 } from "./quote-connections";
 import { openLearning, learningDatabase } from "./article-learning";
+import { openTextbookLinks, textbookLinkDatabase } from "./article-textbooks";
 import { openDocuments, documentDatabase } from "./source-document-store";
 import {
   verifyDocumentIdentity,
@@ -80,6 +81,7 @@ async function targets(): Promise<Targets> {
         store: "connections",
       },
       learning: { db: await openLearning(), store: "records" },
+      textbookLinks: { db: await openTextbookLinks(), store: "links" },
     };
   } catch (error) {
     documents?.close();
@@ -100,7 +102,7 @@ export async function exportLibrary(
       throw Error("このブラウザは圧縮ファイルの書き出しに対応していません。");
     const header: BackupHeader = {
       format: "quilna-reader-library",
-      version: 2,
+      version: 3,
       createdAt: new Date().toISOString(),
     };
     const counter = new BackupCounter(),
@@ -124,6 +126,7 @@ export async function exportLibrary(
         ["connections"],
         ["quoteConnections"],
         ["learning"],
+        ["textbookLinks"],
         ["documents", "documentVersions"],
       ] as BackupKind[][]) {
         abortIfNeeded(signal);
@@ -349,6 +352,8 @@ export async function validateBackup(
         if (value?.type !== "entry")
           throw Error("バックアップに不明な記録があります。");
         const entry = parseBackupEntry(value);
+        if (entry.kind === "textbookLinks" && header.version < 3)
+          throw Error("教材の関連づけを含むバックアップの形式が一致しません。");
         if (entry.kind === "documents" || entry.kind === "documentVersions") {
           if (
             header.version === 1 ||
@@ -663,6 +668,7 @@ export async function restoreBackup(
         connectionDatabase,
         quoteConnectionDatabase,
         learningDatabase,
+        textbookLinkDatabase,
         documentDatabase,
       ]) {
         if (typeof BroadcastChannel !== "undefined") {

@@ -269,6 +269,7 @@ for (const design of ["studio", "editorial", "focus"])
       connections: 1,
       quoteConnections: 1,
       learning: 1,
+      textbookLinks: 0,
     });
     const context = await browser.newContext({
       viewport: { width: 390, height: 844 },
