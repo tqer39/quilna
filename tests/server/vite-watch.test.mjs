@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { once } from "node:events";
-import { writeFileSync, statSync } from "node:fs";
+import fs, { writeFileSync, statSync } from "node:fs";
+import { syncBuiltinESMExports } from "node:module";
 import {
   mkdir,
   mkdtemp,
@@ -704,6 +705,7 @@ for (const awaitWriteFinish of [
               const inode = (await stat(source)).ino;
               const deadline = Date.now() + 5000;
               while (
+                process.platform !== "darwin" &&
                 !registrations.some(
                   ([kind, path, , ino]) =>
                     kind === "register" && path === source && ino === inode,
@@ -863,6 +865,377 @@ test(
       watcher._throttle = throttle;
       clearTimeout(timer);
       await handle?.close();
+      await server.close();
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
+for (const awaitWriteFinish of [
+  false,
+  { stabilityThreshold: 100, pollInterval: 10 },
+])
+  test(
+    `atomic replacement keeps existing-source semantics and recovers after Chokidar stops notifying (awaitWriteFinish=${!!awaitWriteFinish})`,
+    { timeout: 30000 },
+    async (t) => {
+      const parent = join(repository, ".local-state/vite-watch");
+      await mkdir(parent, { recursive: true });
+      const root = await mkdtemp(join(parent, "rebind-gap-")),
+        source = join(root, "main.js");
+      await writeFile(source, 'export const value="before";');
+      let armed = false,
+        forcing = false,
+        intercepted = false,
+        suppressNative = false,
+        parentArgs;
+      let phase = "initial";
+      let observationError;
+      let cleanupError;
+      const unexpectedAdds = [],
+        timers = [];
+      const owned = [];
+      let ownCreated = () => {},
+        ownChanged = () => {};
+      const signal = (install, label) =>
+        new Promise((resolve, reject) => {
+          const timer = setTimeout(() => reject(Error(label)), 5000);
+          timers.push(timer);
+          install((value) => {
+            clearTimeout(timer);
+            resolve(value);
+          });
+        });
+      const closed = (record) =>
+        signal(
+          (resolve) => record.closed.then(resolve),
+          "owned watch did not close",
+        );
+      const created = () =>
+        process.platform === "darwin"
+          ? signal((resolve) => {
+              ownCreated = resolve;
+            }, "replacement watch was not created")
+          : Promise.resolve();
+      const ownEvent = () =>
+        process.platform === "darwin"
+          ? signal((resolve) => {
+              ownChanged = resolve;
+            }, "replacement watch did not receive an OS event")
+          : Promise.resolve();
+      const originalWatch = fs.watch;
+      fs.watch = (file, ...args) => {
+        if (
+          file !== source ||
+          args.length !== 1 ||
+          typeof args[0] !== "function"
+        )
+          return originalWatch(file, ...args);
+        const callback = args[0];
+        let record;
+        const handle = originalWatch(file, (...event) => {
+          record.events++;
+          callback(...event);
+          ownChanged(record);
+        });
+        record = {
+          handle,
+          events: 0,
+          closed: new Promise((resolve) => handle.once("close", resolve)),
+        };
+        owned.push(record);
+        ownCreated(record);
+        return handle;
+      };
+      syncBuiltinESMExports();
+      t.after(() => {
+        fs.watch = originalWatch;
+        syncBuiltinESMExports();
+      });
+      const server = await createServer({
+        root,
+        configFile: join(repository, "vite.config.mjs"),
+        server: {
+          host: "127.0.0.1",
+          port: 0,
+          strictPort: false,
+          watch: { awaitWriteFinish },
+        },
+        plugins: [
+          {
+            name: "interleave-directory-scan-with-file-rebind",
+            enforce: "pre",
+            configureServer(server) {
+              const watcher = server.watcher,
+                handler = watcher._nodeFsHandler;
+              assert.ok(handler, "the Node filesystem backend must be active");
+              const read = handler._handleRead.bind(handler),
+                add = handler._addToNodeFs.bind(handler),
+                throttle = watcher._throttle.bind(watcher),
+                watch = handler._watchWithNodeFs.bind(handler),
+                raw = watcher._emitRaw.bind(watcher);
+              handler._handleRead = (...args) => {
+                if (args[0] === root && args[1]) parentArgs = args;
+                return read(...args);
+              };
+              watcher._throttle = (action, path, ...args) =>
+                forcing && action === "readdir" && path === root
+                  ? { clear: () => false }
+                  : throttle(action, path, ...args);
+              handler._addToNodeFs = (path, initial, ...args) => {
+                if (armed && !intercepted && path === source && initial) {
+                  intercepted = true;
+                  forcing = true;
+                  return new Promise((resolve) => {
+                    let timer;
+                    const finish = () => {
+                      clearTimeout(timer);
+                      forcing = false;
+                      watcher.off("add", listener);
+                      Promise.resolve(add(path, initial, ...args)).then(
+                        resolve,
+                      );
+                    };
+                    const listener = (path) => {
+                      if (path === source) finish();
+                    };
+                    watcher.on("add", listener);
+                    timer = setTimeout(finish, 2000);
+                    timers.push(timer);
+                    assert.ok(
+                      parentArgs,
+                      "the initial directory scan must have been observed",
+                    );
+                    const scan = [...parentArgs];
+                    scan[1] = false;
+                    void read(...scan);
+                  });
+                }
+                return add(path, initial, ...args);
+              };
+              // macOSで置換後の実体から通知が途切れる境界を固定する。
+              handler._watchWithNodeFs = (path, listener) =>
+                watch(path, (...args) => {
+                  if (!suppressNative || ![root, source].includes(path))
+                    return listener(...args);
+                });
+              watcher._emitRaw = (...args) => {
+                if (
+                  !suppressNative ||
+                  ![root, source].includes(args[2]?.watchedPath)
+                )
+                  return raw(...args);
+              };
+              watcher.on("add", (path) => {
+                if (armed && path === source) unexpectedAdds.push(path);
+              });
+            },
+          },
+        ],
+      });
+      const changed = (name = "change") =>
+        new Promise((resolve, reject) => {
+          const timer = setTimeout(
+            () => reject(Error(`source update missing during ${phase}`)),
+            5000,
+          );
+          timers.push(timer);
+          server.watcher.on(name, function listener(path) {
+            if (path !== source) return;
+            clearTimeout(timer);
+            server.watcher.off(name, listener);
+            resolve();
+          });
+        });
+      try {
+        await server.listen();
+        if (!server.watcher._readyEmitted) await once(server.watcher, "ready");
+        const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
+        const module = () => fetch(`${origin}/main.js`).then((r) => r.text());
+        assert.match(await module(), /"before"/);
+        armed = true;
+        phase = "first replacement";
+        const firstOwned = created();
+        const replacement = changed();
+        await writeFile(`${source}.tmp`, 'export const value="replacement";');
+        await rename(`${source}.tmp`, source);
+        await replacement;
+        const first = await firstOwned;
+        assert.match(await module(), /"replacement"/);
+        assert.deepEqual(
+          unexpectedAdds,
+          [],
+          "an existing replaced source must not be announced as a new file",
+        );
+        suppressNative = process.platform === "darwin";
+        for (const value of ["next-one", "next-two", "next-three"]) {
+          phase = value;
+          const observed = ownEvent(),
+            next = changed();
+          await writeFile(source, `export const value="${value}";`);
+          await observed;
+          await next;
+          assert.ok((await module()).includes(`"${value}"`));
+        }
+        phase = "second replacement";
+        const secondOwned = created(),
+          secondChange = changed();
+        await writeFile(
+          `${source}.tmp`,
+          'export const value="second-replacement";',
+        );
+        await rename(`${source}.tmp`, source);
+        await secondChange;
+        const second = await secondOwned;
+        if (first) await closed(first);
+        assert.match(await module(), /"second-replacement"/);
+        suppressNative = false;
+        phase = "unlink";
+        const removed = changed("unlink");
+        await rm(source);
+        await removed;
+        if (second) await closed(second);
+        armed = false;
+        const added = changed("add");
+        await writeFile(source, 'export const value="recreated";');
+        await added;
+        assert.match(await module(), /"recreated"/);
+        armed = true;
+        phase = "final replacement";
+        const finalOwned = created(),
+          finalChange = changed();
+        await writeFile(`${source}.tmp`, 'export const value="shutdown";');
+        await rename(`${source}.tmp`, source);
+        await finalChange;
+        await finalOwned;
+        assert.match(await module(), /"shutdown"/);
+        assert.deepEqual(unexpectedAdds, []);
+        if (process.platform === "darwin") {
+          assert.ok(owned.length >= 3);
+          await Promise.all(owned.slice(0, -1).map(closed));
+        }
+      } catch (error) {
+        observationError = error;
+      } finally {
+        suppressNative = false;
+        for (const timer of timers) clearTimeout(timer);
+        let timer;
+        try {
+          await server.close();
+          const closed = await Promise.race([
+            Promise.all(owned.map((record) => record.closed)).then(() => true),
+            new Promise((resolve) => {
+              timer = setTimeout(() => resolve(false), 5000);
+            }),
+          ]);
+          assert.equal(
+            closed,
+            true,
+            "plugin shutdown must close its owned watches",
+          );
+        } catch (error) {
+          cleanupError = error;
+        } finally {
+          clearTimeout(timer);
+          for (const record of owned) record.handle.close();
+          await rm(root, { recursive: true, force: true });
+        }
+      }
+      if (observationError && cleanupError)
+        throw new AggregateError(
+          [observationError, cleanupError],
+          "Source observation and watcher cleanup both failed",
+        );
+      if (observationError) throw observationError;
+      if (cleanupError) throw cleanupError;
+    },
+  );
+
+test(
+  "macOS recovery still invalidates current source when an additional watch cannot be opened",
+  { timeout: 20000, skip: process.platform !== "darwin" },
+  async (t) => {
+    const parent = join(repository, ".local-state/vite-watch");
+    await mkdir(parent, { recursive: true });
+    const root = await mkdtemp(join(parent, "watch-exhaustion-")),
+      source = join(root, "main.js");
+    await writeFile(source, 'export const value="before";');
+    let armed = false,
+      attempts = 0;
+    const originalWatch = fs.watch;
+    fs.watch = (file, ...args) => {
+      if (
+        file === source &&
+        args.length === 1 &&
+        typeof args[0] === "function"
+      ) {
+        attempts++;
+        throw Object.assign(Error("EMFILE: controlled watch exhaustion"), {
+          code: "EMFILE",
+        });
+      }
+      return originalWatch(file, ...args);
+    };
+    syncBuiltinESMExports();
+    t.after(() => {
+      fs.watch = originalWatch;
+      syncBuiltinESMExports();
+    });
+    const server = await createServer({
+      root,
+      configFile: join(repository, "vite.config.mjs"),
+      server: { host: "127.0.0.1", port: 0, strictPort: false },
+      plugins: [
+        {
+          name: "suppress-normal-source-callbacks",
+          enforce: "pre",
+          configureServer(server) {
+            const handler = server.watcher._nodeFsHandler,
+              watch = handler._watchWithNodeFs.bind(handler);
+            handler._watchWithNodeFs = (path, listener) =>
+              watch(path, (...args) => {
+                if (!armed || ![root, source].includes(path))
+                  return listener(...args);
+              });
+          },
+        },
+      ],
+    });
+    const errors = [];
+    server.config.logger.error = (message) => {
+      errors.push(String(message));
+    };
+    let timer;
+    try {
+      await server.listen();
+      if (!server.watcher._readyEmitted) await once(server.watcher, "ready");
+      const origin = `http://127.0.0.1:${server.httpServer.address().port}`,
+        module = () => fetch(`${origin}/main.js`).then((r) => r.text());
+      assert.match(await module(), /"before"/);
+      armed = true;
+      const changed = new Promise((resolve, reject) => {
+        timer = setTimeout(
+          () =>
+            reject(
+              Error("current source was left stale after watch exhaustion"),
+            ),
+          5000,
+        );
+        server.watcher.on("change", function listener(path) {
+          if (path !== source) return;
+          clearTimeout(timer);
+          server.watcher.off("change", listener);
+          resolve();
+        });
+      });
+      await writeFile(`${source}.tmp`, 'export const value="after";');
+      await rename(`${source}.tmp`, source);
+      await changed;
+      assert.match(await module(), /"after"/);
+      assert.ok(attempts > 0);
+      assert.ok(errors.some((error) => error.includes("EMFILE")));
+    } finally {
+      clearTimeout(timer);
       await server.close();
       await rm(root, { recursive: true, force: true });
     }
