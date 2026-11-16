@@ -120,8 +120,10 @@ function hasLinkLayout(db: IDBDatabase): boolean {
       !index.unique &&
       !index.multiEntry
     );
-  } catch {
-    return false;
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "NotFoundError")
+      return false;
+    throw error;
   }
 }
 let connection: Promise<IDBDatabase> | undefined;
@@ -154,15 +156,36 @@ export function openTextbookLinks(): Promise<IDBDatabase> {
         db.close();
         return;
       }
-      if (!hasLinkLayout(db)) {
+      let compatible;
+      try {
+        compatible = hasLinkLayout(db);
+      } catch {
+        db.close();
+        reject(unavailable());
+        return;
+      }
+      if (!compatible) {
         db.close();
         reject(unsupportedFormat());
         return;
       }
-      db.onversionchange = () => {
-        db.close();
+      const close = db.close.bind(db);
+      db.close = () => {
         if (connection === pending) connection = undefined;
+        close();
       };
+      const transaction = db.transaction.bind(db);
+      // バックアップなど直接この接続を使う処理も、次の明示操作で開き直せるようにする。
+      db.transaction = ((...args: Parameters<IDBDatabase["transaction"]>) => {
+        try {
+          return transaction(...args);
+        } catch (error) {
+          if (error instanceof DOMException && error.name === "InvalidStateError")
+            db.close();
+          throw error;
+        }
+      }) as IDBDatabase["transaction"];
+      db.onclose = db.onversionchange = () => db.close();
       resolve(db);
     };
   });
