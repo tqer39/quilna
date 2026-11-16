@@ -153,7 +153,12 @@ export default defineConfig(() => {
             // 別クエリのloadで、既存URLのキャッシュの比較基準を上書きしない。
             if (info?.isFile() && !sourceStats.has(resolve(file))) {
               sourceStats.set(resolve(file), fingerprint(info));
-              sourceInodes.set(resolve(file), info.ino);
+              // 索引からnative監視のinodeは確定できないため、初回loadで独立して監視する。
+              if (
+                process.platform === "darwin" &&
+                typeof server.watcher._emit === "function"
+              )
+                void recheckSource(server, resolve(file));
             }
           },
         },
