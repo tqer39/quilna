@@ -8,13 +8,16 @@ import {
   sep,
 } from "node:path";
 import { stat } from "node:fs/promises";
+import { watch } from "node:fs";
 import { setTimeout as delay } from "node:timers/promises";
 import { feedMiddleware } from "./server/feed-fetch.mjs";
 
 export default defineConfig(() => {
   let registeringServer;
+  let disposed = false;
   const sourceStats = new Map(),
     sourceInodes = new Map(),
+    sourceWatchers = new Map(),
     checking = new Map();
   // 属性だけの通知を除き、内容の更新・置換に関係する属性を比較する。
   const fingerprint = (info) =>
@@ -28,24 +31,48 @@ export default defineConfig(() => {
     const state = { again: true };
     checking.set(file, state);
     try {
-      while (state.again && !server.watcher.closed) {
+      while (state.again && !server.watcher.closed && !disposed) {
         state.again = false;
         // 通常通知を先行させ、同梱Chokidarの50msのchange抑制後に確認する。
         await delay(60);
-        if (server.watcher.closed) return;
+        if (server.watcher.closed || disposed || !sourceStats.has(file)) return;
         const info = await stat(file).catch(() => null);
+        if (!sourceStats.has(file)) return;
         // 消失中のファイルは既存のatomic/unlink処理に任せる。
         if (!info?.isFile() || server.watcher.closed) continue;
-        // macOSのfs.watchは置換前のinodeに残り得るため、新しい実体を監視し直す。
+        // Chokidarの索引を外さず、新しい実体の通知だけを補う。
+        // unwatch/addで索引を空にすると、並行するディレクトリ走査が誤ったaddを出す。
         if (
           process.platform === "darwin" &&
           sourceInodes.get(file) !== info.ino &&
           !server.watcher._pendingUnlinks?.has(file)
         ) {
-          sourceInodes.set(file, info.ino);
-          server.watcher.unwatch(file);
-          server.watcher.add(file);
-          state.again = true;
+          try {
+            const recovery = watch(
+              file,
+              () => void recheckSource(server, file),
+            );
+            const previous = sourceWatchers.get(file);
+            sourceWatchers.set(file, recovery);
+            sourceInodes.set(file, info.ino);
+            previous?.close();
+            recovery.on("error", (error) => {
+              if (sourceWatchers.get(file) !== recovery) return;
+              recovery.close();
+              sourceWatchers.delete(file);
+              sourceInodes.delete(file);
+              server.config.logger.error(
+                `Source watcher recovery failed: ${error.message}`,
+              );
+            });
+            state.again = true;
+          } catch (error) {
+            // 監視資源が不足しても、今届いた変更の配信更新は失わない。
+            if (!["ENOENT", "ENOTDIR"].includes(error?.code))
+              server.config.logger.error(
+                `Source watcher recovery failed: ${error instanceof Error ? error.message : "unknown error"}`,
+              );
+          }
         }
         const next = fingerprint(info);
         if (sourceStats.get(file) !== next) {
@@ -58,18 +85,26 @@ export default defineConfig(() => {
         `Source watcher recovery failed: ${error instanceof Error ? error.message : "unknown error"}`,
       );
     } finally {
-      checking.delete(file);
+      if (checking.get(file) === state) checking.delete(file);
     }
   };
   return {
     plugins: [
       {
         name: "local-artifact-watch",
+        closeBundle() {
+          disposed = true;
+          for (const recovery of sourceWatchers.values()) recovery.close();
+          sourceWatchers.clear();
+          sourceStats.clear();
+          sourceInodes.clear();
+          checking.clear();
+        },
         load: {
           order: "pre",
           async handler(id) {
             const server = registeringServer;
-            if (!server || id.includes("\0")) return;
+            if (!server || disposed || id.includes("\0")) return;
             const file = id.split("?")[0];
             const child = relative(server.config.root, file);
             if (
@@ -124,6 +159,7 @@ export default defineConfig(() => {
         },
         configureServer(server) {
           if (server.config.server.watch === null) return;
+          disposed = false;
           registeringServer = server;
           if (typeof server.watcher._emit !== "function") {
             server.config.logger.warn(
@@ -131,6 +167,8 @@ export default defineConfig(() => {
             );
           }
           server.watcher.on("unlink", (file) => {
+            sourceWatchers.get(resolve(file))?.close();
+            sourceWatchers.delete(resolve(file));
             sourceStats.delete(resolve(file));
             sourceInodes.delete(resolve(file));
           });
