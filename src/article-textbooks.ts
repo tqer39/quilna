@@ -180,7 +180,10 @@ export function openTextbookLinks(): Promise<IDBDatabase> {
         try {
           return transaction(...args);
         } catch (error) {
-          if (error instanceof DOMException && error.name === "InvalidStateError")
+          if (
+            error instanceof DOMException &&
+            error.name === "InvalidStateError"
+          )
             db.close();
           throw error;
         }
