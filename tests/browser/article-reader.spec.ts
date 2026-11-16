@@ -17,6 +17,18 @@ async function source(page: Page, fail = false) {
     ),
   );
 }
+/** アイコン要求を除き、本文の取得が実際に何回送信されたかを数える。 */
+function bodyRequestCount(page: Page) {
+  let count = 0;
+  page.on("request", (request) => {
+    if (
+      new URL(request.url()).pathname === "/api/feeds/fetch" &&
+      request.method() === "POST" &&
+      !request.postDataJSON()?.icon
+    ) count++;
+  });
+  return () => count;
+}
 async function add(page: Page, pending = false) {
   await page.goto("/?view=feeds");
   await page.getByLabel("サイト・RSSのURL").fill(url);
@@ -81,6 +93,11 @@ test("direct article imports safe text and saved original survives reload and a 
 test("failed extraction preserves a saved link and retry recovers without duplicates", async ({
   page,
 }) => {
+  // 自動取得が先に本文を保存すると再試行ボタンが消えるため、手動の経路を分離する。
+  await page.addInitScript(() => {
+    localStorage.setItem("quilna.article.updates.v1", "false");
+  });
+  const attempts = bodyRequestCount(page);
   await source(page, true);
   await add(page);
   await expect(page.locator(".rss-content-note")).toContainText(
@@ -96,17 +113,49 @@ test("failed extraction preserves a saved link and retry recovers without duplic
   await expect(
     page.getByRole("button", { name: "本文の取得を再試行" }),
   ).toBeVisible();
+  expect(attempts()).toBe(1);
   await source(page);
   await page.getByRole("button", { name: "本文の取得を再試行" }).click();
   await expect(page.locator(".rss-article-body")).toContainText(
     "Final paragraph.",
   );
+  expect(attempts()).toBe(2);
   await page
     .getByRole("button", { name: "配信元の収集メニューを表示", exact: true })
     .click();
   await expect(
     page.getByRole("button", { name: /保存した記事 · 1/ }),
   ).toBeVisible();
+  expect(attempts()).toBe(2);
+});
+test("手動取得に失敗した保存リンクを自動取得で回復し、再試行ボタンと失敗表示を残さない", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    const key = "quilna.article.updates.v1";
+    if (localStorage.getItem(key) === null) localStorage.setItem(key, "false");
+  });
+  const attempts = bodyRequestCount(page);
+  await source(page, true);
+  await add(page);
+  await expect(page.locator(".rss-content-note")).toContainText("取り込みに失敗");
+  expect(attempts()).toBe(1);
+  await source(page);
+  // 失敗の保存後に取得を許可し、クリックと自動取得の競争に依存せず回復を調べる。
+  await page.evaluate(() => {
+    const key = "quilna.article.updates.v1";
+    localStorage.setItem(key, "true");
+    window.dispatchEvent(new StorageEvent("storage", { key, newValue: "true" }));
+  });
+  await expect(page.locator(".rss-article-body")).toContainText("Final paragraph.");
+  await expect(page.locator(".rss-content-note")).toContainText("元サイトから取り込んだ本文です");
+  await expect(page.getByRole("button", { name: "本文の取得を再試行" })).toHaveCount(0);
+  await expect(page.locator("#rss-save-article")).toHaveAttribute("aria-pressed", "true");
+  expect(attempts()).toBe(2);
+  await page.reload();
+  await expect(page.locator(".rss-article-body")).toContainText("Final paragraph.");
+  await expect(page.locator(".rss-content-note")).not.toContainText("取り込みに失敗");
+  expect(attempts()).toBe(2);
 });
 test("login shell is not misrepresented as imported content", async ({
   page,
@@ -1372,6 +1421,10 @@ test("a losing cross-tab import cannot replace the language of the saved origina
   page,
   context,
 }) => {
+  // 先に解放するべき要求を自動取得と取り違えないよう、両タブの手動経路を分離する。
+  await context.addInitScript(() => {
+    localStorage.setItem("quilna.article.updates.v1", "false");
+  });
   await source(page, true);
   await add(page);
   await expect(page.locator(".rss-content-note")).toContainText(
