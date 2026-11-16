@@ -52,6 +52,7 @@ export class ArticleTextbookView {
   );
   private readonly editor = el("div");
   private readonly source = el("p");
+  private readonly sourceNotice = el("p");
   private readonly select = el("select");
   private readonly scope = el("p");
   private readonly preview = separateLink("教材の範囲と出典を確認（別タブ）");
@@ -98,6 +99,7 @@ export class ArticleTextbookView {
   private context = 0;
   private generation = 0;
   private ready = false;
+  private currentVersion?: string;
   private busy = false;
   private rowButtons: HTMLButtonElement[] = [];
 
@@ -111,10 +113,16 @@ export class ArticleTextbookView {
     this.reason.id = "rss-textbook-reason";
     this.reason.rows = 3;
     this.reason.maxLength = 2000;
+    this.sourceNotice.id = "rss-textbook-source-notice";
+    this.sourceNotice.setAttribute("aria-live", "polite");
+    this.sourceNotice.setAttribute("aria-atomic", "true");
+    this.reason.setAttribute("aria-describedby", this.sourceNotice.id);
+    this.select.setAttribute("aria-describedby", this.sourceNotice.id);
     const reasonLabel = el("label", "この記事と関連する理由（必須）");
     reasonLabel.htmlFor = this.reason.id;
     this.editor.append(
       this.source,
+      this.sourceNotice,
       choiceLabel,
       this.select,
       this.scope,
@@ -177,10 +185,31 @@ export class ArticleTextbookView {
   }
   mount(view: TextbookReading) {
     if (this.view?.articleId !== view.articleId) this.detach();
+    const readingChanged =
+      this.view &&
+      ["original", "text", "view", "language"].some(
+        (key) =>
+          this.view?.[key as keyof TextbookReading] !==
+          view[key as keyof TextbookReading],
+      );
+    const shouldReload = !!readingChanged || !this.ready;
+    if (readingChanged) {
+      this.generation++;
+      this.ready = false;
+      this.currentVersion = undefined;
+      this.list.replaceChildren();
+      this.rowButtons = [];
+      this.summary.textContent = "深掘りできる教材";
+    }
     this.view = view;
     this.draft = this.drafts.get(view.articleId);
     this.renderDraft();
-    if (this.details.open && !this.busy) void this.load();
+    this.controls();
+    // 記事の再描画ではmount時点で未接続なので、再接続後に現在の表示を照合する。
+    queueMicrotask(() => {
+      if (shouldReload && this.view === view && this.details.open && !this.busy)
+        void this.load();
+    });
     return this.root;
   }
   detach() {
@@ -188,6 +217,7 @@ export class ArticleTextbookView {
     this.generation++;
     this.view = undefined;
     this.ready = false;
+    this.currentVersion = undefined;
     this.records = [];
     this.draft = this.shownDraft = undefined;
     this.editor.hidden = true;
@@ -223,6 +253,17 @@ export class ArticleTextbookView {
   private renderDraft() {
     const d = this.draft;
     this.editor.hidden = !d;
+    const mismatch =
+      !!d && !!this.currentVersion && d.source.version !== this.currentVersion;
+    this.sourceNotice.hidden = !mismatch;
+    const notice = mismatch
+      ? "表示中の本文・言語・原文／訳文と、下書きの参照元が異なります。保存しても参照元は移動しません。" +
+        (d.expected === null
+          ? "現在の表示を使う場合は、下書きを取り消して作成し直してください。"
+          : "現在の表示に関連づけ直す場合は、下書きを取り消してから、保存済みの関連づけを外して作成し直してください。")
+      : "";
+    if (this.sourceNotice.textContent !== notice)
+      this.sourceNotice.textContent = notice;
     if (d && this.shownDraft !== d) {
       this.shownDraft = d;
       this.source.textContent = `関連づけを始めたときの記事：${d.source.title}（${d.source.view === "translation" ? "訳文" : "原文"}）\n${d.source.excerpt}`;
@@ -310,6 +351,8 @@ export class ArticleTextbookView {
         this.status.textContent = this.message(error);
     } finally {
       this.busy = false;
+      // 候補待ち中の再描画で無効になった照合を、処理完了時にも回復する。
+      if (!this.ready) await this.load();
       this.controls();
       if (
         context === this.context &&
@@ -354,6 +397,7 @@ export class ArticleTextbookView {
         this.status.textContent = this.message(error);
     } finally {
       this.busy = false;
+      if (!this.ready) await this.load();
       this.controls();
     }
   }
@@ -374,6 +418,7 @@ export class ArticleTextbookView {
         this.status.textContent = this.message(error);
     } finally {
       this.busy = false;
+      if (!this.ready) await this.load();
       this.controls();
     }
   }
@@ -415,6 +460,7 @@ export class ArticleTextbookView {
         }),
       );
       if (generation !== this.generation || context !== this.context) return;
+      this.currentVersion = version;
       this.records = records;
       this.ready = true;
       this.summary.textContent = `深掘りできる教材 · ${records.length}件${this.draft ? " · 下書きあり" : ""}`;

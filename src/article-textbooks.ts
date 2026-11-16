@@ -102,6 +102,30 @@ const unavailable = () =>
   Error(
     "教材との関連づけを読み書きできません。保存済みの記録は保持しています。再試行してください。",
   );
+const unsupportedFormat = () =>
+  Error(
+    "教材との関連づけの保存形式を確認できません。記録は変更していません。対応するアプリの版を確認してください。",
+  );
+/** 不明な既存DBのkeyPathで、別の記事の関連づけを上書きしない。 */
+function hasLinkLayout(db: IDBDatabase): boolean {
+  try {
+    if (db.objectStoreNames.length !== 1) return false;
+    const store = db.transaction("links").objectStore("links");
+    const index = store.index("articleId");
+    return (
+      store.keyPath === "id" &&
+      !store.autoIncrement &&
+      store.indexNames.length === 1 &&
+      index.keyPath === "source.articleId" &&
+      !index.unique &&
+      !index.multiEntry
+    );
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "NotFoundError")
+      return false;
+    throw error;
+  }
+}
 let connection: Promise<IDBDatabase> | undefined;
 /** 記事DBと分離して開き、記事検索や教材ファイルに個人の関連情報を混ぜない。 */
 export function openTextbookLinks(): Promise<IDBDatabase> {
@@ -114,7 +138,15 @@ export function openTextbookLinks(): Promise<IDBDatabase> {
         .createObjectStore("links", { keyPath: "id" })
         .createIndex("articleId", "source.articleId");
     };
-    request.onerror = request.onblocked = () => {
+    request.onerror = () => {
+      failed = true;
+      reject(
+        request.error?.name === "VersionError"
+          ? unsupportedFormat()
+          : unavailable(),
+      );
+    };
+    request.onblocked = () => {
       failed = true;
       reject(unavailable());
     };
@@ -124,10 +156,39 @@ export function openTextbookLinks(): Promise<IDBDatabase> {
         db.close();
         return;
       }
-      db.onversionchange = () => {
+      let compatible;
+      try {
+        compatible = hasLinkLayout(db);
+      } catch {
         db.close();
+        reject(unavailable());
+        return;
+      }
+      if (!compatible) {
+        db.close();
+        reject(unsupportedFormat());
+        return;
+      }
+      const close = db.close.bind(db);
+      db.close = () => {
         if (connection === pending) connection = undefined;
+        close();
       };
+      const transaction = db.transaction.bind(db);
+      // バックアップなど直接この接続を使う処理も、次の明示操作で開き直せるようにする。
+      db.transaction = ((...args: Parameters<IDBDatabase["transaction"]>) => {
+        try {
+          return transaction(...args);
+        } catch (error) {
+          if (
+            error instanceof DOMException &&
+            error.name === "InvalidStateError"
+          )
+            db.close();
+          throw error;
+        }
+      }) as IDBDatabase["transaction"];
+      db.onclose = db.onversionchange = () => db.close();
       resolve(db);
     };
   });

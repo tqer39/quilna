@@ -1,6 +1,7 @@
 import { test, expect, type Page, type BrowserContext } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import crossref from "../fixtures/crossref-work.json" with { type: "json" };
+import type { FeedArticle } from "../../src/feed-parser";
 import { crossrefMetadata, paperSnapshot } from "../../src/paper-format";
 
 const rawBook = new TextDecoder().decode(
@@ -10,10 +11,12 @@ const paper = await paperSnapshot(
   crossrefMetadata(crossref, crossref.message.DOI),
   "2026-11-01T00:00:00.000Z",
 );
-const paperXML = new TextDecoder().decode(await readFile("tests/fixtures/europepmc-work.xml"));
+const paperXML = new TextDecoder().decode(
+  await readFile("tests/fixtures/europepmc-work.xml"),
+);
 const alice = { schema: 1, account: "a".repeat(64), legacy: true };
 const bob = { schema: 1, account: "b".repeat(64), legacy: false };
-/** Keep the account boundary local and synthetic; only the status route is controlled. */
+/** アカウント境界と本文取得の完了時点を、外部通信なしで制御する。 */
 async function fixture(context: BrowserContext) {
   const state = {
     identity: alice,
@@ -22,10 +25,31 @@ async function fixture(context: BrowserContext) {
     statusGate: null as Promise<void> | null,
     statusRequests: 0,
     initialStatusRequests: 0,
+    sourceRequests: 0,
+    bodyGate: null as Promise<void> | null,
+    sourceCompletions: 0,
   };
   await context.route("**/api/**", (route) =>
     route.fulfill({ status: 404, json: {} }),
   );
+  await context.route("**/api/feeds/fetch", async (route) => {
+    let payload;
+    try {
+      payload = JSON.parse(route.request().postData() ?? "null");
+    } catch {
+      return route.fulfill({ status: 400, json: {} });
+    }
+    const source =
+      payload?.url === "https://example.org/article" &&
+      payload.discover === true &&
+      !payload.icon;
+    if (source) {
+      state.sourceRequests++;
+      if (state.bodyGate) await state.bodyGate;
+    }
+    await route.fulfill({ status: 404, json: {} });
+    if (source) state.sourceCompletions++;
+  });
   await context.route("**/api/library/status", async (route) => {
     state.statusRequests++;
     if (!route.request().headers()["x-library-account"])
@@ -97,6 +121,8 @@ async function seed(page: Page, owner: string) {
       const history: typeof import("../../src/history") = await import(
         paths[6]
       );
+      // 分離の保存値検査を本文の自動更新から切り離す。自動取得は下の因果的な検査で有効にする。
+      localStorage.setItem(libraryName("quilna.article.updates.v1"), "false");
       const db = await feeds.openFeedLibrary();
       await new Promise<void>((resolve, reject) => {
         const tx = db.transaction("articles", "readwrite");
@@ -204,13 +230,32 @@ async function seed(page: Page, owner: string) {
         section.question.options[0].id,
       );
       await papers.savePaper(paper);
-      const jatsPath = "/src/paper-jats.ts", excerptPath = "/src/paper-text-format.ts", excerptStorePath = "/src/paper-excerpt-store.ts";
-      const jats: typeof import("../../src/paper-jats") = await import(jatsPath);
-      const format: typeof import("../../src/paper-text-format") = await import(excerptPath);
-      const excerpts: typeof import("../../src/paper-excerpt-store") = await import(excerptStorePath);
-      const source = await jats.parsePaperJATS(paperXML, "PMC1234567", paper, "2026-11-03T00:00:01.000Z");
+      const jatsPath = "/src/paper-jats.ts",
+        excerptPath = "/src/paper-text-format.ts",
+        excerptStorePath = "/src/paper-excerpt-store.ts";
+      const jats: typeof import("../../src/paper-jats") = await import(
+        jatsPath
+      );
+      const format: typeof import("../../src/paper-text-format") = await import(
+        excerptPath
+      );
+      const excerpts: typeof import("../../src/paper-excerpt-store") =
+        await import(excerptStorePath);
+      const source = await jats.parsePaperJATS(
+        paperXML,
+        "PMC1234567",
+        paper,
+        "2026-11-03T00:00:01.000Z",
+      );
       const selected = source.facts.blocks[owner === "alice" ? 0 : 1];
-      await excerpts.savePaperExcerpt(await format.paperExcerpt(source, selected.path, 0, selected.text.length));
+      await excerpts.savePaperExcerpt(
+        await format.paperExcerpt(
+          source,
+          selected.path,
+          0,
+          selected.text.length,
+        ),
+      );
       const record = history.emptyHistory();
       localStorage.setItem(
         libraryName(history.storageKey),
@@ -269,7 +314,8 @@ async function inspect(page: Page) {
       quotePath
     );
     const excerptStorePath = "/src/paper-excerpt-store.ts";
-    const excerpts: typeof import("../../src/paper-excerpt-store") = await import(excerptStorePath);
+    const excerpts: typeof import("../../src/paper-excerpt-store") =
+      await import(excerptStorePath);
     const imported = await books.listSharedTextbooks();
     return {
       database: feeds.feedDatabase,
@@ -567,13 +613,14 @@ test("repeated initialization keeps one document assignment without rebinding", 
   });
   expect(state.initialStatusRequests).toBe(requests);
   expect(await inspect(page)).toEqual(before);
+  expect(state.sourceRequests).toBe(0);
 });
 
 test("failed logout keeps the account library visible and allows explicit retry", async ({
   page,
   context,
 }) => {
-  await fixture(context);
+  const state = await fixture(context);
   await page.goto("/__library-fixture");
   await seed(page, "alice");
   await page.goto("/?view=feeds");
@@ -587,6 +634,7 @@ test("failed logout keeps the account library visible and allows explicit retry"
   );
   await expect(logout).toBeEnabled();
   expect(await inspect(page)).toEqual(before);
+  expect(state.sourceRequests).toBe(0);
   await expect(page.locator("html")).not.toHaveCSS("display", "none");
 });
 
@@ -641,3 +689,129 @@ test("demo lesson interactions write only the selected account history", async (
     ),
   ).toBe(JSON.parse(a!).userId);
 });
+
+for (const actor of ["alice", "bob"] as const) {
+  for (const switchWhilePending of [false, true]) {
+    test(`${actor}: 自動本文取得の失敗${switchWhilePending ? "の応答を保留したまま再読み込みで切り替えても両方の記録を保持する" : "は選択中のアカウントだけに残る"}`, async ({
+      page,
+      context,
+    }) => {
+      await page.clock.install({ time: new Date("2026-11-17T00:00:00Z") });
+      const state = await fixture(context);
+      await page.goto("/__library-fixture");
+      await seed(page, "alice");
+      await page.goto("/?view=feeds");
+      await ready(page);
+      const beforeAlice = await inspect(page);
+      state.identity = bob;
+      await page.reload();
+      await ready(page);
+      await seed(page, "bob");
+      await page.reload();
+      await ready(page);
+      const beforeBob = await inspect(page);
+      const selected = actor === "alice" ? alice : bob,
+        other = actor === "alice" ? bob : alice,
+        beforeSelected = actor === "alice" ? beforeAlice : beforeBob,
+        beforeOther = actor === "alice" ? beforeBob : beforeAlice;
+      state.identity = selected;
+      await page.reload();
+      await ready(page);
+      // 自動取得を有効にする前に時計を止め、gate中に16秒の通信期限が進む競合を避ける。
+      await page.clock.pauseAt(new Date("2026-11-18T00:00:00Z"));
+      const updateKey = await page.evaluate(async () => {
+        const path = "/src/library-context.ts",
+          api = await import(path),
+          key = api.libraryName("quilna.article.updates.v1");
+        localStorage.setItem(key, "true");
+        return key;
+      });
+      let release = () => {};
+      state.bodyGate = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      await page.reload();
+      await ready(page);
+      try {
+        await expect.poll(() => state.sourceRequests).toBe(1);
+        expect(await inspect(page)).toEqual(beforeSelected);
+        const requests = state.initialStatusRequests;
+        await page.evaluate(async () => {
+          const path = "/src/library-context.ts",
+            api = await import(path);
+          await Promise.all([
+            api.initializeLibraryContext(),
+            api.initializeLibraryContext(),
+          ]);
+        });
+        expect(state.initialStatusRequests).toBe(requests);
+        expect(await inspect(page)).toEqual(beforeSelected);
+        if (switchWhilePending) {
+          state.identity = other;
+          await page.reload();
+          await ready(page);
+          expect(await inspect(page)).toEqual(beforeOther);
+        }
+        release();
+        await expect.poll(() => state.sourceCompletions).toBe(1);
+        if (switchWhilePending) {
+          expect(await inspect(page)).toEqual(beforeOther);
+          // 選択中に解決した正確な設定キーでfixtureを戻し、確認中の新規取得を避ける。
+          await page.evaluate(
+            (key) => localStorage.setItem(key, "false"),
+            updateKey,
+          );
+          state.identity = selected;
+          await page.reload();
+          await ready(page);
+          expect(await inspect(page)).toEqual(beforeSelected);
+        } else {
+          await expect
+            .poll(
+              async () =>
+                ((await inspect(page)).articles[0] as FeedArticle).bodyUpdate
+                  ?.failures,
+            )
+            .toBe(1);
+          const after = await inspect(page),
+            updated = after.articles[0] as FeedArticle,
+            { bodyUpdate, ...rest } = updated;
+          expect(rest).toEqual({
+            ...(beforeSelected.articles[0] as FeedArticle),
+            content: undefined,
+            contentError: undefined,
+          });
+          expect(updated.content).toBeUndefined();
+          expect(updated.contentError).toBeUndefined();
+          expect(bodyUpdate).toMatchObject({
+            failures: 1,
+            checkedAt: 0,
+            error: expect.stringContaining("本文を取得できませんでした"),
+          });
+          expect(bodyUpdate?.latest).toBeUndefined();
+          expect(bodyUpdate!.retryAt).toBeGreaterThan(
+            await page.evaluate(() => Date.now()),
+          );
+          expect({ ...after, articles: beforeSelected.articles }).toEqual(
+            beforeSelected,
+          );
+          await page.evaluate(
+            (key) => localStorage.setItem(key, "false"),
+            updateKey,
+          );
+          state.identity = other;
+          await page.reload();
+          await ready(page);
+          expect(await inspect(page)).toEqual(beforeOther);
+          state.identity = selected;
+          await page.reload();
+          await ready(page);
+          expect(await inspect(page)).toEqual(after);
+        }
+        expect(state.sourceRequests).toBe(1);
+      } finally {
+        release();
+      }
+    });
+  }
+}

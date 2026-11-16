@@ -100,6 +100,11 @@ async function begin(page: Page) {
   await panel(page)
     .getByLabel("保存済みのテーマ教材", { exact: true })
     .selectOption(bookId);
+  await expect(
+    panel(page).getByText(
+      /表示中の本文・言語・原文／訳文と、下書きの参照元が異なります/,
+    ),
+  ).toBeHidden();
 }
 async function save(page: Page, reason: string) {
   await panel(page)
@@ -449,7 +454,7 @@ test("未知の保存形式を消さず拒否し、保存済みの関連づけ�
     .getByRole("button", { name: "教材の関連づけを再読み込み", exact: true })
     .click();
   await expect(panel(page).getByRole("status")).toContainText(
-    "読み書きできません",
+    "保存形式を確認できません",
   );
   await expect(
     panel(page).getByRole("button", { name: "教材を関連づける", exact: true }),
@@ -552,7 +557,7 @@ test("別画面による削除と先行作成の後も、理由を保持して�
   });
 });
 
-test("古い版への新記録の混入と不完全な件数表を拒否し、教材がないリンクを正しく示す", async ({
+test("古い版への新記録の混入と版3の不完全な件数表を拒否し、教材がないリンクを正しく示す", async ({
   page,
   context,
 }) => {
@@ -613,4 +618,574 @@ test("古い版への新記録の混入と不完全な件数表を拒否し、�
     "このライブラリで教材の版を確認できません",
   );
   expect(await records(page)).toHaveLength(1);
+});
+
+test("開いた教材欄は原文の言語切り替え直後に版の照合を更新する", async ({
+  page,
+  context,
+}) => {
+  await seed(page, context);
+  await begin(page);
+  await save(page, "表示を切り替えて照合する理由");
+  const mismatch = panel(page).getByText(
+    "登録時と表示中の本文・言語・原文／訳文が異なります。関連理由は登録時の表示内容に結び付いています。",
+    { exact: true },
+  );
+  await expect(mismatch).toHaveCount(0);
+  await page.getByLabel("原文の言語", { exact: true }).selectOption("fr");
+  await expect(panel(page).locator(":scope > details")).toHaveAttribute(
+    "open",
+    "",
+  );
+  await expect(mismatch).toBeVisible();
+  await panel(page)
+    .getByRole("button", { name: "関連する理由を編集", exact: true })
+    .click();
+  await expect(
+    panel(page).getByText(/下書きを取り消してから、保存済みの関連づけを外して/),
+  ).toBeVisible();
+  await expect(
+    panel(page).getByRole("button", {
+      name: "この記事との関連づけを外す",
+      exact: true,
+    }),
+  ).toBeDisabled();
+  await panel(page)
+    .getByRole("button", { name: "関連づけの下書きを取り消す", exact: true })
+    .click();
+  await expect(
+    panel(page).getByText(
+      /表示中の本文・言語・原文／訳文と、下書きの参照元が異なります/,
+    ),
+  ).toBeHidden();
+  await expect(
+    panel(page).getByRole("button", {
+      name: "この記事との関連づけを外す",
+      exact: true,
+    }),
+  ).toBeEnabled();
+  await page.getByLabel("原文の言語", { exact: true }).selectOption("en");
+  await expect(mismatch).toHaveCount(0);
+  await expect(panel(page).getByRole("list")).toContainText(
+    "表示を切り替えて照合する理由",
+  );
+});
+
+for (const layout of [
+  "wrong-key",
+  "wrong-index",
+  "missing-store",
+  "future-version",
+  "extra-store",
+  "extra-index",
+  "auto-increment",
+  "unique-index",
+  "multi-index",
+])
+  test(`不明な既存DB構造(${layout})を拒否し保存内容を変えない`, async ({
+    page,
+    context,
+  }) => {
+    await seed(page, context);
+    await begin(page);
+    await save(page, "不明なDBへ書き込まない理由");
+    const link = (await records(page))[0];
+    await page.goto("/__textbooks");
+    const previewId = await page.evaluate(async () => {
+      const path = "/src/library-backup.ts",
+        backup = await import(path),
+        exported = await backup.exportLibrary();
+      return (
+        await backup.validateBackup(
+          new File([exported.blob], "known.quilna.gz"),
+        )
+      ).id;
+    });
+    // 新しい文書で既知の接続を閉じ、不明なDBを開く処理そのものを検査する。
+    await page.reload();
+    const result = await page.evaluate(
+      async ({ layout, link, previewId }) => {
+        const path = "/src/article-textbooks.ts",
+          links = await import(path),
+          backupPath = "/src/library-backup.ts",
+          backup = await import(backupPath),
+          name = links.textbookLinkDatabase;
+        await new Promise<void>((resolve, reject) => {
+          const r = indexedDB.deleteDatabase(name);
+          r.onsuccess = () => resolve();
+          r.onerror = () => reject(r.error);
+          r.onblocked = () => reject(Error("unexpected blocker"));
+        });
+        const db = await new Promise<IDBDatabase>((resolve, reject) => {
+          const r = indexedDB.open(name, layout === "future-version" ? 2 : 1);
+          r.onupgradeneeded = () => {
+            const store = r.result.createObjectStore(
+              layout === "missing-store" ? "unknown" : "links",
+              {
+                keyPath: layout === "wrong-key" ? "target.id" : "id",
+                autoIncrement: layout === "auto-increment",
+              },
+            );
+            store.createIndex(
+              "articleId",
+              layout === "wrong-index" ? "target.id" : "source.articleId",
+              {
+                unique: layout === "unique-index",
+                multiEntry: layout === "multi-index",
+              },
+            );
+            store.put(link);
+            if (layout === "extra-index")
+              store.createIndex("unexpected", "reason");
+            if (layout === "extra-store")
+              r.result
+                .createObjectStore("unexpected", { keyPath: "id" })
+                .put({ id: "foreign", value: "keep" });
+          };
+          r.onsuccess = () => resolve(r.result);
+          r.onerror = () => reject(r.error);
+        });
+        const snapshot = async () => ({
+          version: db.version,
+          stores: await Promise.all(
+            Array.from(db.objectStoreNames).map((name) => {
+              const store = db.transaction(name).objectStore(name);
+              return new Promise((resolve) => {
+                const r = store.getAll();
+                r.onsuccess = () =>
+                  resolve({
+                    name,
+                    keyPath: store.keyPath,
+                    autoIncrement: store.autoIncrement,
+                    indexes: Array.from(store.indexNames).map((name) => {
+                      const i = store.index(name);
+                      return {
+                        name,
+                        keyPath: i.keyPath,
+                        unique: i.unique,
+                        multiEntry: i.multiEntry,
+                      };
+                    }),
+                    records: r.result,
+                  });
+              });
+            }),
+          ),
+        });
+        const before = await snapshot(),
+          candidate = {
+            ...link,
+            id: links.textbookLinkKey("other-article", link.target.id),
+            source: { ...link.source, articleId: "other-article" },
+          };
+        if (!links.validTextbookLink(candidate))
+          throw Error("fixture link must be valid");
+        const errors = [];
+        for (const operation of [
+          () => links.readTextbookLinks(link.source.articleId),
+          () => links.writeTextbookLink(candidate, null),
+          () => backup.exportLibrary(),
+          () => backup.restoreBackup(previewId),
+        ]) {
+          try {
+            await operation();
+            errors.push(null);
+          } catch (error) {
+            errors.push(
+              error instanceof Error ? error.message : "unexpected error",
+            );
+          }
+        }
+        const after = await snapshot();
+        db.close();
+        return { errors, before, after };
+      },
+      { layout, link, previewId },
+    );
+    const formatError =
+      "教材との関連づけの保存形式を確認できません。記録は変更していません。対応するアプリの版を確認してください。";
+    expect(result.errors).toEqual([
+      formatError,
+      formatError,
+      formatError,
+      `${formatError} 今回0件を追加済みです。既存の記録は上書きしていません。検証済みファイルから再試行できます。`,
+    ]);
+    expect(result.after).toEqual(result.before);
+  });
+
+test("教材の候補を待つ間に表示が変わっても下書きを保存できる", async ({
+  page,
+  context,
+}) => {
+  await context.addInitScript(() => {
+    window.addEventListener(
+      "focus",
+      (event) => {
+        if (event.target === window) event.stopImmediatePropagation();
+      },
+      true,
+    );
+  });
+  await page.route("**/src/shared-textbook-store.ts*", async (route) => {
+    const response = await route.fetch(),
+      body = await response.text();
+    const signature = "async function listSharedTextbooks() {";
+    expect(body).toContain(signature);
+    await route.fulfill({
+      response,
+      body: body.replace(
+        signature,
+        signature +
+          " if(globalThis.__holdTextbookCandidates) globalThis.__candidateWaitEntered = true; await globalThis.__holdTextbookCandidates;",
+      ),
+    });
+  });
+  await seed(page, context);
+  await page.evaluate(() => {
+    let release;
+    const pending = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    Object.assign(window, {
+      __holdTextbookCandidates: pending,
+      __releaseTextbookCandidates: release,
+    });
+  });
+  try {
+    await panel(page)
+      .getByRole("button", { name: "教材を関連づける", exact: true })
+      .click();
+    await page.waitForFunction(
+      () =>
+        (window as unknown as { __candidateWaitEntered?: boolean })
+          .__candidateWaitEntered === true,
+    );
+    await page.getByLabel("原文の言語", { exact: true }).selectOption("fr");
+    await expect(
+      panel(page).getByLabel("保存済みのテーマ教材", { exact: true }),
+    ).toBeHidden();
+  } finally {
+    await page.evaluate(() => {
+      const host = window as unknown as {
+        __releaseTextbookCandidates?: () => void;
+      };
+      host.__releaseTextbookCandidates?.();
+      delete host.__releaseTextbookCandidates;
+    });
+  }
+  await panel(page)
+    .getByLabel("保存済みのテーマ教材", { exact: true })
+    .selectOption(bookId);
+  await expect(
+    panel(page).getByText(
+      /表示中の本文・言語・原文／訳文と、下書きの参照元が異なります/,
+    ),
+  ).toBeVisible();
+  const notice = panel(page).getByText(
+    /表示中の本文・言語・原文／訳文と、下書きの参照元が異なります/,
+  );
+  await expect(
+    panel(page).getByLabel("この記事と関連する理由（必須）", { exact: true }),
+  ).toHaveAccessibleDescription(/下書きの参照元が異なります/);
+  await page.getByLabel("原文の言語", { exact: true }).selectOption("en");
+  await expect(notice).toBeHidden();
+  await page.getByLabel("原文の言語", { exact: true }).selectOption("fr");
+  await expect(notice).toBeVisible();
+  await save(page, "候補待ち中の表示切り替えを保持する理由");
+  await expect(notice).toBeHidden();
+  expect((await records(page))[0].source.language).toBe("en");
+});
+
+for (const action of ["save", "remove"])
+  test(`${action}: 処理待ち中の表示変更と失敗後も記録を保持して再試行できる`, async ({
+    page,
+    context,
+  }) => {
+    await context.addInitScript(() => {
+      window.addEventListener(
+        "focus",
+        (event) => {
+          if (event.target === window) event.stopImmediatePropagation();
+        },
+        true,
+      );
+    });
+    await page.route("**/src/article-textbooks.ts*", async (route) => {
+      const response = await route.fetch(),
+        body = await response.text(),
+        signature = /async function writeTextbookLink\([^)]*\)\s*\{/;
+      expect(body).toMatch(signature);
+      await route.fulfill({
+        response,
+        body: body.replace(
+          signature,
+          (match) =>
+            match +
+            ' if(globalThis.__holdLinkWrite) { globalThis.__linkWriteEntered = true; await globalThis.__holdLinkWrite; throw Error("制御した関連づけの書き込み失敗"); }',
+        ),
+      });
+    });
+    await seed(page, context);
+    await begin(page);
+    await save(page, "処理前の関連理由");
+    const before = await records(page);
+    if (action === "save") {
+      await panel(page)
+        .getByRole("button", { name: "関連する理由を編集", exact: true })
+        .click();
+      await panel(page)
+        .getByLabel("この記事と関連する理由（必須）", { exact: true })
+        .fill("失敗しても残す下書き");
+    }
+    await page.evaluate(() => {
+      let release;
+      const pending = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      Object.assign(window, {
+        __holdLinkWrite: pending,
+        __releaseLinkWrite: release,
+      });
+    });
+    try {
+      await panel(page)
+        .getByRole("button", {
+          name:
+            action === "save"
+              ? "関連する理由を保存"
+              : "この記事との関連づけを外す",
+          exact: true,
+        })
+        .click();
+      await page.waitForFunction(
+        () =>
+          (window as unknown as { __linkWriteEntered?: boolean })
+            .__linkWriteEntered === true,
+      );
+      await page.getByLabel("原文の言語", { exact: true }).selectOption("fr");
+    } finally {
+      await page.evaluate(() => {
+        const host = window as unknown as {
+          __releaseLinkWrite?: () => void;
+          __holdLinkWrite?: Promise<void>;
+        };
+        host.__releaseLinkWrite?.();
+        delete host.__holdLinkWrite;
+        delete host.__releaseLinkWrite;
+      });
+    }
+    await expect(panel(page).getByRole("status")).toContainText(
+      "制御した関連づけの書き込み失敗",
+    );
+    expect(await records(page)).toEqual(before);
+    if (action === "save") {
+      await expect(
+        panel(page).getByLabel("この記事と関連する理由（必須）", {
+          exact: true,
+        }),
+      ).toHaveValue("失敗しても残す下書き");
+      await save(page, "失敗後に再試行した関連理由");
+    } else {
+      await panel(page)
+        .getByRole("button", {
+          name: "この記事との関連づけを外す",
+          exact: true,
+        })
+        .click();
+      await expect.poll(() => records(page)).toEqual([]);
+    }
+  });
+
+test("一時的な接続失敗を保存形式の非互換と混同せず、接続を開き直せる", async ({
+  page,
+  context,
+}) => {
+  await seed(page, context);
+  await begin(page);
+  await save(page, "接続を開き直して保持する理由");
+  const before = await records(page);
+  await page.goto("/__textbooks");
+  const result = await page.evaluate(async () => {
+    const path = "/src/article-textbooks.ts",
+      links = await import(path),
+      transaction = IDBDatabase.prototype.transaction;
+    let message = "";
+    IDBDatabase.prototype.transaction = function (
+      this: IDBDatabase,
+      ...args: Parameters<IDBDatabase["transaction"]>
+    ) {
+      if (this.name === links.textbookLinkDatabase && args[0] === "links")
+        throw new DOMException(
+          "controlled closed connection",
+          "InvalidStateError",
+        );
+      return transaction.apply(this, args);
+    };
+    try {
+      await links.readTextbookLinks("a");
+    } catch (error) {
+      message = error instanceof Error ? error.message : "unexpected error";
+    } finally {
+      IDBDatabase.prototype.transaction = transaction;
+    }
+    return { message, after: await links.readTextbookLinks("a") };
+  });
+  expect(result.message).toBe(
+    "教材との関連づけを読み書きできません。保存済みの記録は保持しています。再試行してください。",
+  );
+  expect(result.after).toEqual(before);
+});
+
+for (const closedBy of [
+  "normal",
+  "forced-event",
+  "missed-read",
+  "missed-write",
+])
+  test(`閉じた関連づけDB(${closedBy})から再開して記録を保持する`, async ({
+    page,
+    context,
+  }) => {
+    await seed(page, context);
+    await begin(page);
+    await save(page, "閉じた接続から回復して保持する理由");
+    const before = await records(page);
+    const result = await page.evaluate(async (closedBy) => {
+      const path = "/src/article-textbooks.ts",
+        links = await import(path),
+        db = await links.openTextbookLinks(),
+        rows = await links.readTextbookLinks("a");
+      if (closedBy === "normal") db.close();
+      else IDBDatabase.prototype.close.call(db);
+      if (closedBy === "forced-event") db.dispatchEvent(new Event("close"));
+      let firstMessage = "",
+        retryMessage = "",
+        after;
+      try {
+        if (closedBy === "missed-write")
+          await links.writeTextbookLink(
+            { ...rows[0], reason: "保存されてはいけない編集", revision: 2 },
+            1,
+          );
+        else await links.readTextbookLinks("a");
+      } catch (error) {
+        firstMessage =
+          error instanceof Error ? error.message : "unexpected error";
+      }
+      try {
+        after = await links.readTextbookLinks("a");
+      } catch (error) {
+        retryMessage =
+          error instanceof Error ? error.message : "unexpected error";
+      }
+      const raw = await new Promise<IDBDatabase>((resolve, reject) => {
+        const r = indexedDB.open(links.textbookLinkDatabase);
+        r.onsuccess = () => resolve(r.result);
+        r.onerror = () => reject(r.error);
+      });
+      const disk = await new Promise((resolve) => {
+        const r = raw.transaction("links").objectStore("links").getAll();
+        r.onsuccess = () => resolve(r.result);
+      });
+      raw.close();
+      const fresh = await links.openTextbookLinks();
+      db.dispatchEvent(new Event("close"));
+      const keepsNewConnection = (await links.openTextbookLinks()) === fresh;
+      return { firstMessage, retryMessage, after, disk, keepsNewConnection };
+    }, closedBy);
+    expect(result.disk).toEqual(before);
+    expect(result.firstMessage).toBe(
+      closedBy.startsWith("missed-")
+        ? "教材との関連づけを読み書きできません。保存済みの記録は保持しています。再試行してください。"
+        : "",
+    );
+    expect(result.retryMessage).toBe("");
+    expect(result.after).toEqual(before);
+    expect(result.keepsNewConnection).toBe(true);
+  });
+
+for (const operation of ["export", "restore"])
+  test(`close通知を受け取らなくても${operation}の明示的な再試行で回復する`, async ({
+    page,
+    context,
+  }) => {
+    await seed(page, context);
+    await begin(page);
+    await save(page, "バックアップの再試行でも保持する理由");
+    const before = await records(page);
+    await page.goto("/__textbooks");
+    const result = await page.evaluate(async (operation) => {
+      const path = "/src/article-textbooks.ts",
+        links = await import(path),
+        backupPath = "/src/library-backup.ts",
+        backup = await import(backupPath),
+        exported = await backup.exportLibrary(),
+        preview = await backup.validateBackup(
+          new File([exported.blob], "known.quilna.gz"),
+        ),
+        db = await links.openTextbookLinks();
+      IDBDatabase.prototype.close.call(db);
+      const run = () =>
+        operation === "export"
+          ? backup.exportLibrary()
+          : backup.restoreBackup(preview.id);
+      let first = "",
+        retry = "";
+      try {
+        await run();
+      } catch (error) {
+        first = String(error);
+      }
+      try {
+        await run();
+      } catch (error) {
+        retry = String(error);
+      }
+      // 通常の読み込みによるキャッシュ修復より先に、独立した接続で保存内容を確認する。
+      const raw = await new Promise<IDBDatabase>((resolve, reject) => {
+        const r = indexedDB.open(links.textbookLinkDatabase);
+        r.onsuccess = () => resolve(r.result);
+        r.onerror = () => reject(r.error);
+      });
+      const disk = await new Promise((resolve) => {
+        const r = raw.transaction("links").objectStore("links").getAll();
+        r.onsuccess = () => resolve(r.result);
+      });
+      raw.close();
+      return { first, retry, disk };
+    }, operation);
+    expect(result.disk).toEqual(before);
+    expect(result.first).not.toBe("");
+    expect(result.retry).toBe("");
+  });
+
+test("閉じた接続から画面で再読み込みし、理由の保存を明示的にやり直せる", async ({
+  page,
+  context,
+}) => {
+  await seed(page, context);
+  await begin(page);
+  await save(page, "再接続前の理由");
+  const before = await records(page);
+  await page.evaluate(async () => {
+    const path = "/src/article-textbooks.ts",
+      links = await import(path);
+    IDBDatabase.prototype.close.call(await links.openTextbookLinks());
+  });
+  const reload = panel(page).getByRole("button", {
+    name: "教材の関連づけを再読み込み",
+    exact: true,
+  });
+  await reload.click();
+  await expect(panel(page).getByRole("status")).toContainText(
+    "教材との関連づけを読み書きできません",
+  );
+  await reload.click();
+  await panel(page)
+    .getByRole("button", { name: "関連する理由を編集", exact: true })
+    .click();
+  await save(page, "再接続後に明示的に保存した理由");
+  expect(await records(page)).toEqual([
+    { ...before[0], reason: "再接続後に明示的に保存した理由", revision: 2 },
+  ]);
 });
