@@ -218,10 +218,26 @@ export class ArticleHighlightView {
             }))
             .filter((s) => s.end > s.start)
         : [];
+    const previewSource =
+      focused instanceof HTMLElement &&
+      focused.matches(".rss-link-tools") &&
+      this.body.contains(focused)
+        ? focused.previousElementSibling
+        : null;
     const anchor =
       focused instanceof HTMLAnchorElement && this.body.contains(focused)
-        ? { start: focused.dataset.linkStart, href: focused.href }
-        : undefined;
+        ? {
+            start: focused.dataset.linkStart,
+            href: focused.href,
+            preview: false,
+          }
+        : previewSource instanceof HTMLAnchorElement
+          ? {
+              start: previewSource.dataset.linkStart,
+              href: previewSource.href,
+              preview: true,
+            }
+          : undefined;
     const x = scrollX,
       y = scrollY;
     const codeScroll = new Map(
@@ -249,23 +265,32 @@ export class ArticleHighlightView {
       ).find(
         (a) => a.dataset.linkStart === anchor.start && a.href === anchor.href,
       );
-      if (next) next.focus({ preventScroll: true });
-      else {
+      if (next) {
+        const target = anchor.preview
+          ? next.nextElementSibling?.shadowRoot?.querySelector<HTMLButtonElement>(
+              "button",
+            )
+          : next;
+        (target ?? next).focus({ preventScroll: true });
+      } else {
         this.body.tabIndex = -1;
         this.body.focus({ preventScroll: true });
       }
     } else if (shadowFocus instanceof HTMLElement && shadowFocus.isConnected) {
       shadowFocus.focus({ preventScroll: true });
     } else if (focusedOffset !== undefined && focused instanceof HTMLElement) {
-      this.spans
+      const next = this.spans
         .find(
           (s) =>
             s.start <= focusedOffset && s.start + s.node.length > focusedOffset,
         )
         ?.node.parentElement?.closest<HTMLElement>(
           focused.tagName.toLowerCase(),
-        )
-        ?.focus({ preventScroll: true });
+        );
+      if (next) {
+        if (focused.hasAttribute("tabindex")) next.tabIndex = focused.tabIndex;
+        next.focus({ preventScroll: true });
+      }
     }
     if (pieces.length && selection) {
       const start = pieces[0].start,

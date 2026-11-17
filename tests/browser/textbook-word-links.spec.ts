@@ -911,15 +911,21 @@ test("教材の取り込みは確定した新規保存だけを通知し、中�
       const add = IDBObjectStore.prototype.add,
         transaction = IDBDatabase.prototype.transaction,
         post = BroadcastChannel.prototype.postMessage;
-      let abortNext = true,
-        committed = false;
+      let abortNext = true;
+      const transactions = new WeakMap<
+        IDBTransaction,
+        { committed: boolean }
+      >();
+      const additions = new Map<string, { committed: boolean }>();
       const notifications: { committed: boolean; id: string }[] = [];
       // 保存処理の oncomplete 登録より前に、実際の確定を観測する。
       IDBDatabase.prototype.transaction = function (...args) {
         const tx = transaction.apply(this, args);
         if (this.name.includes("shared-textbooks") && tx.mode === "readwrite") {
+          const state = { committed: false };
+          transactions.set(tx, state);
           tx.addEventListener("complete", () => {
-            committed = true;
+            state.committed = true;
           });
         }
         return tx;
@@ -928,6 +934,9 @@ test("教材の取り込みは確定した新規保存だけを通知し、中�
         const request = add.apply(this, args);
         if (this.name === "books") {
           const tx = this.transaction;
+          const state = transactions.get(tx);
+          if (!state) throw Error("追加した版の保存処理を観測できません");
+          additions.set((args[0] as { id: string }).id, state);
           if (abortNext) {
             abortNext = false;
             request.addEventListener("success", () => tx.abort());
@@ -937,7 +946,10 @@ test("教材の取り込みは確定した新規保存だけを通知し、中�
       };
       BroadcastChannel.prototype.postMessage = function (message) {
         if (message?.kind === "import")
-          notifications.push({ committed, id: message.id });
+          notifications.push({
+            committed: additions.get(message.id)?.committed === true,
+            id: message.id,
+          });
         return post.call(this, message);
       };
       try {
@@ -981,3 +993,91 @@ test("教材の取り込みは確定した新規保存だけを通知し、中�
   ]);
   expect(result.original).toBe(raw);
 });
+
+for (const target of ["preview", "excerpt"] as const) {
+  test(`教材リンクと再確認の描画で${target === "preview" ? "出典プレビュー" : "根拠の段落"}のフォーカスを保持する`, async ({
+    page,
+  }) => {
+    await page.route("**/api/feeds/fetch", (r) =>
+      r.fulfill({ status: 404, json: {} }),
+    );
+    await page.route("**/__repaint_focus", (r) =>
+      r.fulfill({
+        contentType: "text/html",
+        body: "<!doctype html><title>フォーカスの確認</title>",
+      }),
+    );
+    await page.goto("/__repaint_focus");
+    await page.evaluate(async (name) => {
+      const path = "/src/article-highlight-view.ts",
+        { ArticleHighlightView } = await import(path);
+      const text = `根拠の本文です。\n\nhttps://example.org/reference?fixed=1 と ${name} の説明です。`;
+      const view = {
+        articleId: "focus-fixture",
+        title: "フォーカス",
+        url: "https://example.org/article",
+        text,
+        original: text,
+        view: "original",
+        language: "ja",
+        ranges: [],
+      };
+      const body = document.createElement("div");
+      body.className = "rss-source-text";
+      const highlights = new ArticleHighlightView();
+      document.body.append(body, highlights.mount(view, body));
+      Object.assign(window, {
+        wordFocusRepaint: () =>
+          highlights.setTextbookLinks(view, [
+            {
+              start: text.indexOf(name),
+              end: text.indexOf(name) + name.length,
+              href: new URL("/?view=textbooks", location.origin).href,
+            },
+          ]),
+        wordFocusExcerpt: () =>
+          highlights.revealExcerpt(view, 0, "根拠の本文です。".length),
+      });
+    }, topic.name);
+    await expect(page.locator(".rss-highlights [role=status]")).toHaveText(
+      "気になる言葉を残して、あとで読み返せます。",
+    );
+    const focused =
+      target === "preview"
+        ? page.getByRole("button", {
+            name: "リンク先をプレビュー：example.org",
+            exact: true,
+          })
+        : page.locator(".rss-source-text p").first();
+    if (target === "preview") await focused.focus();
+    else
+      await page.evaluate(() =>
+        (
+          window as unknown as { wordFocusExcerpt: () => void }
+        ).wordFocusExcerpt(),
+      );
+    await expect(focused).toBeFocused();
+    const before = await page.evaluate(() => ({
+      text: document.getSelection()?.toString(),
+      y: scrollY,
+    }));
+    await page.evaluate(() =>
+      (
+        window as unknown as { wordFocusRepaint: () => void }
+      ).wordFocusRepaint(),
+    );
+    await expect(wordLinks(page)).toHaveCount(1);
+    await expect(focused).toBeFocused();
+    await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+    await expect(page.locator(".rss-highlights [role=status]")).toHaveText(
+      "気になる言葉を残して、あとで読み返せます。",
+    );
+    await expect(focused).toBeFocused();
+    expect(
+      await page.evaluate(() => ({
+        text: document.getSelection()?.toString(),
+        y: scrollY,
+      })),
+    ).toEqual(before);
+  });
+}
