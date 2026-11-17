@@ -185,8 +185,13 @@ export class ArticleTextbookView {
         void this.load();
     });
     this.editionChannel?.addEventListener("message", () => {
-      if (this.root.isConnected && this.details.open && !this.busy)
-        void this.load();
+      if (!this.root.isConnected || !this.details.open) return;
+      if (this.busy) {
+        // 待機中の古い照合を無効にし、下書きを残したままfinallyで読み直す。
+        this.generation++;
+        this.ready = false;
+        this.controls();
+      } else void this.load();
     });
     window.addEventListener("focus", () => {
       if (this.root.isConnected && this.details.open && !this.busy)
@@ -567,9 +572,13 @@ export class ArticleTextbookView {
         const item = Array.from(this.list.children).find(
           (n) => (n as HTMLElement).dataset.link === focusedItem.id,
         );
-        Array.from(item?.querySelectorAll<HTMLElement>("[data-action]") ?? [])
-          .find((n) => n.dataset.action === focusedItem.action)
-          ?.focus({ preventScroll: true });
+        const actions = Array.from(
+          item?.querySelectorAll<HTMLElement>("[data-action]") ?? [],
+        );
+        (
+          actions.find((n) => n.dataset.action === focusedItem.action) ??
+          actions.find((n) => n.dataset.action === "read")
+        )?.focus({ preventScroll: true });
       }
     } catch (error) {
       if (generation === this.generation && context === this.context)

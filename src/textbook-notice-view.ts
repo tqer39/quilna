@@ -74,6 +74,7 @@ export function textbookNoticeSummary(
     url.searchParams.set("view", "textbooks");
     url.searchParams.set("book", notice.replacement.id);
     link.href = url.href;
+    link.dataset.action = "correction";
     if (separate) {
       link.target = "_blank";
       link.rel = "noopener noreferrer";
@@ -206,7 +207,7 @@ export function textbookNoticeView(
       queueMicrotask(() => void refresh());
     }
   };
-  async function loadChoices() {
+  async function loadChoices(keepBusy = false) {
     const ticket = ++generation;
     busy = true;
     controls();
@@ -247,14 +248,14 @@ export function textbookNoticeView(
     } catch (error) {
       if (active()) status.textContent = problem(error);
     } finally {
-      if (active() && ticket === generation) {
+      if (active() && ticket === generation && !keepBusy) {
         finish();
       }
     }
   }
-  async function refresh() {
+  async function refresh(exclusive = false) {
     if (!active()) return;
-    if (busy) {
+    if (busy && !exclusive) {
       refreshPending = true;
       return;
     }
@@ -262,7 +263,7 @@ export function textbookNoticeView(
     try {
       const [latest] = await readTextbookNotices([book]);
       if (!active() || ticket !== readEpoch) return;
-      if (busy) {
+      if (busy && !exclusive) {
         refreshPending = true;
         return;
       }
@@ -279,7 +280,7 @@ export function textbookNoticeView(
           "別の画面で記録が変更されています。入力は保持しています。最新記録を読み直して比較してください。";
     } catch (error) {
       if (active() && ticket === readEpoch) {
-        if (busy) {
+        if (busy && !exclusive) {
           refreshPending = true;
           return;
         }
@@ -292,12 +293,19 @@ export function textbookNoticeView(
     }
   }
   async function reset() {
-    await refresh();
-    if (!active() || !ready) return;
-    fill();
-    prepared = true;
-    status.textContent = "保存済みの最新記録を読み直しました。";
-    await loadChoices();
+    if (!active() || busy) return;
+    busy = true;
+    controls();
+    try {
+      await refresh(true);
+      if (!active() || !ready) return;
+      fill();
+      prepared = true;
+      status.textContent = "保存済みの最新記録を読み直しました。";
+      await loadChoices(true);
+    } finally {
+      if (active()) finish();
+    }
   }
   const channel =
     typeof BroadcastChannel === "undefined"
