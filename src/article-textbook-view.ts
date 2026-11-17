@@ -84,7 +84,8 @@ export class ArticleTextbookView {
       this.status.textContent = latest
         ? "保存済みの最新の理由と下書きを比較してください。次に保存すると、下書きの理由で更新します。"
         : "関連づけは別の画面で削除されています。次に保存すると、保持した参照元と下書きの理由で作成し直します。";
-      this.controls();
+      this.renderDraft();
+      this.reason.focus();
     },
   );
   private readonly cancel = button("関連づけの下書きを取り消す", () =>
@@ -102,6 +103,7 @@ export class ArticleTextbookView {
   private records: TextbookLink[] = [];
   private draft?: Draft;
   private shownDraft?: Draft;
+  private shownChoices = "";
   private drafts = new Map<string, Draft>();
   private context = 0;
   private generation = 0;
@@ -176,26 +178,14 @@ export class ArticleTextbookView {
       }
     });
     this.channel?.addEventListener("message", (event) => {
-      if (
-        (event.data === this.view?.articleId || event.data === "changed") &&
-        this.root.isConnected &&
-        this.details.open &&
-        !this.busy
-      )
-        void this.load();
+      if (event.data === this.view?.articleId || event.data === "changed")
+        this.refresh();
     });
     this.editionChannel?.addEventListener("message", () => {
-      if (!this.root.isConnected || !this.details.open) return;
-      if (this.busy) {
-        // 待機中の古い照合を無効にし、下書きを残したままfinallyで読み直す。
-        this.generation++;
-        this.ready = false;
-        this.controls();
-      } else void this.load();
+      this.refresh();
     });
     window.addEventListener("focus", () => {
-      if (this.root.isConnected && this.details.open && !this.busy)
-        void this.load();
+      this.refresh();
     });
     this.controls();
   }
@@ -247,12 +237,13 @@ export class ArticleTextbookView {
   private controls() {
     this.start.disabled = this.busy || !this.ready || !!this.draft;
     this.reload.disabled = this.busy;
-    this.select.disabled = this.busy || this.draft?.expected !== null;
+    this.select.disabled =
+      this.busy || !this.ready || this.draft?.expected !== null;
     this.reason.disabled = this.busy;
     this.save.disabled =
       this.busy ||
       !this.ready ||
-      !this.draft?.target ||
+      !this.choiceAvailable() ||
       !this.reason.value.trim();
     this.cancel.disabled = this.busy;
     for (const control of this.rowButtons)
@@ -265,6 +256,44 @@ export class ArticleTextbookView {
       !d.target ||
       (latest ? latest.revision === d.expected : d.expected === null);
     this.continueDraft.disabled = this.busy || !this.ready;
+  }
+  private refresh() {
+    if (!this.root.isConnected || !this.details.open) return;
+    if (this.busy) {
+      // 待機中の古い照合を無効にし、下書きを残したままfinallyで読み直す。
+      this.generation++;
+      this.ready = false;
+      this.controls();
+    } else void this.load();
+  }
+  private choiceAvailable() {
+    const d = this.draft;
+    return (
+      !!d?.target &&
+      (d.expected !== null ||
+        d.choices.some(
+          (c) => JSON.stringify(c.target) === JSON.stringify(d.target),
+        ))
+    );
+  }
+  private async choicePool(records: TextbookLink[], preserveId?: string) {
+    const books = await listSharedTextbooks();
+    const notices = await readTextbookNotices(books);
+    return {
+      unavailable: notices.some((n) => n.error),
+      choices: books
+        .filter(
+          (b, i) =>
+            b.request.schemaVersion === 2 &&
+            !notices[i].error &&
+            notices[i].notice?.kind !== "withdrawn" &&
+            (b.id === preserveId || !records.some((r) => r.target.id === b.id)),
+        )
+        .map((b) => ({
+          target: textbookLinkTarget(b),
+          goal: b.request.learningGoal,
+        })),
+    };
   }
   private renderDraft() {
     const d = this.draft;
@@ -283,31 +312,46 @@ export class ArticleTextbookView {
     if (d && this.shownDraft !== d) {
       this.shownDraft = d;
       this.source.textContent = `関連づけを始めたときの記事：${d.source.title}（${d.source.view === "translation" ? "訳文" : "原文"}）\n${d.source.excerpt}`;
-      this.select.replaceChildren();
-      const empty = el("option", "教材を選んでください");
-      empty.value = "";
-      this.select.append(empty);
-      for (const c of d.choices) {
-        const option = el(
-          "option",
-          `${c.target.topicName} — ${c.target.title} · 版 ${c.target.id.split(":")[1]}`,
-        );
-        option.value = c.target.id;
-        this.select.append(option);
-      }
-      this.select.value = d.target?.id ?? "";
       this.reason.value = d.reason;
     }
+    if (d) {
+      const choices =
+        d.expected !== null && d.target
+          ? [{ target: d.target, goal: "" }]
+          : d.choices;
+      const key = JSON.stringify(choices);
+      if (key !== this.shownChoices) {
+        this.shownChoices = key;
+        this.select.replaceChildren();
+        const empty = el("option", "教材を選んでください");
+        empty.value = "";
+        this.select.append(empty);
+        for (const c of choices) {
+          const option = el(
+            "option",
+            `${c.target.topicName} — ${c.target.title} · 版 ${c.target.id.split(":")[1]}`,
+          );
+          option.value = c.target.id;
+          this.select.append(option);
+        }
+      }
+      this.select.value = d.target?.id ?? "";
+    } else this.shownChoices = "";
     this.showChoice();
     this.controls();
   }
   private showChoice() {
     const d = this.draft,
       target = d?.target;
-    this.scope.textContent = target
-      ? d!.choices.find((c) => c.target.id === target.id)?.goal ||
-        "登録時に選んだ教材版です。範囲と出典は教材の画面で確認できます。"
-      : "";
+    this.scope.textContent =
+      target && !this.choiceAvailable()
+        ? "選んだ教材版は撤回されているか、確認できません。理由と参照元は保持しています。別の版を選ぶか、保存済みの記録を確認してください。"
+        : target
+          ? d!.choices.find((c) => c.target.id === target.id)?.goal ||
+            "登録時に選んだ教材版です。範囲と出典は教材の画面で確認できます。"
+          : d && !d.choices.length
+            ? "現在、この下書きに選べる教材がありません。保存済みの版と訂正・撤回の記録を確認してください。"
+            : "";
     this.preview.hidden = !target;
     this.preview.href = textbookLink(target?.id);
   }
@@ -331,26 +375,14 @@ export class ArticleTextbookView {
     this.busy = true;
     this.controls();
     try {
-      const books = record ? [] : await listSharedTextbooks();
-      const notices = await readTextbookNotices(books);
-      const choices = record
-        ? [{ target: record.target, goal: "" }]
-        : books
-            .filter(
-              (b, i) =>
-                b.request.schemaVersion === 2 &&
-                !notices[i].error &&
-                notices[i].notice?.kind !== "withdrawn" &&
-                !this.records.some((r) => r.target.id === b.id),
-            )
-            .map((b) => ({
-              target: textbookLinkTarget(b),
-              goal: b.request.learningGoal,
-            }));
+      const pool = record
+        ? { choices: [{ target: record.target, goal: "" }], unavailable: false }
+        : await this.choicePool(this.records);
+      const choices = pool.choices;
       const source = record?.source ?? (await textbookLinkSource(view));
       if (context !== this.context) return;
       if (!choices.length) {
-        this.status.textContent = notices.some((n) => n.error)
+        this.status.textContent = pool.unavailable
           ? "訂正・撤回の記録を確認できない版は選択肢から外しています。再読み込みして確認してください。不明な保存形式の場合は対応するアプリの版を使ってください。"
           : "関連づけられるテーマ教材がありません。教材ファイルを取り込むか、保存済みの関連づけを確認してください。";
         return;
@@ -366,7 +398,7 @@ export class ArticleTextbookView {
       this.drafts.set(view.articleId, this.draft);
       this.status.textContent =
         "関連する理由はこの記事用の個人記録です。教材ファイルには含めません。下書きはこの画面を開いている間、記事を切り替えても残ります。";
-      if (notices.some((n) => n.error))
+      if (pool.unavailable)
         this.status.textContent +=
           " 訂正・撤回の記録を確認できない版は選択肢から外しています。";
       this.renderDraft();
@@ -390,7 +422,15 @@ export class ArticleTextbookView {
   private async commit() {
     const draft = this.draft,
       target = draft?.target;
-    if (!draft || !target || !this.view || this.busy || !this.ready) return;
+    if (
+      !draft ||
+      !target ||
+      !this.view ||
+      this.busy ||
+      !this.ready ||
+      !this.choiceAvailable()
+    )
+      return;
     const context = this.context;
     this.busy = true;
     this.controls();
@@ -448,7 +488,8 @@ export class ArticleTextbookView {
   }
   private async load() {
     if (!this.view || !this.details.open || !this.root.isConnected) return;
-    const view = { ...this.view };
+    const view = { ...this.view },
+      draft = this.draft;
     const generation = ++this.generation,
       context = this.context,
       focused = document.activeElement;
@@ -485,7 +526,12 @@ export class ArticleTextbookView {
           }
         }),
       );
+      const pool =
+        draft?.expected === null
+          ? await this.choicePool(records, draft.target?.id)
+          : undefined;
       if (generation !== this.generation || context !== this.context) return;
+      if (pool && this.draft === draft) draft!.choices = pool.choices;
       this.currentVersion = version;
       this.records = records;
       this.ready = true;

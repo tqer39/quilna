@@ -61,6 +61,79 @@ async function seed(page: Page, design: string) {
   ).toBeVisible();
 }
 
+async function openLinkedNoticeArticle(page: Page) {
+  await page.evaluate(async (id) => {
+    const store = "/src/shared-textbook-store.ts",
+      linkPath = "/src/article-textbooks.ts",
+      feedPath = "/src/feed-store.ts";
+    const books = await import(store),
+      links = await import(linkPath),
+      feed = await import(feedPath);
+    const book = await books.readSharedTextbook(id),
+      text = "保守通知を待機する記事です。".repeat(60);
+    const source = await links.textbookLinkSource({
+      articleId: "notice-race",
+      title: "通知の待機確認",
+      url: "https://example.org/notice-race",
+      original: text,
+      text,
+      view: "original",
+      language: "ja",
+    });
+    await links.writeTextbookLink(
+      {
+        id: links.textbookLinkKey(source.articleId, book.id),
+        source,
+        target: links.textbookLinkTarget(book),
+        reason: "保持する既存リンク",
+        createdAt: new Date().toISOString(),
+        revision: 1,
+      },
+      null,
+    );
+    const db = await feed.openFeedLibrary();
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction("articles", "readwrite");
+      tx.objectStore("articles").put({
+        id: source.articleId,
+        title: source.title,
+        url: source.url,
+        feedUrl: "",
+        published: null,
+        fetchedAt: "2026-11-17T00:00:00Z",
+        body: text,
+        read: true,
+        saved: true,
+        content: {
+          text,
+          title: source.title,
+          url: source.url,
+          language: "ja",
+          fetchedAt: "2026-11-17T00:00:00Z",
+          codeRanges: [],
+        },
+      });
+      tx.oncomplete = () => resolve();
+      tx.onabort = () => reject(tx.error);
+    });
+    db.close();
+  }, id);
+  await page.goto("/?view=feeds");
+  await page
+    .getByRole("button", { name: "通知の待機確認", exact: true })
+    .click();
+  await openReaderTools(page);
+  const panel = page.getByRole("region", {
+    name: "深掘りできる教材",
+    exact: true,
+  });
+  await panel.locator(":scope > details > summary").click();
+  await expect(
+    panel.getByRole("button", { name: "関連する理由を編集", exact: true }),
+  ).toBeEnabled();
+  return panel;
+}
+
 for (const design of ["studio", "editorial", "focus"]) {
   test(`${design}: 訂正先へ明示的に移動し、旧教材・回答を保持したまま撤回を記録する`, async ({
     page,
@@ -511,6 +584,30 @@ test("撤回版は新しい関連づけから外し、既存の記事リンク�
     )
     .toBeGreaterThan(0);
   await expect(corrected).toBeFocused();
+  const withdrawnTarget = await context.newPage();
+  await withdrawnTarget.goto("/__notice_fixture");
+  await withdrawnTarget.evaluate(async (id) => {
+    const path = "/src/shared-textbook-store.ts",
+      api = await import(path);
+    const book = await api.readSharedTextbook(id.replace(":7", ":8"));
+    await api.writeTextbookNotice(
+      book,
+      {
+        kind: "withdrawn",
+        reason: "復帰時に訂正先も撤回",
+        evidence: "確認した根拠",
+      },
+      null,
+    );
+    const channel = new BroadcastChannel(api.sharedTextbookDatabase);
+    channel.postMessage(book.id);
+    channel.close();
+  }, id);
+  await expect(panel).toContainText("訂正先の版も撤回されています");
+  await expect(
+    panel.getByRole("link", { name: "教材を読む（別タブ）", exact: true }),
+  ).toBeFocused();
+  await withdrawnTarget.close();
   await expect(page).toHaveURL(originalURL);
   await expect(
     panel.getByLabel("この記事と関連する理由（必須）", { exact: true }),
@@ -1309,6 +1406,7 @@ test("訂正の保存完了待ちに届いた訂正先の撤回通知を、完�
 
 test("最新記録の再読み込み中の編集を止め、記録と候補の取得後に操作を戻す", async ({
   page,
+  context,
 }) => {
   await seed(page, "studio");
   await page.getByText("教材の訂正・撤回を記録", { exact: true }).click();
@@ -1334,9 +1432,12 @@ test("最新記録の再読み込み中の編集を止め、記録と候補の�
   await reason.fill("再読み込みで取り消す下書き");
   await page.evaluate(() => {
     const original = IDBDatabase.prototype.transaction;
+    const getAll = IDBObjectStore.prototype.getAll;
     const state = window as unknown as {
       resetHeld: boolean;
       releaseReset: () => void;
+      resetChoicesHeld: boolean;
+      releaseResetChoices: () => void;
     };
     let first = true;
     IDBDatabase.prototype.transaction = function (...args) {
@@ -1366,6 +1467,19 @@ test("最新記録の再読み込み中の編集を止め、記録と候補の�
       }
       return tx;
     };
+    let firstChoices = true;
+    IDBObjectStore.prototype.getAll = function (...args) {
+      const tx = this.transaction;
+      if (firstChoices && this.name === "books" && tx.mode === "readonly") {
+        firstChoices = false;
+        const completed = tx.oncomplete;
+        tx.oncomplete = (event) => {
+          state.resetChoicesHeld = true;
+          state.releaseResetChoices = () => completed?.call(tx, event);
+        };
+      }
+      return getAll.apply(this, args);
+    };
   });
   await page
     .getByRole("button", {
@@ -1387,8 +1501,48 @@ test("最新記録の再読み込み中の編集を止め、記録と候補の�
     (window as unknown as { releaseReset: () => void }).releaseReset(),
   );
   await expect(reason).toHaveValue("保存済みの理由");
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as unknown as { resetChoicesHeld: boolean }).resetChoicesHeld,
+      ),
+    )
+    .toBe(true);
+  await expect(reason).toBeDisabled();
+  await expect(save).toBeDisabled();
+  const other = await context.newPage();
+  await other.goto("/__notice_fixture");
+  await other.evaluate(async (id) => {
+    const path = "/src/shared-textbook-store.ts",
+      api = await import(path);
+    const book = await api.readSharedTextbook(id),
+      notice = await api.readTextbookNotice(book);
+    await api.writeTextbookNotice(
+      book,
+      {
+        kind: "withdrawn",
+        reason: "候補再取得中の別画面更新",
+        evidence: "新しい根拠",
+      },
+      notice.revision,
+    );
+    const channel = new BroadcastChannel(api.sharedTextbookDatabase);
+    channel.postMessage(book.id);
+    channel.close();
+  }, id);
+  await page.evaluate(() =>
+    (
+      window as unknown as { releaseResetChoices: () => void }
+    ).releaseResetChoices(),
+  );
+  await expect(
+    page.getByRole("region", { name: "この教材版の訂正・撤回", exact: true }),
+  ).toContainText("候補再取得中の別画面更新");
+  await expect(reason).toHaveValue("保存済みの理由");
   await expect(reason).toBeEnabled();
   await expect(save).toBeEnabled();
+  await other.close();
 });
 
 test("候補読み込みの待機中の撤回通知を処理後に反映し、記事の下書きを保持する", async ({
@@ -1396,77 +1550,9 @@ test("候補読み込みの待機中の撤回通知を処理後に反映し、�
   context,
 }) => {
   await seed(page, "studio");
-  await page.evaluate(async (id) => {
-    const store = "/src/shared-textbook-store.ts",
-      linkPath = "/src/article-textbooks.ts",
-      feedPath = "/src/feed-store.ts";
-    const books = await import(store),
-      links = await import(linkPath),
-      feed = await import(feedPath);
-    const book = await books.readSharedTextbook(id),
-      text = "保守通知を待機する記事です。".repeat(60);
-    const source = await links.textbookLinkSource({
-      articleId: "notice-race",
-      title: "通知の待機確認",
-      url: "https://example.org/notice-race",
-      original: text,
-      text,
-      view: "original",
-      language: "ja",
-    });
-    await links.writeTextbookLink(
-      {
-        id: links.textbookLinkKey(source.articleId, book.id),
-        source,
-        target: links.textbookLinkTarget(book),
-        reason: "保持する既存リンク",
-        createdAt: new Date().toISOString(),
-        revision: 1,
-      },
-      null,
-    );
-    const db = await feed.openFeedLibrary();
-    await new Promise<void>((resolve, reject) => {
-      const tx = db.transaction("articles", "readwrite");
-      tx.objectStore("articles").put({
-        id: source.articleId,
-        title: source.title,
-        url: source.url,
-        feedUrl: "",
-        published: null,
-        fetchedAt: "2026-11-17T00:00:00Z",
-        body: text,
-        read: true,
-        saved: true,
-        content: {
-          text,
-          title: source.title,
-          url: source.url,
-          language: "ja",
-          fetchedAt: "2026-11-17T00:00:00Z",
-          codeRanges: [],
-        },
-      });
-      tx.oncomplete = () => resolve();
-      tx.onabort = () => reject(tx.error);
-    });
-    db.close();
-  }, id);
-  await page.goto("/?view=feeds");
-  await page
-    .getByRole("button", { name: "通知の待機確認", exact: true })
-    .click();
-  await openReaderTools(page);
-  const panel = page.getByRole("region", {
-    name: "深掘りできる教材",
-    exact: true,
-  });
-  await panel.locator(":scope > details > summary").click();
-  await expect(
-    panel.getByRole("button", { name: "関連する理由を編集", exact: true }),
-  ).toBeEnabled();
+  const panel = await openLinkedNoticeArticle(page);
   await page.evaluate(() => {
-    const original = IDBDatabase.prototype.transaction;
+    const original = IDBObjectStore.prototype.getAll;
     const state = window as unknown as {
       choicesHeld: boolean;
       noticeSeen: boolean;
@@ -1478,32 +1564,17 @@ test("候補読み込みの待機中の撤回通知を処理後に反映し、�
       state.noticeSeen = true;
       observer.close();
     };
-    IDBDatabase.prototype.transaction = function (...args) {
-      const tx = original.apply(this, args);
-      if (
-        first &&
-        this.name === "quilna.shared-textbooks.v1" &&
-        tx.mode === "readonly" &&
-        tx.objectStoreNames.length === 1 &&
-        tx.objectStoreNames.contains("books")
-      ) {
+    IDBObjectStore.prototype.getAll = function (...args) {
+      const tx = this.transaction;
+      if (first && this.name === "books" && tx.mode === "readonly") {
         first = false;
-        let completed:
-          ((this: IDBTransaction, event: Event) => unknown) | null = null;
-        Object.defineProperty(tx, "oncomplete", {
-          set(v) {
-            completed = v;
-          },
-          get() {
-            return completed;
-          },
-        });
-        tx.addEventListener("complete", (event) => {
+        const completed = tx.oncomplete;
+        tx.oncomplete = (event) => {
           state.choicesHeld = true;
           state.releaseChoices = () => completed?.call(tx, event);
-        });
+        };
       }
-      return tx;
+      return original.apply(this, args);
     };
   });
   await panel
@@ -1552,5 +1623,123 @@ test("候補読み込みの待機中の撤回通知を処理後に反映し、�
   await expect(reason).toBeVisible();
   await reason.fill("保持する作成途中の理由");
   await expect(reason).toHaveValue("保持する作成途中の理由");
+  await other.close();
+});
+
+test("通知前の候補を下書きに残さず、選択済みの撤回版も理由を保持して保存対象から外す", async ({
+  page,
+  context,
+}) => {
+  await seed(page, "studio");
+  const panel = await openLinkedNoticeArticle(page);
+  await page.evaluate(() => {
+    const getAll = IDBObjectStore.prototype.getAll;
+    const digest = crypto.subtle.digest.bind(crypto.subtle);
+    const state = window as unknown as {
+      sourceHeld: boolean;
+      releaseSource: () => void;
+      noticeSeen: boolean;
+    };
+    let began = false,
+      first = true;
+    IDBObjectStore.prototype.getAll = function (...args) {
+      if (this.name === "books" && this.transaction.mode === "readonly")
+        began = true;
+      return getAll.apply(this, args);
+    };
+    crypto.subtle.digest = async (...args) => {
+      const result = await digest(...args);
+      if (
+        began &&
+        first &&
+        new TextDecoder()
+          .decode(args[1])
+          .startsWith('["保守通知を待機する記事です。')
+      ) {
+        first = false;
+        state.sourceHeld = true;
+        await new Promise<void>((resolve) => {
+          state.releaseSource = resolve;
+        });
+      }
+      return result;
+    };
+    const observer = new BroadcastChannel("quilna.shared-textbooks.v1");
+    observer.onmessage = () => {
+      state.noticeSeen = true;
+    };
+  });
+  await panel
+    .getByRole("button", { name: "教材を関連づける", exact: true })
+    .click();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (window as unknown as { sourceHeld: boolean }).sourceHeld,
+      ),
+    )
+    .toBe(true);
+  const other = await context.newPage();
+  await other.goto("/__notice_fixture");
+  const withdraw = async () =>
+    other.evaluate(async (id) => {
+      const path = "/src/shared-textbook-store.ts",
+        api = await import(path);
+      const book = await api.readSharedTextbook(id.replace(":7", ":8"));
+      await api.writeTextbookNotice(
+        book,
+        {
+          kind: "withdrawn",
+          reason: "候補の確認後に撤回",
+          evidence: "新しい確認記録",
+        },
+        null,
+      );
+      const channel = new BroadcastChannel(api.sharedTextbookDatabase);
+      channel.postMessage(book.id);
+      channel.close();
+    }, id);
+  await withdraw();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => (window as unknown as { noticeSeen: boolean }).noticeSeen,
+      ),
+    )
+    .toBe(true);
+  await page.evaluate(() =>
+    (window as unknown as { releaseSource: () => void }).releaseSource(),
+  );
+  const choice = panel.getByLabel("保存済みのテーマ教材", { exact: true });
+  const reason = panel.getByLabel("この記事と関連する理由（必須）", {
+    exact: true,
+  });
+  await expect(reason).toBeEnabled();
+  await expect(
+    choice.locator(`option[value="${id.replace(":7", ":8")}"]`),
+  ).toHaveCount(0);
+  await reason.fill("撤回しても保持する下書き");
+  await other.evaluate(async (id) => {
+    const path = "/src/shared-textbook-store.ts",
+      api = await import(path);
+    const book = await api.readSharedTextbook(id.replace(":7", ":8"));
+    const notice = await api.readTextbookNotice(book);
+    await api.removeTextbookNotice(book, notice.revision);
+    const channel = new BroadcastChannel(api.sharedTextbookDatabase);
+    channel.postMessage(book.id);
+    channel.close();
+  }, id);
+  await choice.selectOption(id.replace(":7", ":8"));
+  const save = panel.getByRole("button", {
+    name: "関連する理由を保存",
+    exact: true,
+  });
+  await expect(save).toBeEnabled();
+  await withdraw();
+  await expect(
+    choice.locator(`option[value="${id.replace(":7", ":8")}"]`),
+  ).toHaveCount(0);
+  await expect(save).toBeDisabled();
+  await expect(reason).toHaveValue("撤回しても保持する下書き");
   await other.close();
 });
