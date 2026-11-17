@@ -572,8 +572,10 @@ test("通常のAccountVaultCoreはテーマ生成を有効にしない", async (
 });
 test("テーマの結果不明予約が同じ所有者のCAAも止める", async () => {
   const f = await topicFixtureCore({
-    output: async () => new Promise(() => {}),
-    extra: { timeoutMs: 5 },
+    // 送信後の結果保持を検査するため、資格情報の準備時間との競争を避ける。
+    output: async () => {
+      throw Error("合成adapterの送信後に応答を失う");
+    },
   });
   const result = await f.core.proposeTopic(f.owner, topicRequest());
   assert.equal(result.status, "unknown");
@@ -664,8 +666,10 @@ test("キー削除で進行中の応答を伏せても同じ所有者は有料�
 });
 test("保存済みの予約と結果不明は照会しても解除・再送しない", async () => {
   const f = await topicFixtureCore({
-    output: async () => new Promise(() => {}),
-    extra: { timeoutMs: 5 },
+    // 送信後の結果保持を検査するため、資格情報の準備時間との競争を避ける。
+    output: async () => {
+      throw Error("合成adapterの送信後に応答を失う");
+    },
   });
   const input = topicRequest();
   const result = await f.core.proposeTopic(f.owner, input);
@@ -1084,3 +1088,41 @@ for (const outcome of ["invalid-output", "unknown"])
       undefined,
     );
   });
+
+test(
+  "テーマの送信境界の後だけ時計を進め、期限超過を結果不明として保持する",
+  { timeout: 10000 },
+  async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    let dispatched;
+    const entered = new Promise((resolve) => {
+      dispatched = resolve;
+    });
+    const f = await topicFixtureCore({
+      output: async () => {
+        dispatched();
+        return new Promise(() => {});
+      },
+      extra: { timeoutMs: 50 },
+    });
+    const input = topicRequest(),
+      pending = f.core.proposeTopic(f.owner, input);
+    await Promise.race([
+      entered,
+      pending.then(() => {
+        throw Error("送信境界より前に終了した");
+      }),
+    ]);
+    assert.equal(f.calls(), 1);
+    t.mock.timers.tick(50);
+    const result = await pending;
+    assert.deepEqual(result, { status: "unknown", draft: null });
+    const record = f.storage.data.get("budget").records[0];
+    assert.equal(record.state, "unknown");
+    assert.notEqual(record.knownUnsent, true);
+    assert.ok((await f.core.budget(f.owner)).heldMilliYen > 0);
+    assert.deepEqual(await f.core.lookupTopic(f.owner, input), result);
+    assert.deepEqual(await f.core.proposeTopic(f.owner, input), result);
+    assert.equal(f.calls(), 1);
+  },
+);

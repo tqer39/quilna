@@ -16,7 +16,7 @@ Select an article title to open its reading view. **← 記事一覧へ** stays 
 Open an article, select **この記事を保存**, return to the list and select **保存した記事**.
 Reload to check the saved copy. **設定 → デモ教材 → デモ教材を開く** opens the existing fixed CAA lesson separately; collection does not generate it. It is no longer in the everyday reader header, and its previous learning history is preserved.
 
-**設定 → 受け取った教材** opens the separate [textbook-file library](textbook-sharing.md) for explicit file preview/import, reading and re-export with private recipient answers. Collected-source generation remains unconnected.
+**教材** in the header (also available through **設定 → 受け取った教材**) opens the separate [textbook-file library](textbook-sharing.md) for explicit file preview/import, reading and re-export with private recipient answers. Collected-source generation remains unconnected.
 
 **設定 → 論文の出典** opens [paper discovery, bibliographic observations and citations](paper-sources.md), using explicit Crossref requests or portable files. The Crossref adapter excludes abstracts from storage/display/export. A separate explicit Europe PMC request verifies matching DOI/PMCID and supported CC BY 4.0 or CC0 attribution before showing normalized body paragraphs for citation selection/save/file exchange. PDF retrieval and textbook generation remain unconnected.
 

@@ -1,5 +1,5 @@
 import { libraryName } from "./library-context";
-import type { ArticleStructure } from "./article-structure";
+import type { ArticleStructure, ArticleLink } from "./article-structure";
 import { appendArticleText, type ArticleCodeRange } from "./article-code";
 import { articleURL } from "./feed-parser";
 import {
@@ -53,6 +53,7 @@ export class ArticleHighlightView {
   private source?: HighlightSource;
   private body?: HTMLElement;
   private spans: Span[] = [];
+  private textbookLinks: readonly ArticleLink[] = [];
   private records: ArticleHighlight[] = [];
   private selected?: { start: number; end: number };
   private candidates: number[] = [];
@@ -144,6 +145,7 @@ export class ArticleHighlightView {
     this.view = view;
     this.body = body;
     if (!same) {
+      this.textbookLinks = [];
       this.context++;
       this.generation++;
       this.writeFailure = "";
@@ -161,6 +163,155 @@ export class ArticleHighlightView {
     this.paint();
     if (!same) void this.load();
     return this.root;
+  }
+  /** 後から届く教材リンクでも、読んでいる位置と選択中の原文を動かさない。 */
+  setTextbookLinks(view: ReadingView, links: readonly ArticleLink[]) {
+    if (
+      view !== this.view ||
+      !this.body?.isConnected ||
+      JSON.stringify(links) === JSON.stringify(this.textbookLinks)
+    )
+      return;
+    this.textbookLinks = links;
+    this.repaint();
+  }
+  /** 同じ本文の再確認では、描画の都合で読書中の操作を捨てない。 */
+  private repaint() {
+    if (!this.body || !this.view) return;
+    if (!this.body.isConnected) {
+      this.paint();
+      return;
+    }
+    const selection = document.getSelection(),
+      focused = document.activeElement;
+    const shadowFocus =
+      focused instanceof HTMLElement && this.body.contains(focused)
+        ? focused.shadowRoot?.activeElement
+        : undefined;
+    const focusedOffset =
+      focused instanceof HTMLElement && this.body.contains(focused)
+        ? this.spans.find((s) => focused.contains(s.node))?.start
+        : undefined;
+    const range =
+      selection?.rangeCount && !selection.isCollapsed
+        ? selection.getRangeAt(0)
+        : undefined;
+    const backwards =
+      !!range &&
+      selection?.anchorNode === range.endContainer &&
+      selection.anchorOffset === range.endOffset;
+    const pieces =
+      range &&
+      this.body.contains(range.startContainer) &&
+      this.body.contains(range.endContainer)
+        ? this.spans
+            .filter((s) => range.intersectsNode(s.node))
+            .map((s) => ({
+              start:
+                s.start +
+                (range.startContainer === s.node ? range.startOffset : 0),
+              end:
+                s.start +
+                (range.endContainer === s.node
+                  ? range.endOffset
+                  : s.node.length),
+            }))
+            .filter((s) => s.end > s.start)
+        : [];
+    const previewSource =
+      focused instanceof HTMLElement &&
+      focused.matches(".rss-link-tools") &&
+      this.body.contains(focused)
+        ? focused.previousElementSibling
+        : null;
+    const anchor =
+      focused instanceof HTMLAnchorElement && this.body.contains(focused)
+        ? {
+            start: focused.dataset.linkStart,
+            href: focused.href,
+            preview: false,
+          }
+        : previewSource instanceof HTMLAnchorElement
+          ? {
+              start: previewSource.dataset.linkStart,
+              href: previewSource.href,
+              preview: true,
+            }
+          : undefined;
+    const x = scrollX,
+      y = scrollY;
+    const codeScroll = new Map(
+      Array.from(
+        this.body.querySelectorAll<HTMLElement>("pre[data-reading-start]"),
+        (pre) => [
+          pre.dataset.readingStart,
+          { left: pre.scrollLeft, top: pre.scrollTop },
+        ],
+      ),
+    );
+    this.paint();
+    for (const pre of Array.from(
+      this.body.querySelectorAll<HTMLElement>("pre[data-reading-start]"),
+    )) {
+      const position = codeScroll.get(pre.dataset.readingStart);
+      if (position) {
+        pre.scrollLeft = position.left;
+        pre.scrollTop = position.top;
+      }
+    }
+    if (anchor) {
+      const next = Array.from(
+        this.body.querySelectorAll<HTMLAnchorElement>("a[data-link-start]"),
+      ).find(
+        (a) => a.dataset.linkStart === anchor.start && a.href === anchor.href,
+      );
+      if (next) {
+        const target = anchor.preview
+          ? next.nextElementSibling?.shadowRoot?.querySelector<HTMLButtonElement>(
+              "button",
+            )
+          : next;
+        (target ?? next).focus({ preventScroll: true });
+      } else {
+        this.body.tabIndex = -1;
+        this.body.focus({ preventScroll: true });
+      }
+    } else if (shadowFocus instanceof HTMLElement && shadowFocus.isConnected) {
+      shadowFocus.focus({ preventScroll: true });
+    } else if (focusedOffset !== undefined && focused instanceof HTMLElement) {
+      const next = this.spans
+        .find(
+          (s) =>
+            s.start <= focusedOffset && s.start + s.node.length > focusedOffset,
+        )
+        ?.node.parentElement?.closest<HTMLElement>(
+          focused.tagName.toLowerCase(),
+        );
+      if (next) {
+        if (focused.hasAttribute("tabindex")) next.tabIndex = focused.tabIndex;
+        next.focus({ preventScroll: true });
+      }
+    }
+    if (pieces.length && selection) {
+      const start = pieces[0].start,
+        end = pieces[pieces.length - 1].end;
+      const first = this.spans.find(
+        (s) => s.start <= start && s.start + s.node.length > start,
+      );
+      const last = this.spans.find(
+        (s) => s.start < end && s.start + s.node.length >= end,
+      );
+      if (first && last) {
+        selection.setBaseAndExtent(
+          backwards ? last.node : first.node,
+          backwards ? end - last.start : start - first.start,
+          backwards ? first.node : last.node,
+          backwards ? start - first.start : end - last.start,
+        );
+        this.captureSelection();
+      }
+    }
+    window.scrollTo(x, y);
   }
   detach() {
     this.context++;
@@ -288,7 +439,7 @@ export class ArticleHighlightView {
           ? `${records.length}件の引用を保存しています。`
           : "気になる言葉を残して、あとで読み返せます。",
       );
-      this.paint();
+      this.repaint();
       this.renderList();
     } catch (error) {
       if (generation !== this.generation) return;
@@ -347,6 +498,7 @@ export class ArticleHighlightView {
         return fragment;
       },
       this.view.structure,
+      this.textbookLinks,
     );
   }
   private captureSelection() {

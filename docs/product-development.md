@@ -15,7 +15,7 @@ Existing CI and necessary security maintenance may still validate native code an
 ## Reading, curiosity and connections
 
 The owner's 2026-11-17 clarification in [Issue #7](https://github.com/tqer39/quilna/issues/7) makes [reusable topic textbooks](topic-textbooks.md) the next textbook direction: articles lead to deeper knowledge in independently maintained textbooks, whose stable content can be reused across articles.
-Manual article-to-edition links, local correction/withdrawal records and a browser authoring flow with injected test connections are implemented; live authoring, automatic suggestions and owner usability acceptance remain incomplete.
+The owner rejected the suggestion/reason workflow as difficult to use on 2026-11-17. Articles now link technical terms directly to retained textbooks; creation is separate asynchronous work in [#202](https://github.com/tqer39/quilna/issues/202). Earlier manual mappings, local correction/withdrawal records and an injected-response authoring prototype remain available. Live asynchronous authoring and owner usability acceptance remain incomplete.
 Existing article-bound learning cues and imported textbooks remain available and do not establish completion of the full workflow.
 
 Implementation and acceptance of viewer designs are tracked in [Issue #72](https://github.com/tqer39/quilna/issues/72), and highlights/article connections in [Issue #73](https://github.com/tqer39/quilna/issues/73). Reusable topic textbooks are tracked separately in #7, with file sharing in #30.

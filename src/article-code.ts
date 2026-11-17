@@ -4,6 +4,7 @@ import {
   validArticleBlocks,
   type ArticleBlock,
   type ArticleStructure,
+  type ArticleLink,
 } from "./article-structure";
 import { decorateArticleLink } from "./link-preview";
 import { codeTokens } from "./code-syntax";
@@ -73,6 +74,23 @@ function codeCopyControl(text: string) {
   return host;
 }
 
+export function plainArticleLinks(
+  text: string,
+  ranges: ArticleCodeRange[] = [],
+): ArticleLink[] {
+  const links: ArticleLink[] = [];
+  for (const match of text.matchAll(/https?:\/\/[^\s<>"「」]+/gu)) {
+    const start = match.index,
+      value = match[0].replace(/[.,;:!?、。)）]+$/u, "");
+    if (ranges.some((r) => r.start < start + value.length && r.end > start))
+      continue;
+    const href = safeArticleLink(value);
+    if (href) links.push({ start, end: start + value.length, href });
+    if (links.length === 2000) break;
+  }
+  return links;
+}
+
 export function appendArticleText(
   parent: HTMLElement,
   text: string,
@@ -80,25 +98,32 @@ export function appendArticleText(
   renderText: (text: string, start: number) => Node = (value) =>
     document.createTextNode(value),
   structure?: ArticleStructure,
+  textbookLinks: readonly ArticleLink[] = [],
 ) {
   if (!structure) {
-    const links = [];
-    for (const match of text.matchAll(/https?:\/\/[^\s<>"「」]+/gu)) {
-      const start = match.index!,
-        value = match[0].replace(/[.,;:!?、。)）]+$/u, "");
-      if (ranges.some((r) => r.start < start + value.length && r.end > start))
-        continue;
-      const href = safeArticleLink(value);
-      if (href) links.push({ start, end: start + value.length, href });
-      if (links.length === 2000) break;
-    }
-    structure = { version: 1, links, headings: [] };
+    structure = {
+      version: 1,
+      links: plainArticleLinks(text, ranges),
+      headings: [],
+    };
   }
+  const links = [
+    ...structure.links.map((link) => ({ ...link, textbook: false })),
+    ...textbookLinks
+      .filter(
+        (link) =>
+          safeArticleLink(link.href) &&
+          ![...structure.links, ...ranges].some(
+            (r) => r.start < link.end && r.end > link.start,
+          ),
+      )
+      .map((link) => ({ ...link, textbook: true })),
+  ].sort((a, b) => a.start - b.start);
   const renderPlain = renderText;
   renderText = (value, start) => {
     const fragment = document.createDocumentFragment();
     let offset = start;
-    for (const link of structure?.links ?? []) {
+    for (const link of links) {
       if (link.end <= offset) continue;
       if (link.start >= start + value.length) break;
       if (link.start > offset)
@@ -112,9 +137,15 @@ export function appendArticleText(
       anchor.target = "_blank";
       anchor.rel = "noopener noreferrer";
       anchor.className = "rss-body-link";
+      anchor.dataset.linkStart = String(from);
+      if (link.textbook) {
+        anchor.classList.add("rss-textbook-word-link");
+        anchor.title = `${text.slice(link.start, link.end)}の教材（別タブ）`;
+      }
       anchor.append(renderPlain(value.slice(from - start, to - start), from));
       fragment.append(anchor);
-      if (from === link.start) decorateArticleLink(anchor, link.href);
+      if (from === link.start && !link.textbook)
+        decorateArticleLink(anchor, link.href);
       offset = to;
     }
     if (offset < start + value.length)

@@ -159,9 +159,9 @@ test("settings leads to the separate file library, preview/cancel keeps the exis
     .getByRole("link", { name: "教材ファイルの取り込み・読書へ" })
     .click();
   await expect(
-    page.getByRole("heading", { level: 1, name: "受け取った教材" }),
+    page.getByRole("heading", { level: 1, name: "教材" }),
   ).toBeVisible();
-  await expect(page).toHaveTitle("受け取った教材 | Quilna");
+  await expect(page).toHaveTitle("教材 | Quilna");
   await page.evaluate(() =>
     localStorage.setItem("fieldnotes.history.v1", "PRIVATE_HISTORY_SENTINEL"),
   );
@@ -197,10 +197,11 @@ test("settings leads to the separate file library, preview/cancel keeps the exis
   await page
     .getByRole("button", { name: "教材一覧へ戻る", exact: true })
     .click();
-  await expect(page).toHaveTitle("受け取った教材 | Quilna");
+  await expect(page).toHaveTitle("教材 | Quilna");
   await expect(
     page.getByLabel("教材JSONファイル（540,000バイト以下）"),
-  ).toBeVisible();
+  ).toBeHidden();
+  await expect(page.getByText("教材ファイルを取り込む", { exact: true })).toBeVisible();
   await expect(
     page.getByRole("button", { name: `${title} · 版 7を読む`, exact: true }),
   ).toBeFocused();
@@ -873,7 +874,7 @@ test("returning to the library during an answer read prevents its late completio
   await expect(
     page.getByRole("navigation", { name: "教材の目次", exact: true }),
   ).toHaveCount(0);
-  await expect(page).toHaveTitle("受け取った教材 | Quilna");
+  await expect(page).toHaveTitle("教材 | Quilna");
   await expect(
     page.getByRole("button", { name: `${title} · 版 7を読む`, exact: true }),
   ).toBeFocused();
@@ -917,7 +918,7 @@ test("a delayed answer commit respects newer focus and navigation while retainin
     .getByRole("button", { name: "教材一覧へ戻る", exact: true })
     .click();
   await releaseAnswerCompletion(page);
-  await expect(page).toHaveTitle("受け取った教材 | Quilna");
+  await expect(page).toHaveTitle("教材 | Quilna");
   await expect(
     page.getByRole("button", { name: `${title} · 版 7を読む`, exact: true }),
   ).toBeFocused();
