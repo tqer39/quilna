@@ -1568,6 +1568,60 @@
 .rss-feed-management[open] { padding-bottom: 4px; }
 @media (max-width: 680px) {
   .rss-header .rss-destinations { order: 3; width: 100%; }
-  .rss-header .rss-destination-links { display: grid; grid-template-columns: 1fr 1fr 1.5fr; }
+  .rss-header .rss-destination-links { display: flex; flex-wrap: wrap; }
   .rss-header .rss-destination-links a { text-align: center; }
+}
+
+
+/* 本文の前の操作はまとめ、通常の記事を最初の画面から読み始められる余白にする。 */
+:root[data-reader-design] .rss-article {
+  padding-block: 24px;
+}
+:root[data-reader-design] .rss-article > .eyebrow {
+  margin-block: 0 6px;
+}
+:root[data-reader-design] .rss-article > h1 {
+  margin-block: 6px 8px;
+}
+:root[data-reader-design] .rss-article > .rss-article-meta {
+  margin-block: 8px;
+}
+.rss-article-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+}
+.rss-article .rss-article-actions .rss-text-link {
+  margin: 0;
+}
+:root[data-reader-design] .rss-article > .rss-content-note {
+  margin-block: 8px;
+  padding-block: 6px;
+  line-height: 1.6;
+}
+:root[data-reader-design] .rss-focused .rss-reading-shortcuts {
+  margin-block: 8px;
+}
+.rss-reading-layout > .rss-article-outline:not([open]) {
+  margin-block: 8px;
+  padding-block: 8px;
+}
+.rss-source-text > :first-child {
+  margin-block-start: 0;
+}
+.rss-location-bar[data-screen="article"] {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  margin-bottom: 8px;
+}
+.rss-location-bar[data-screen="article"] .rss-location-current {
+  width: 100%;
+  margin: 0;
+}
+.rss-location-bar[data-screen="article"] .rss-location-progress,
+.rss-location-bar[data-screen="article"] .rss-reading-progress {
+  margin: 0;
 }
