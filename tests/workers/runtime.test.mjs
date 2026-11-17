@@ -2,11 +2,11 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { build } from "esbuild";
 import { Miniflare, convertV4MiniflareOptions } from "miniflare";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
-import { encode } from "../../workers/crypto.mjs";
+import { encode, hash } from "../../workers/crypto.mjs";
 async function bundle(entry) {
   return (
     await build({
@@ -468,4 +468,299 @@ test("same-origin browser GET without Origin works only with Fetch Metadata; cro
     403,
   );
   assert.equal(delegated, 1);
+});
+const topicFile = JSON.parse(
+  await readFile(
+    new URL("../fixtures/shared-textbook-v2.json", import.meta.url),
+    "utf8",
+  ),
+);
+const topicFileRecord = JSON.parse(
+  Buffer.from(topicFile.record, "base64").toString("utf8"),
+);
+const topicRequestRaw = Buffer.from(topicFileRecord.request, "base64").toString(
+  "utf8",
+);
+const topicInput = () => ({
+  requestId: JSON.parse(topicRequestRaw).id,
+  requestRaw: topicRequestRaw,
+  purpose: "book-addition",
+  modelId: "openai-luna-candidate",
+  approvedPublicText: true,
+});
+test("テーマの実SQLite台帳とHTTPで生成・検証・再起動・キー削除後の照会を保持する", async (t) => {
+  const f = await fixture(t),
+    account = await hash("local-only:test-a");
+  const csrf = (await f.api("/api/session")).value.csrfToken;
+  const key = command();
+  assert.equal(
+    (
+      await f.api("/api/credentials/openai", {
+        method: "POST",
+        body: key,
+        csrf,
+      })
+    ).status,
+    200,
+  );
+  const call = (path, body) =>
+    f.api(`/api/topic-textbooks/${path}`, {
+      method: "POST",
+      body,
+      csrf,
+      headers: { "X-Library-Account": account },
+    });
+  const input = topicInput(),
+    generated = await call("proposals", input);
+  assert.equal(generated.status, 200, JSON.stringify(generated.value));
+  assert.equal(
+    generated.value.status,
+    "complete",
+    JSON.stringify(generated.value),
+  );
+  assert.equal(generated.value.account, account);
+  assert.equal(generated.value.draft.kind, "topic-textbook-draft");
+  assert.ok(Buffer.byteLength(JSON.stringify(generated.value)) > 20000);
+  assert.equal(JSON.stringify(generated.value).includes(key.key), false);
+  assert.equal(JSON.stringify(generated.value).includes("ciphertext"), false);
+  assert.equal(generated.headers.get("cache-control"), "no-store");
+  const reviewInput = {
+    ...input,
+    requestId: randomUUID(),
+    purpose: "evidence-check",
+    generationRequestId: input.requestId,
+    generatorInvocation: generated.value.draft.invocation.id,
+    draftRaw: generated.value.draft.json,
+  };
+  assert.ok(Buffer.byteLength(JSON.stringify(reviewInput)) > 32768);
+  const reviewed = await call("proposals", reviewInput);
+  assert.equal(reviewed.status, 200, JSON.stringify(reviewed.value));
+  assert.equal(
+    reviewed.value.status,
+    "complete",
+    JSON.stringify(reviewed.value),
+  );
+  assert.equal(reviewed.value.draft.allChecksPassed, true);
+  const before = (await f.api("/api/budget")).value;
+  assert.ok(before.spentMilliYen > 0);
+  assert.equal(before.heldMilliYen, 0);
+  assert.deepEqual((await call("proposals", input)).value, generated.value);
+  assert.deepEqual(
+    (await call("proposals", reviewInput)).value,
+    reviewed.value,
+  );
+  assert.deepEqual((await f.api("/api/budget")).value, before);
+  await f.restart();
+  assert.deepEqual((await call("operations", input)).value, generated.value);
+  assert.deepEqual(
+    (await call("operations", reviewInput)).value,
+    reviewed.value,
+  );
+  assert.deepEqual((await f.api("/api/budget")).value, before);
+  assert.equal(
+    (
+      await f.api("/api/credentials/openai", {
+        method: "DELETE",
+        csrf,
+        body: { requestId: randomUUID(), expectedRevision: 1 },
+      })
+    ).status,
+    200,
+  );
+  assert.equal((await call("proposals", input)).value.status, "unconnected");
+  assert.deepEqual((await call("operations", input)).value, generated.value);
+  await f.restart();
+  assert.deepEqual(
+    (await call("operations", reviewInput)).value,
+    reviewed.value,
+  );
+  assert.equal(f.outbound(), 0);
+});
+test("別の利用者のテーマ候補を照会・検証せず予算と操作を分離する", async (t) => {
+  const f = await fixture(t),
+    input = topicInput();
+  const sessions = {};
+  for (const user of ["test-a", "test-b"]) {
+    sessions[user] = {
+      csrf: (await f.api("/api/session", { user })).value.csrfToken,
+      account: await hash(`local-only:${user}`),
+    };
+    assert.equal(
+      (
+        await f.api("/api/credentials/openai", {
+          user,
+          method: "POST",
+          body: command(),
+          csrf: sessions[user].csrf,
+        })
+      ).status,
+      200,
+    );
+  }
+  const call = (user, path, body) =>
+    f.api(`/api/topic-textbooks/${path}`, {
+      user,
+      method: "POST",
+      body,
+      csrf: sessions[user].csrf,
+      headers: { "X-Library-Account": sessions[user].account },
+    });
+  const a = (await call("test-a", "proposals", input)).value;
+  assert.equal(a.status, "complete");
+  assert.equal(
+    (await call("test-b", "operations", input)).value.status,
+    "not-found",
+  );
+  const rejected = await call("test-b", "proposals", {
+    ...input,
+    requestId: randomUUID(),
+    purpose: "evidence-check",
+    generationRequestId: input.requestId,
+    generatorInvocation: a.draft.invocation.id,
+    draftRaw: a.draft.json,
+  });
+  assert.equal(rejected.status, 409);
+  assert.deepEqual(rejected.value, {
+    status: "unissued-draft",
+    account: sessions["test-b"].account,
+  });
+  assert.equal(
+    (await f.api("/api/budget", { user: "test-b" })).value.spentMilliYen,
+    0,
+  );
+  const beforeA = (await f.api("/api/budget")).value;
+  const b = (await call("test-b", "proposals", input)).value;
+  assert.equal(b.status, "complete");
+  assert.notEqual(b.draft.invocation.id, a.draft.invocation.id);
+  assert.notEqual(b.account, a.account);
+  assert.deepEqual((await f.api("/api/budget")).value, beforeA);
+  assert.deepEqual((await call("test-a", "operations", input)).value, a);
+  assert.equal(f.outbound(), 0);
+});
+test("テーマ配送は不正な所有者・CSRF・Origin・入力を予約前に拒否する", async (t) => {
+  const f = await fixture(t),
+    account = await hash("local-only:test-a"),
+    input = topicInput();
+  const csrf = (await f.api("/api/session")).value.csrfToken;
+  await f.api("/api/credentials/openai", {
+    method: "POST",
+    body: command(),
+    csrf,
+  });
+  const call = (extra) =>
+    f.api("/api/topic-textbooks/proposals", {
+      method: "POST",
+      body: input,
+      csrf,
+      headers: { "X-Library-Account": account },
+      ...extra,
+    });
+  for (const [extra, status] of [
+    [{ headers: {} }, 403],
+    [{ headers: { "X-Library-Account": "b".repeat(64) } }, 403],
+    [
+      { headers: { "X-Library-Account": account, Origin: "http://evil.test" } },
+      403,
+    ],
+    [{ csrf: "wrong" }, 403],
+    [{ csrf: "x".repeat(201) }, 403],
+    [{ user: "unknown" }, 401],
+    [{ body: { ...input, owner: "test-b" } }, 400],
+    [{ body: { ...input, requestRaw: "x".repeat(384001) } }, 413],
+    [{ body: { ...input, requestRaw: "x".repeat(96001) } }, 400],
+  ])
+    assert.equal((await call(extra)).status, status, JSON.stringify(extra));
+  assert.equal(
+    (
+      await f.api("/api/topic-textbooks/proposals", {
+        headers: { "X-Library-Account": account },
+      })
+    ).status,
+    404,
+  );
+  assert.equal(
+    (
+      await f.api("/api/topic-textbooks/unknown", {
+        method: "POST",
+        body: input,
+        csrf,
+        headers: { "X-Library-Account": account },
+      })
+    ).status,
+    404,
+  );
+  assert.equal((await f.api("/api/budget")).value.spentMilliYen, 0);
+  assert.equal((await f.api("/api/budget")).value.heldMilliYen, 0);
+  assert.equal(f.outbound(), 0);
+});
+test("保存操作の照会が生成・キー操作の20回枠を消費しない", async (t) => {
+  const f = await fixture(t),
+    account = await hash("local-only:test-a"),
+    csrf = (await f.api("/api/session")).value.csrfToken;
+  for (let i = 0; i < 25; i++) {
+    const result = await f.api("/api/topic-textbooks/operations", {
+      method: "POST",
+      body: topicInput(),
+      csrf,
+      headers: { "X-Library-Account": account },
+    });
+    assert.equal(result.status, 200);
+    assert.equal(result.value.status, "not-found");
+  }
+  assert.equal(
+    (
+      await f.api("/api/credentials/openai", {
+        method: "POST",
+        body: command(),
+        csrf,
+      })
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await f.api("/api/topic-textbooks/operations", {
+        method: "POST",
+        body: topicInput(),
+        csrf: "wrong",
+        headers: { "X-Library-Account": account },
+      })
+    ).status,
+    403,
+  );
+  assert.equal(f.outbound(), 0);
+});
+test("HTTPの結果不明照会はSQLiteの予約を保持し入力の差し替えを区別する", async (t) => {
+  const f = await fixture(t),
+    account = await hash("local-only:test-a"),
+    csrf = (await f.api("/api/session")).value.csrfToken;
+  await f.api("/api/credentials/openai", {
+    method: "POST",
+    body: command(),
+    csrf,
+  });
+  const request = JSON.parse(topicRequestRaw);
+  request.learningGoal = "WAIT-MOCK";
+  const input = { ...topicInput(), requestRaw: JSON.stringify(request) };
+  const call = (path, body) =>
+    f.api(`/api/topic-textbooks/${path}`, {
+      method: "POST",
+      body,
+      csrf,
+      headers: { "X-Library-Account": account },
+    });
+  const unknown = await call("proposals", input);
+  assert.equal(unknown.status, 200);
+  assert.equal(unknown.value.status, "unknown");
+  const before = (await f.api("/api/budget")).value;
+  assert.ok(before.heldMilliYen > 0);
+  await f.restart();
+  assert.deepEqual((await call("operations", input)).value, unknown.value);
+  assert.equal(
+    (await call("operations", { ...input, modelId: "different-model" })).value
+      .status,
+    "id-conflict",
+  );
+  assert.deepEqual((await f.api("/api/budget")).value, before);
+  assert.equal(f.outbound(), 0);
 });

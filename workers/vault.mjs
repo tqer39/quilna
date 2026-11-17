@@ -136,7 +136,7 @@ export class AccountVaultCore {
       };
     });
   }
-  async authorize(principal, csrf, mutating) {
+  async authorize(principal, csrf, mutating, { countRate = true } = {}) {
     principalSchema.parse(principal);
     const owner = await hash(principal.subject);
     await this.transaction(owner, async (tx) => {
@@ -150,6 +150,8 @@ export class AccountVaultCore {
         )
       )
         throw Error("csrf-invalid");
+      // 保存結果の照会にもCSRFは必要だが、生成・キー変更の回数枠は消費しない。
+      if (!countRate) return;
       const recent = ((await tx.get("rate")) ?? []).filter(
         (t) => t > now - 60000,
       );
