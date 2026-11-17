@@ -283,14 +283,18 @@ export function topicGenerationView(saved: (id: string) => Promise<void>) {
                   result.status === "not-found" ||
                   (result.status === "rejected" && result.retryable === true)
                 )
-                  await reconfirmGeneration(op, result.status === "rejected");
+                  await reconfirmGeneration(
+                    op,
+                    result.status === "rejected",
+                    signal,
+                  );
                 return;
               }
               const review = ops.find(
                 (x) =>
                   x.input.purpose === "evidence-check" && x.rootId === op.id,
               );
-              await showDraft(op, result.draft);
+              await showDraft(op, result.draft, signal);
               if (review) {
                 const checked = await client.operate(
                   "operations",
@@ -307,6 +311,7 @@ export function topicGenerationView(saved: (id: string) => Promise<void>) {
                   await showDraft(
                     op,
                     result.draft,
+                    signal,
                     review,
                     checked.status === "rejected",
                   );
@@ -392,9 +397,12 @@ export function topicGenerationView(saved: (id: string) => Promise<void>) {
   async function showDraft(
     op: TopicOperation,
     candidate: TopicTextbookEnvelope,
+    signal: AbortSignal,
     retry?: TopicOperation,
     retryUnsent = false,
   ) {
+    capabilities = await client.status(signal);
+    check();
     const content = await parseTextbookCandidate(
       op.input.requestRaw,
       candidate.json,
@@ -486,7 +494,13 @@ export function topicGenerationView(saved: (id: string) => Promise<void>) {
         ? "検証の保存結果がありません。同じ操作IDのまま費用を再確認できます。既に処理が進んでいても、新しい検証IDは作りません。"
         : "候補を生成しました。検証はまだ送っていません。";
   }
-  async function reconfirmGeneration(op: TopicOperation, retryUnsent: boolean) {
+  async function reconfirmGeneration(
+    op: TopicOperation,
+    retryUnsent: boolean,
+    signal: AbortSignal,
+  ) {
+    capabilities = await client.status(signal);
+    check();
     const request = await parseTextbookRequest(op.input.requestRaw);
     check();
     output.replaceChildren(
@@ -532,7 +546,7 @@ export function topicGenerationView(saved: (id: string) => Promise<void>) {
             signal,
           );
           if (showReply(result) && result.status === "complete")
-            await showDraft(renewed, result.draft);
+            await showDraft(renewed, result.draft, signal);
         }),
     );
     send.disabled = !picker.selected();
@@ -743,7 +757,7 @@ export function topicGenerationView(saved: (id: string) => Promise<void>) {
                 signal,
               );
               if (showReply(result) && result.status === "complete")
-                await showDraft(op, result.draft);
+                await showDraft(op, result.draft, signal);
             }),
         );
         output.append(confirmation.label, send);

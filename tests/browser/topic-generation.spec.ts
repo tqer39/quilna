@@ -38,6 +38,7 @@ async function fixture(context: BrowserContext) {
     unsentReview: false,
     csrfReject: false,
     reviewQuoteDigest: "2".repeat(64),
+    generationQuoteDigest: "1".repeat(64),
   };
   await context.route("**/api/**", (route) =>
     route.fulfill({ status: 404, json: {} }),
@@ -66,7 +67,7 @@ async function fixture(context: BrowserContext) {
         csrfToken: "synthetic-csrf-token-for-tests",
         quotes: state.connected
           ? [
-              quote,
+              { ...quote, quoteDigest: state.generationQuoteDigest },
               {
                 ...quote,
                 purpose: "evidence-check",
@@ -104,11 +105,13 @@ async function fixture(context: BrowserContext) {
         "synthetic-csrf-token-for-tests",
       );
       expect(input.approvedMaxMilliYen).toBe(1000);
-      expect(input.approvedQuoteDigest).toBe(
+      const currentQuote =
         input.purpose === "book-addition"
-          ? "1".repeat(64)
-          : state.reviewQuoteDigest,
-      );
+          ? state.generationQuoteDigest
+          : state.reviewQuoteDigest;
+      if (input.approvedQuoteDigest !== currentQuote)
+        return route.fulfill({ json: { account, status: "quote-changed" } });
+      expect(input.approvedQuoteDigest).toBe(currentQuote);
       if (state.rejectReview && input.purpose === "evidence-check")
         return route.fulfill({ json: { account, status: "busy" } });
       if (state.csrfReject) {
@@ -409,12 +412,17 @@ test("予約前に拒否された検証は同じ控えのIDで明示的に再確
   const failed = state.proposals[1];
   state.rejectReview = false;
   state.reviewQuoteDigest = "3".repeat(64);
-  await page.reload();
-  await page.getByText("テーマの教材を作る", { exact: true }).click();
   await page
     .getByRole("button", { name: "保存した結果を確認", exact: true })
     .click();
   await expect(page.getByText(/同じ操作IDのまま費用を再確認/)).toBeVisible();
+  expect(state.proposals).toHaveLength(2);
+  await expect(
+    page.getByRole("checkbox", { name: /上限内で検証/ }),
+  ).not.toBeChecked();
+  await page
+    .getByRole("button", { name: "確認した費用で検証する", exact: true })
+    .click();
   expect(state.proposals).toHaveLength(2);
   await page.getByRole("checkbox", { name: /上限内で検証/ }).check();
   await page
@@ -502,6 +510,7 @@ test("予約前に拒否された生成も新しい控えを増やさず再確�
   await generate(page);
   await expect(page.getByText(/別の処理が進行中か結果不明です/)).toBeVisible();
   state.rejectGenerate = false;
+  state.generationQuoteDigest = "4".repeat(64);
   const first = state.proposals[0];
   await page
     .getByRole("button", { name: "保存した結果を確認", exact: true })
@@ -512,6 +521,13 @@ test("予約前に拒否された生成も新しい控えを増やさず再確�
       exact: true,
     }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("checkbox", { name: /同じIDのままOpenAIへ/ }),
+  ).not.toBeChecked();
+  await page
+    .getByRole("button", { name: "同じ依頼で生成を確認する", exact: true })
+    .click();
+  expect(state.proposals).toHaveLength(1);
   await page.getByRole("checkbox", { name: /同じIDのままOpenAIへ/ }).check();
   await page
     .getByRole("button", { name: "同じ依頼で生成を確認する", exact: true })
