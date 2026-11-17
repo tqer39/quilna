@@ -1,9 +1,9 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { once } from "node:events";
-import fs, { writeFileSync, statSync } from "node:fs";
+import fs, { writeFileSync, statSync, renameSync } from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
-import {
+import fsp, {
   mkdir,
   mkdtemp,
   writeFile,
@@ -1234,6 +1234,17 @@ test(
       assert.match(await module(), /"after"/);
       assert.ok(attempts > 0);
       assert.ok(errors.some((error) => error.includes("EMFILE")));
+      const firstAttempts = attempts;
+      const changedAgain = once(server.watcher, "change");
+      await writeFile(`${source}.tmp`, 'export const value="after-next";');
+      await rename(`${source}.tmp`, source);
+      await changedAgain;
+      assert.match(await module(), /"after-next"/);
+      assert.ok(attempts > firstAttempts);
+      assert.equal(
+        errors.filter((error) => error.includes("EMFILE")).length,
+        1,
+      );
     } finally {
       clearTimeout(timer);
       await server.close();
@@ -1241,3 +1252,187 @@ test(
     }
   },
 );
+
+for (const replacementAt of ["before-load", "between-load-stats"])
+  test(
+    `an atomic replacement ${replacementAt} installs independent watching for the first loaded source`,
+    { timeout: 20000, skip: process.platform !== "darwin" },
+    async (t) => {
+      const parent = join(repository, ".local-state/vite-watch");
+      await mkdir(parent, { recursive: true });
+      const root = await mkdtemp(join(parent, "initial-replacement-")),
+        source = join(root, "main.js");
+      await writeFile(source, 'export const value = "before";');
+      const originalInode = (await stat(source)).ino;
+      let allowWatch = false,
+        suppress = false,
+        replaced = false,
+        deliverOwned = false,
+        deliveries = 0,
+        notifyCreated,
+        rejectCreated,
+        releaseInitialResponse,
+        probeHeld = false,
+        timer;
+      const watchedPaths = new Set(),
+        originalWatch = fs.watch,
+        originalStat = fsp.stat;
+      const initialResponse = new Promise((resolve) => {
+        releaseInitialResponse = resolve;
+      });
+      const created = new Promise((resolve, reject) => {
+        notifyCreated = resolve;
+        rejectCreated = reject;
+      });
+      const creation = created.then(
+        () => null,
+        (error) => error,
+      );
+      fs.watch = (file, ...args) => {
+        if (
+          file !== source ||
+          args.length !== 1 ||
+          typeof args[0] !== "function"
+        )
+          return originalWatch(file, ...args);
+        const callback = args[0];
+        const handle = originalWatch(file, (...event) => {
+          if (deliverOwned) {
+            deliveries++;
+            callback(...event);
+          }
+        });
+        try {
+          writeFileSync(source, 'export const value = "registration-gap";');
+        } catch (error) {
+          handle.close();
+          throw error;
+        }
+        clearTimeout(timer);
+        notifyCreated();
+        return handle;
+      };
+      fsp.stat = async (file, ...args) => {
+        // 初回HTTPのcache確定まで補完の最初のstatを保留し、機械の速さに依存させない。
+        if (
+          file === source &&
+          !probeHeld &&
+          new Error().stack.includes("recheckSource")
+        ) {
+          probeHeld = true;
+          await initialResponse;
+        }
+        return originalStat(file, ...args);
+      };
+      syncBuiltinESMExports();
+      t.after(() => {
+        clearTimeout(timer);
+        fs.watch = originalWatch;
+        fsp.stat = originalStat;
+        releaseInitialResponse();
+        syncBuiltinESMExports();
+      });
+      const server = await createServer({
+        root,
+        configFile: join(repository, "vite.config.mjs"),
+        server: {
+          host: "127.0.0.1",
+          port: 0,
+          strictPort: false,
+          watch: { ignored: () => !allowWatch },
+        },
+        plugins: [
+          {
+            name: "hold-original-inode-notifications",
+            enforce: "pre",
+            configureServer(server) {
+              const watcher = server.watcher,
+                handler = watcher._nodeFsHandler,
+                watch = handler._watchWithNodeFs.bind(handler),
+                raw = watcher._emitRaw.bind(watcher);
+              handler._watchWithNodeFs = (path, listener) => {
+                watchedPaths.add(path);
+                return watch(path, (...args) => {
+                  if (!suppress || ![source, root].includes(path))
+                    listener(...args);
+                });
+              };
+              watcher._emitRaw = (...args) => {
+                if (!suppress) raw(...args);
+              };
+            },
+          },
+        ],
+      });
+      try {
+        allowWatch = true;
+        server.watcher.add(root);
+        await server.listen();
+        const registrationDeadline = Date.now() + 5000;
+        while (!(
+          watchedPaths.has(root) &&
+          watchedPaths.has(source) &&
+          server.watcher.getWatched()[root]?.includes("main.js")
+        )) {
+          assert.ok(
+            Date.now() < registrationDeadline,
+            "controlled native registration must finish",
+          );
+          await new Promise((resolve) => setTimeout(resolve, 10));
+        }
+        const replace = () => {
+          replaced = true;
+          writeFileSync(`${source}.tmp`, 'export const value = "replacement";');
+          renameSync(`${source}.tmp`, source);
+        };
+        const watched = server.watcher.getWatched.bind(server.watcher);
+        server.watcher.getWatched = () => {
+          if (!replaced && replacementAt === "between-load-stats") replace();
+          return watched();
+        };
+        suppress = true;
+        if (replacementAt === "before-load") replace();
+        const origin = `http://127.0.0.1:${server.httpServer.address().port}`;
+        const module = () => fetch(`${origin}/main.js`).then((r) => r.text());
+        timer = setTimeout(
+          () => rejectCreated(Error("initial source watch was not created")),
+          5000,
+        );
+        assert.match(await module(), /"replacement"/);
+        releaseInitialResponse();
+        assert.ok(replaced);
+        assert.notEqual(statSync(source).ino, originalInode);
+        assert.ifError(await creation);
+        assert.ok(
+          probeHeld,
+          "the initial probe must pass the causal HTTP gate",
+        );
+        const fresh = async (value) => {
+          const deadline = Date.now() + 5000;
+          while (!(await module()).includes(`"${value}"`)) {
+            assert.ok(
+              Date.now() < deadline,
+              "replacement inode must remain fresh",
+            );
+            await new Promise((resolve) => setTimeout(resolve, 10));
+          }
+        };
+        // watch wrapperが作成直後に同期的に書き込み、通知を止めたまま再照合を要求する。
+        await fresh("registration-gap");
+        deliverOwned = true;
+        for (const value of ["next-one", "next-two"]) {
+          const before = deliveries;
+          await writeFile(source, `export const value = "${value}";`);
+          await fresh(value);
+          assert.ok(
+            deliveries > before,
+            "later saves must use actual owned OS callbacks",
+          );
+        }
+      } finally {
+        releaseInitialResponse();
+        await server.close();
+        await rm(root, { recursive: true, force: true });
+      }
+    },
+  );
