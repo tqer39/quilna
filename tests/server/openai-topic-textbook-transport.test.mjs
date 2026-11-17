@@ -460,3 +460,86 @@ for (const stage of ["generate", "review"])
       crypto.subtle.digest = digest;
     }
   });
+test("遅延した資格情報の解決に失敗した場合は未送信の使用量0を確定する", async () => {
+  let calls = 0,
+    resolved = 0;
+  const api = openaiTopicTextbookTransport({
+    model,
+    reasoningEffort: "none",
+    mockOnly: true,
+    secret: async () => {
+      resolved++;
+      throw Error("credential-changed");
+    },
+    send: async () => {
+      calls++;
+      throw Error("must not send");
+    },
+  });
+  assert.equal(api.acceptsModel(model), true);
+  assert.equal(resolved, 0);
+  assert.deepEqual(await api.generate(request, options()), {
+    json: "",
+    usage: { inputTokens: 0, outputTokens: 0 },
+    outcome: "cancelled",
+  });
+  assert.equal(resolved, 1);
+  assert.equal(calls, 0);
+});
+test("遅延した資格情報の待機中の中止では計数も送信しない", async () => {
+  let entered,
+    release,
+    calls = 0;
+  const enteredGate = new Promise((resolve) => {
+    entered = resolve;
+  });
+  const keyGate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const controller = new AbortController();
+  const api = openaiTopicTextbookTransport({
+    model,
+    reasoningEffort: "none",
+    mockOnly: true,
+    secret: async () => {
+      entered();
+      await keyGate;
+      return "synthetic-credential-not-live";
+    },
+    send: async () => {
+      calls++;
+      throw Error("must not send");
+    },
+  });
+  const pending = api.generate(request, options({ signal: controller.signal }));
+  await enteredGate;
+  controller.abort();
+  release();
+  assert.deepEqual(await pending, {
+    json: "",
+    usage: { inputTokens: 0, outputTokens: 0 },
+    outcome: "cancelled",
+  });
+  assert.equal(calls, 0);
+});
+test("失効以外の資格情報の解決失敗を中止と区別して未送信で返す", async () => {
+  let calls = 0;
+  const api = openaiTopicTextbookTransport({
+    model,
+    reasoningEffort: "none",
+    mockOnly: true,
+    secret: async () => {
+      throw Error("credential-unavailable");
+    },
+    send: async () => {
+      calls++;
+      throw Error("must not send");
+    },
+  });
+  assert.deepEqual(await api.generate(request, options()), {
+    json: "",
+    usage: { inputTokens: 0, outputTokens: 0 },
+    outcome: "credential-unavailable",
+  });
+  assert.equal(calls, 0);
+});

@@ -8,6 +8,7 @@ export const providerOutcomeSchema = z.enum([
   "invalid-output",
   "input-limit",
   "cancelled",
+  "credential-unavailable",
 ]);
 const recordSchema = z
   .object({
