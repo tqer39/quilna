@@ -165,6 +165,8 @@ export function openaiTopicTextbookTransport({
       }
     } else if (content.some((c) => c?.type === "refusal")) outcome = "refused";
     else if (response.status === "incomplete") outcome = "incomplete";
+    if (options.signal.aborted)
+      return { json: "", usage, outcome: "cancelled" };
     return {
       json,
       usage,

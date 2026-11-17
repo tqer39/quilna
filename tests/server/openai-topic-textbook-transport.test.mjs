@@ -402,3 +402,61 @@ test("reasoning項目は本文へ混ぜず、推論tokenをoutput tokenへ二重
   assert.deepEqual(result.usage, { inputTokens: 1000, outputTokens: 500 });
   assert.deepEqual(JSON.parse(result.json), JSON.parse(draft));
 });
+for (const stage of ["generate", "review"])
+  test(`${stage}: 正規化のdigest待機中に中止した候補を返さず既知使用量を保持する`, async () => {
+    const controller = new AbortController();
+    let responseReturned = false,
+      held = false,
+      release,
+      entered;
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
+    const normalizing = new Promise((resolve) => {
+      entered = resolve;
+    });
+    const digest = crypto.subtle.digest;
+    crypto.subtle.digest = async function (...args) {
+      const result = Reflect.apply(digest, this, args);
+      if (responseReturned && !held) {
+        held = true;
+        entered();
+        await gate;
+      }
+      return result;
+    };
+    try {
+      const reviewWire = JSON.parse(review);
+      delete reviewWire.requestDigest;
+      delete reviewWire.draftDigest;
+      const api = openaiTopicTextbookTransport({
+        model,
+        reasoningEffort: "none",
+        mockOnly: true,
+        secret: "synthetic-credential-not-live",
+        send: async (url) => {
+          if (url.endsWith("input_tokens"))
+            return Response.json({ input_tokens: 1000 });
+          responseReturned = true;
+          return Response.json(
+            output(JSON.stringify(stage === "generate" ? wire : reviewWire)),
+          );
+        },
+      });
+      const pending =
+        stage === "generate"
+          ? api.generate(request, options({ signal: controller.signal }))
+          : api.review(request, draft, options({ signal: controller.signal }));
+      await normalizing;
+      controller.abort();
+      release();
+      assert.deepEqual(await pending, {
+        json: "",
+        usage: { inputTokens: 1000, outputTokens: 500 },
+        outcome: "cancelled",
+      });
+    } finally {
+      release();
+      crypto.subtle.digest = digest;
+    }
+  });
