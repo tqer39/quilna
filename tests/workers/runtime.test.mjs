@@ -1,3 +1,8 @@
+import {
+  topicCapabilitiesSchema,
+  topicGenerationReplySchema,
+  topicQuoteSchema,
+} from "../../src/topic-generation-protocol.ts";
 import test from "node:test";
 import assert from "node:assert/strict";
 import { build } from "esbuild";
@@ -488,6 +493,25 @@ const topicInput = () => ({
   modelId: "openai-luna-candidate",
   approvedPublicText: true,
 });
+async function approveTopic(f, input, user = "test-a") {
+  const account = await hash(`local-only:${user}`);
+  const response = await f.api("/api/topic-textbooks/status", {
+    user,
+    headers: { "X-Library-Account": account },
+  });
+  assert.equal(response.status, 200, JSON.stringify(response.value));
+  topicCapabilitiesSchema.parse(response.value);
+  const quote = response.value.quotes.find(
+    (q) => q.modelId === input.modelId && q.purpose === input.purpose,
+  );
+  assert.ok(quote, JSON.stringify(response.value));
+  topicQuoteSchema.parse(quote);
+  return {
+    ...input,
+    approvedMaxMilliYen: quote.maxMilliYen,
+    approvedQuoteDigest: quote.quoteDigest,
+  };
+}
 test("テーマの実SQLite台帳とHTTPで生成・検証・再起動・キー削除後の照会を保持する", async (t) => {
   const f = await fixture(t),
     account = await hash("local-only:test-a");
@@ -510,7 +534,7 @@ test("テーマの実SQLite台帳とHTTPで生成・検証・再起動・キー�
       csrf,
       headers: { "X-Library-Account": account },
     });
-  const input = topicInput(),
+  const input = await approveTopic(f, topicInput()),
     generated = await call("proposals", input);
   assert.equal(generated.status, 200, JSON.stringify(generated.value));
   assert.equal(
@@ -518,20 +542,21 @@ test("テーマの実SQLite台帳とHTTPで生成・検証・再起動・キー�
     "complete",
     JSON.stringify(generated.value),
   );
+  topicGenerationReplySchema.parse(generated.value);
   assert.equal(generated.value.account, account);
   assert.equal(generated.value.draft.kind, "topic-textbook-draft");
   assert.ok(Buffer.byteLength(JSON.stringify(generated.value)) > 20000);
   assert.equal(JSON.stringify(generated.value).includes(key.key), false);
   assert.equal(JSON.stringify(generated.value).includes("ciphertext"), false);
   assert.equal(generated.headers.get("cache-control"), "no-store");
-  const reviewInput = {
+  const reviewInput = await approveTopic(f, {
     ...input,
     requestId: randomUUID(),
     purpose: "evidence-check",
     generationRequestId: input.requestId,
     generatorInvocation: generated.value.draft.invocation.id,
     draftRaw: generated.value.draft.json,
-  };
+  });
   assert.ok(Buffer.byteLength(JSON.stringify(reviewInput)) > 32768);
   const reviewed = await call("proposals", reviewInput);
   assert.equal(reviewed.status, 200, JSON.stringify(reviewed.value));
@@ -539,6 +564,10 @@ test("テーマの実SQLite台帳とHTTPで生成・検証・再起動・キー�
     reviewed.value.status,
     "complete",
     JSON.stringify(reviewed.value),
+  );
+  topicGenerationReplySchema.parse(reviewed.value);
+  topicGenerationReplySchema.parse(
+    (await call("operations", reviewInput)).value,
   );
   assert.equal(reviewed.value.draft.allChecksPassed, true);
   const before = (await f.api("/api/budget")).value;
@@ -605,20 +634,29 @@ test("別の利用者のテーマ候補を照会・検証せず予算と操作�
       csrf: sessions[user].csrf,
       headers: { "X-Library-Account": sessions[user].account },
     });
-  const a = (await call("test-a", "proposals", input)).value;
+  const approvedInput = await approveTopic(f, input);
+  const a = (await call("test-a", "proposals", approvedInput)).value;
   assert.equal(a.status, "complete");
   assert.equal(
     (await call("test-b", "operations", input)).value.status,
     "not-found",
   );
-  const rejected = await call("test-b", "proposals", {
-    ...input,
-    requestId: randomUUID(),
-    purpose: "evidence-check",
-    generationRequestId: input.requestId,
-    generatorInvocation: a.draft.invocation.id,
-    draftRaw: a.draft.json,
-  });
+  const rejected = await call(
+    "test-b",
+    "proposals",
+    await approveTopic(
+      f,
+      {
+        ...input,
+        requestId: randomUUID(),
+        purpose: "evidence-check",
+        generationRequestId: input.requestId,
+        generatorInvocation: a.draft.invocation.id,
+        draftRaw: a.draft.json,
+      },
+      "test-b",
+    ),
+  );
   assert.equal(rejected.status, 409);
   assert.deepEqual(rejected.value, {
     status: "unissued-draft",
@@ -629,18 +667,27 @@ test("別の利用者のテーマ候補を照会・検証せず予算と操作�
     0,
   );
   const beforeA = (await f.api("/api/budget")).value;
-  const b = (await call("test-b", "proposals", input)).value;
+  const b = (
+    await call("test-b", "proposals", await approveTopic(f, input, "test-b"))
+  ).value;
   assert.equal(b.status, "complete");
   assert.notEqual(b.draft.invocation.id, a.draft.invocation.id);
   assert.notEqual(b.account, a.account);
   assert.deepEqual((await f.api("/api/budget")).value, beforeA);
-  assert.deepEqual((await call("test-a", "operations", input)).value, a);
+  assert.deepEqual(
+    (await call("test-a", "operations", approvedInput)).value,
+    a,
+  );
   assert.equal(f.outbound(), 0);
 });
 test("テーマ配送は不正な所有者・CSRF・Origin・入力を予約前に拒否する", async (t) => {
   const f = await fixture(t),
     account = await hash("local-only:test-a"),
-    input = topicInput();
+    input = {
+      ...topicInput(),
+      approvedMaxMilliYen: 1000,
+      approvedQuoteDigest: "a".repeat(64),
+    };
   const csrf = (await f.api("/api/session")).value.csrfToken;
   await f.api("/api/credentials/openai", {
     method: "POST",
@@ -741,7 +788,10 @@ test("HTTPの結果不明照会はSQLiteの予約を保持し入力の差し替�
   });
   const request = JSON.parse(topicRequestRaw);
   request.learningGoal = "WAIT-MOCK";
-  const input = { ...topicInput(), requestRaw: JSON.stringify(request) };
+  const input = await approveTopic(f, {
+    ...topicInput(),
+    requestRaw: JSON.stringify(request),
+  });
   const call = (path, body) =>
     f.api(`/api/topic-textbooks/${path}`, {
       method: "POST",

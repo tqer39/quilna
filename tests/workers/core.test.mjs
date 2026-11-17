@@ -900,3 +900,187 @@ for (const stage of ["caa", "topic"])
         crypto.subtle.decrypt = decrypt;
       }
     });
+test("テーマの見積りは復号・予約をせず選んだモデルと段階に結び付く", async () => {
+  const f = await topicFixtureCore();
+  const before = structuredClone([...f.storage.data]);
+  const status = await f.core.topicStatus(f.owner);
+  assert.equal(status.mode, "test-only");
+  assert.equal(status.quotes.length, 2);
+  assert.ok(
+    status.quotes.every(
+      (q) => q.modelId === registry[0].id && q.maxMilliYen > 0,
+    ),
+  );
+  assert.notEqual(status.quotes[0].quoteDigest, status.quotes[1].quoteDigest);
+  assert.deepEqual([...f.storage.data], before);
+  assert.equal(f.calls(), 0);
+});
+test("同意した予約額や設定の見積りが変わるとテーマを送信しない", async () => {
+  const f = await topicFixtureCore();
+  const quote = (await f.core.topicStatus(f.owner)).quotes.find(
+    (q) => q.purpose === "book-addition",
+  );
+  const input = {
+    ...topicRequest(),
+    approvedMaxMilliYen: quote.maxMilliYen - 1,
+    approvedQuoteDigest: quote.quoteDigest,
+  };
+  assert.deepEqual(await f.core.proposeTopic(f.owner, input), {
+    status: "cost-limit",
+  });
+  assert.equal(f.storage.data.get("budget"), undefined);
+  f.configuration.policy.fixedMilliYen++;
+  assert.deepEqual(
+    await f.core.proposeTopic(f.owner, {
+      ...input,
+      approvedMaxMilliYen: quote.maxMilliYen,
+    }),
+    { status: "quote-changed" },
+  );
+  assert.equal(f.storage.data.get("budget"), undefined);
+  assert.equal(f.calls(), 0);
+});
+test("見積り付き操作も同意した入力を保持し費用の失効後に無料で回収する", async () => {
+  const f = await topicFixtureCore();
+  const quote = (await f.core.topicStatus(f.owner)).quotes.find(
+    (q) => q.purpose === "book-addition",
+  );
+  const input = {
+    ...topicRequest(),
+    approvedMaxMilliYen: quote.maxMilliYen,
+    approvedQuoteDigest: quote.quoteDigest,
+  };
+  const result = await f.core.proposeTopic(f.owner, input);
+  assert.equal(result.status, "complete");
+  f.configuration.policy.checkedAt = "2020-01-01T00:00:00.000Z";
+  assert.deepEqual(await f.core.proposeTopic(f.owner, input), result);
+  assert.deepEqual(await f.core.lookupTopic(f.owner, input), result);
+  assert.equal((await f.core.topicStatus(f.owner)).mode, "unconnected");
+  assert.equal(f.calls(), 1);
+});
+
+test("検証の見積り失効後は同じ操作IDで再確認し、古い同意が競合しても二重送信しない", async () => {
+  const f = await topicFixtureCore();
+  const input = topicRequest(),
+    generated = await f.core.proposeTopic(f.owner, input);
+  const quote = (await f.core.topicStatus(f.owner)).quotes.find(
+    (q) => q.purpose === "evidence-check",
+  );
+  const review = {
+    ...input,
+    requestId: randomUUID(),
+    purpose: "evidence-check",
+    generationRequestId: input.requestId,
+    generatorInvocation: generated.draft.invocation.id,
+    draftRaw: generated.draft.json,
+    approvedMaxMilliYen: quote.maxMilliYen,
+    approvedQuoteDigest: quote.quoteDigest,
+  };
+  f.configuration.registry = f.configuration.registry.map((m) => ({
+    ...m,
+    inputUsdMicrosPerMillion: m.inputUsdMicrosPerMillion + 1,
+  }));
+  assert.equal(
+    (await f.core.proposeTopic(f.owner, review)).status,
+    "cost-limit",
+  );
+  assert.equal((await f.core.lookupTopic(f.owner, review)).status, "not-found");
+  const current = (await f.core.topicStatus(f.owner)).quotes.find(
+    (q) => q.purpose === "evidence-check",
+  );
+  const renewed = {
+    ...review,
+    approvedMaxMilliYen: current.maxMilliYen,
+    approvedQuoteDigest: current.quoteDigest,
+  };
+  const result = await f.core.proposeTopic(f.owner, renewed);
+  assert.equal(result.status, "complete");
+  assert.deepEqual(await f.core.proposeTopic(f.owner, review), result);
+  assert.deepEqual(await f.core.lookupTopic(f.owner, review), result);
+  assert.equal(f.calls(), 2);
+  assert.equal(f.storage.data.get("budget").records.length, 2);
+  assert.equal(
+    (
+      await f.core.lookupTopic(f.owner, {
+        ...renewed,
+        draftRaw: renewed.draftRaw + " ",
+      })
+    ).status,
+    "id-conflict",
+  );
+});
+test("実配送と異なるprotocolのadapterは見積りにも出さない", async () => {
+  const f = await topicFixtureCore();
+  const make = f.configuration.makeAdapter;
+  f.configuration.makeAdapter = (...args) => ({
+    ...make(...args),
+    protocol: "unsupported",
+  });
+  assert.equal((await f.core.topicStatus(f.owner)).mode, "unconnected");
+  assert.equal(f.calls(), 0);
+});
+test("未送信と確認した検証だけを同じIDで明示再承認し、有料の結果は再送しない", async () => {
+  const f = await topicFixtureCore();
+  const generated = await f.core.proposeTopic(f.owner, topicRequest());
+  const input = {
+    ...topicRequest(),
+    requestId: randomUUID(),
+    purpose: "evidence-check",
+    generationRequestId: topicRequest().requestId,
+    generatorInvocation: generated.draft.invocation.id,
+    draftRaw: generated.draft.json,
+  };
+  const make = f.configuration.makeAdapter;
+  f.configuration.makeAdapter = (p) =>
+    make(p, async () => {
+      throw Error("synthetic unavailable");
+    });
+  const failure = await f.core.proposeTopic(f.owner, input);
+  assert.equal(failure.status, "rejected");
+  assert.equal((await f.core.lookupTopic(f.owner, input)).retryable, true);
+  assert.equal(f.storage.data.get("budget").records.at(-1).knownUnsent, true);
+  f.configuration.makeAdapter = make;
+  assert.equal((await f.core.proposeTopic(f.owner, input)).status, "rejected");
+  assert.equal(f.calls(), 1);
+  const result = await f.core.proposeTopic(f.owner, {
+    ...input,
+    retryUnsent: true,
+  });
+  assert.equal(result.status, "complete");
+  assert.deepEqual(
+    await f.core.proposeTopic(f.owner, { ...input, retryUnsent: true }),
+    result,
+  );
+  assert.equal((await f.core.lookupTopic(f.owner, input)).retryable, undefined);
+  assert.equal(f.calls(), 2);
+  assert.equal(f.storage.data.get("budget").records.length, 2);
+});
+for (const outcome of ["invalid-output", "unknown"])
+  test(`送信後の${outcome}は未送信の再承認を付けても再送しない`, async () => {
+    const f = await topicFixtureCore({
+      output: async () => {
+        if (outcome === "unknown") throw Error("synthetic dispatched failure");
+        return {
+          json: "",
+          usage: { inputTokens: 0, outputTokens: 0 },
+          outcome: "invalid-output",
+        };
+      },
+    });
+    const input = topicRequest(),
+      result = await f.core.proposeTopic(f.owner, input);
+    assert.equal(result.status, outcome === "unknown" ? "unknown" : "rejected");
+    assert.equal(
+      (await f.core.lookupTopic(f.owner, input)).retryable,
+      undefined,
+    );
+    assert.deepEqual(
+      await f.core.proposeTopic(f.owner, { ...input, retryUnsent: true }),
+      result,
+    );
+    assert.equal(f.calls(), 1);
+    assert.equal(
+      f.storage.data.get("budget").records.at(-1).knownUnsent,
+      undefined,
+    );
+  });

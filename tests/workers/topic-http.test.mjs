@@ -22,6 +22,8 @@ const input = {
   purpose: "book-addition",
   modelId: "openai-luna-candidate",
   approvedPublicText: true,
+  approvedMaxMilliYen: 1000,
+  approvedQuoteDigest: "a".repeat(64),
 };
 async function setup({
   authenticate = async () => ownerA,
@@ -287,3 +289,65 @@ test("アカウント付き応答のbyte上限ちょうどを許し1byte超過�
     else assert.equal(Buffer.byteLength(await response.text()), 262144);
   }
 });
+for (const credentialsEnabled of [true, false])
+  test(`テーマstatusは秘密を出さず機能gate ${credentialsEnabled} を保持する`, async () => {
+    let reads = 0;
+    const core = {
+      authorize: async (p, csrf, mutating) => {
+        assert.equal(mutating, false);
+        return hash(p.subject);
+      },
+      topicStatus: async () => {
+        reads++;
+        return { mode: "test-only", quotes: [{ synthetic: true }], budget: {} };
+      },
+      session: async () => ({ csrfToken: "synthetic-csrf-token" }),
+    };
+    const f = await setup({
+      credentialsEnabled,
+      fetch: (req) => handleAccount(core, req),
+    });
+    const request = new Request(`${origin}/api/topic-textbooks/status`, {
+      headers: { Origin: origin, "X-Library-Account": f.account },
+    });
+    const response = await f.handler(request, f.env),
+      body = await response.json();
+    assert.equal(response.status, 200);
+    assert.equal(reads, 1);
+    assert.equal(body.mode, credentialsEnabled ? "test-only" : "unconnected");
+    assert.deepEqual(
+      body.quotes,
+      credentialsEnabled ? [{ synthetic: true }] : [],
+    );
+    assert.equal(body.csrfToken, "synthetic-csrf-token");
+  });
+for (const kind of ["account", "origin", "method"])
+  test(`テーマstatusの不正な${kind}を配送前に拒否する`, async () => {
+    const f = await setup();
+    const response = await f.handler(
+      new Request(`${origin}/api/topic-textbooks/status`, {
+        method: kind === "method" ? "POST" : "GET",
+        headers: {
+          Origin: kind === "origin" ? "https://other.test" : origin,
+          "X-Library-Account": kind === "account" ? "b".repeat(64) : f.account,
+        },
+      }),
+      f.env,
+    );
+    assert.equal(response.status, kind === "method" ? 404 : 403);
+    assert.equal(f.calls.length, 0);
+  });
+for (const missing of ["both", "amount", "digest"])
+  test(`HTTPの費用承認${missing}の不足を予約前に拒否する`, async () => {
+    const f = await setup(),
+      value = { ...input };
+    if (missing !== "digest") delete value.approvedMaxMilliYen;
+    if (missing !== "amount") delete value.approvedQuoteDigest;
+    const response = await f.handler(
+      f.request("proposals", JSON.stringify(value)),
+      f.env,
+    );
+    assert.equal(response.status, 400);
+    assert.equal((await response.json()).status, "cost-unapproved");
+    assert.equal(f.calls.length, 0);
+  });
