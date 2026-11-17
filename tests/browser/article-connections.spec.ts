@@ -783,16 +783,14 @@ for (const outcome of ["success", "failure"] as const) {
     await openReaderTools(page);
     await page.locator("#rss-connections > details > summary").click();
     await page.evaluate((outcome) => {
-      const transaction = IDBDatabase.prototype.transaction;
       const getAll = IDBIndex.prototype.getAll;
       let first = true,
         held: IDBTransaction | undefined;
-      IDBDatabase.prototype.transaction = function (
-        ...args: Parameters<IDBDatabase["transaction"]>
-      ) {
-        const tx = transaction.apply(this, args);
+      IDBIndex.prototype.getAll = function (...args) {
+        const tx = this.objectStore.transaction;
+        // 接続確認用の空transactionではなく、実際の一覧取得だけを保留する。
         if (
-          this.name === "quilna.connections.v1" &&
+          tx.db.name === "quilna.connections.v1" &&
           tx.mode === "readonly" &&
           first
         ) {
@@ -823,11 +821,7 @@ for (const outcome of ["success", "failure"] as const) {
             });
           }
         }
-        return tx;
-      };
-      IDBIndex.prototype.getAll = function (...args) {
-        const request = getAll.apply(this, args),
-          tx = this.objectStore.transaction;
+        const request = getAll.apply(this, args);
         if (tx === held && outcome === "failure")
           request.addEventListener("success", () => tx.abort());
         return request;

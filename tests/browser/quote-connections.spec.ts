@@ -445,16 +445,14 @@ for (const outcome of ["success", "failure"] as const)
     await fixture(page);
     await begin(page);
     await page.evaluate((outcome) => {
-      const transaction = IDBDatabase.prototype.transaction;
       const getAll = IDBIndex.prototype.getAll;
       let first = true,
         held: IDBTransaction | undefined;
-      IDBDatabase.prototype.transaction = function (
-        ...args: Parameters<IDBDatabase["transaction"]>
-      ) {
-        const tx = transaction.apply(this, args);
+      IDBIndex.prototype.getAll = function (...args) {
+        const tx = this.objectStore.transaction;
+        // 接続確認用の空transactionではなく、実際の一覧取得だけを保留する。
         if (
-          this.name === "quilna.quote-connections.v1" &&
+          tx.db.name === "quilna.quote-connections.v1" &&
           tx.mode === "readonly" &&
           first
         ) {
@@ -476,9 +474,6 @@ for (const outcome of ["success", "failure"] as const)
               },
             });
         }
-        return tx;
-      };
-      IDBIndex.prototype.getAll = function (...args) {
         const r = getAll.apply(this, args);
         if (this.objectStore.transaction === held && outcome === "failure")
           r.addEventListener("success", () => held!.abort());
@@ -671,14 +666,13 @@ test("late target lookup cannot erase a save failure or its draft", async ({
   await begin(page);
   await connect(page, "保存済みの理由");
   await page.evaluate(() => {
-    const transaction = IDBDatabase.prototype.transaction;
+    const getAll = IDBIndex.prototype.getAll;
     let first = true;
-    IDBDatabase.prototype.transaction = function (
-      ...args: Parameters<IDBDatabase["transaction"]>
-    ) {
-      const tx = transaction.apply(this, args);
+    IDBIndex.prototype.getAll = function (...args) {
+      const tx = this.objectStore.transaction;
+      // 引用の一覧取得を待たせ、接続確認だけではゲートを消費しない。
       if (
-        this.name === "quilna.highlights.v1" &&
+        tx.db.name === "quilna.highlights.v1" &&
         tx.mode === "readonly" &&
         first
       ) {
@@ -698,7 +692,7 @@ test("late target lookup cannot erase a save failure or its draft", async ({
           },
         });
       }
-      return tx;
+      return getAll.apply(this, args);
     };
     const put = IDBObjectStore.prototype.put;
     IDBObjectStore.prototype.put = function (...args: Parameters<typeof put>) {

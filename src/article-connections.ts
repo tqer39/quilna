@@ -1,4 +1,8 @@
-import { libraryName, openLibraryDatabase } from "./library-context";
+import {
+  guardLibraryConnection,
+  libraryName,
+  openLibraryDatabase,
+} from "./library-context";
 import type { FeedArticle } from "./feed-parser";
 
 export type ArticleReference = { id: string; title: string; url: string };
@@ -64,7 +68,12 @@ export function validConnection(value: unknown): value is ArticleConnection {
 let connection: Promise<IDBDatabase> | undefined;
 /** Open this library's article relationships, keeping saved entries intact on failure. */
 export function openConnections(): Promise<IDBDatabase> {
-  if (connection) return connection;
+  if (connection)
+    return connection.then((db) => {
+      // 復元が他の領域へ書く前に、通知のなかったcloseも検出する。
+      db.transaction("connections");
+      return db;
+    });
   let failed = false;
   const pending = new Promise<IDBDatabase>((resolve, reject) => {
     const request = openLibraryDatabase(connectionDatabase, 1);
@@ -88,10 +97,9 @@ export function openConnections(): Promise<IDBDatabase> {
         db.close();
         return;
       }
-      db.onversionchange = () => {
-        db.close();
+      guardLibraryConnection(db, () => {
         if (connection === pending) connection = undefined;
-      };
+      });
       resolve(db);
     };
   });

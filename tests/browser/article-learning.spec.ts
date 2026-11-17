@@ -513,16 +513,14 @@ for (const outcome of ["success", "failure"] as const)
     await fixture(page);
     await begin(page);
     await page.evaluate((outcome) => {
-      const transaction = IDBDatabase.prototype.transaction;
       const getAll = IDBIndex.prototype.getAll;
       let first = true,
         held: IDBTransaction | undefined;
-      IDBDatabase.prototype.transaction = function (
-        ...args: Parameters<IDBDatabase["transaction"]>
-      ) {
-        const tx = transaction.apply(this, args);
+      IDBIndex.prototype.getAll = function (...args) {
+        const tx = this.objectStore.transaction;
+        // 接続確認用の空transactionではなく、実際の一覧取得だけを保留する。
         if (
-          this.name === "quilna.learning.v1" &&
+          tx.db.name === "quilna.learning.v1" &&
           tx.mode === "readonly" &&
           first
         ) {
@@ -544,9 +542,6 @@ for (const outcome of ["success", "failure"] as const)
               },
             });
         }
-        return tx;
-      };
-      IDBIndex.prototype.getAll = function (...args) {
         const r = getAll.apply(this, args);
         if (this.objectStore.transaction === held && outcome === "failure")
           r.addEventListener("success", () => held!.abort());

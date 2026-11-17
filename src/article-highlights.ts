@@ -1,4 +1,8 @@
-import { libraryName, openLibraryDatabase } from "./library-context";
+import {
+  guardLibraryConnection,
+  libraryName,
+  openLibraryDatabase,
+} from "./library-context";
 // References use UTF-16 offsets into an exact original/translation version.
 export type HighlightSource = {
   articleId: string;
@@ -79,7 +83,12 @@ export function highlightMatches(
 let connection: Promise<IDBDatabase> | undefined;
 /** Cache this library's highlight connection without replacing notes after a failed open. */
 export function openHighlights(): Promise<IDBDatabase> {
-  if (connection) return connection;
+  if (connection)
+    return connection.then((db) => {
+      // 復元が他の領域へ書く前に、通知のなかったcloseも検出する。
+      db.transaction("highlights");
+      return db;
+    });
   let failed = false;
   const pending = new Promise<IDBDatabase>((resolve, reject) => {
     const request = openLibraryDatabase(highlightDatabase, 1);
@@ -103,10 +112,9 @@ export function openHighlights(): Promise<IDBDatabase> {
         db.close();
         return;
       }
-      db.onversionchange = () => {
-        db.close();
+      guardLibraryConnection(db, () => {
         if (connection === pending) connection = undefined;
-      };
+      });
       resolve(db);
     };
   });
