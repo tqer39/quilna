@@ -572,8 +572,10 @@ test("通常のAccountVaultCoreはテーマ生成を有効にしない", async (
 });
 test("テーマの結果不明予約が同じ所有者のCAAも止める", async () => {
   const f = await topicFixtureCore({
-    output: async () => new Promise(() => {}),
-    extra: { timeoutMs: 5 },
+    // 送信後の結果保持を検査するため、資格情報の準備時間との競争を避ける。
+    output: async () => {
+      throw Error("合成adapterの送信後に応答を失う");
+    },
   });
   const result = await f.core.proposeTopic(f.owner, topicRequest());
   assert.equal(result.status, "unknown");
@@ -664,8 +666,10 @@ test("キー削除で進行中の応答を伏せても同じ所有者は有料�
 });
 test("保存済みの予約と結果不明は照会しても解除・再送しない", async () => {
   const f = await topicFixtureCore({
-    output: async () => new Promise(() => {}),
-    extra: { timeoutMs: 5 },
+    // 送信後の結果保持を検査するため、資格情報の準備時間との競争を避ける。
+    output: async () => {
+      throw Error("合成adapterの送信後に応答を失う");
+    },
   });
   const input = topicRequest();
   const result = await f.core.proposeTopic(f.owner, input);
