@@ -8,7 +8,7 @@ The owner's clarification on 2026-11-17 in [Issue #7](https://github.com/tqer39/
 An article can lead to “explore this topic with this textbook”; the textbook teaches the underlying topic and can serve readers arriving from different articles.
 Stable technical material can remain fixed between deliberate revisions. Reading an article or receiving an RSS update must not require generating a new textbook.
 
-This page specifies the browser direction and separates implemented steps from remaining acceptance. The [version-2 file workflow](textbook-sharing.md#file-contract-and-validation) supports standalone topic textbooks with independent source snapshots. Readers can manually connect articles to retained topic editions and record local correction/withdrawal judgments. Literal theme-name suggestions from retained editions are also available. A browser authoring flow is available for injected test connections, while live authoring and owner usability acceptance remain incomplete.
+This page specifies the browser direction and separates implementation from acceptance. Following the owner’s 2026-11-17 usability rejection of the suggestion/reason workflow, article text links directly to retained theme textbooks. Textbook creation is separate asynchronous work in [Issue #202](https://github.com/tqer39/quilna/issues/202); readers do not quote an article to request a textbook. The [version-2 file workflow](textbook-sharing.md#file-contract-and-validation) and local correction/withdrawal records remain available. Live authoring and owner usability acceptance remain incomplete.
 The existing CAA lesson is a fixed demo; imported version-1 textbook files remain readable through the same file workflow.
 OpenAI was selected for the next generation integration, and the owner requested secure creation of a new key.
 Key setup, sending scope, model selection and a concrete live-run spending allowance are not yet complete.
@@ -18,23 +18,25 @@ Explicit file sharing remains subject to the existing content-sharing checks in 
 
 ## Reading to deeper understanding
 
-1. Read an article without entering a learning workflow.
-2. Optionally open a small set of relevant topics, with a reason that connects each topic to the article.
-3. Preview the textbook's scope, prerequisites, evidence and available edition before opening it.
-4. Read the same retained edition regardless of the referring article; answer optional comprehension questions with private history.
-5. Return to the original article and reading position. Neither opening a textbook nor following a link marks learning as complete.
+1. Read an article normally.
+2. Follow a linked technical term directly to its retained textbook in another tab.
+3. Inspect that textbook's scope, prerequisites and sources, and read its explanations or optional questions.
+4. Reuse the same edition and private answers from other articles.
+5. Close the tab to return to the original article position. Following a link does not mark learning as complete.
 
-For example, two articles discussing certificate issuance can lead to the same CAA textbook.
-An article mentioning asynchronous processing may lead to an independently maintained introduction to asynchronous processing.
-These examples do not claim that such links or a general topic catalog already exist.
-Irrelevant suggestions must be dismissible, and topic links must support keyboard navigation and narrow screens without crowding article text.
-When no suitable textbook exists, show that absence truthfully; do not invent a generated book or start a paid request automatically.
+## Links in article text
 
-## Manually connecting retained editions
+The current linking vocabulary is the theme name in each validated, retained version-2 textbook. Names match literally, without case sensitivity for Latin text and without matching part of a Latin word. Link only the first occurrence of each term, up to 30 per article. Existing source links and code are excluded. Matching does not fetch a source, create a book, send article text or save a relevance reason.
 
-Open **深掘りできる教材** in the article tools, select **教材を関連づける**, choose a saved version-2 textbook and enter a required reason. The preview shows its learning goal and opens its full scope, prerequisites and sources in another tab. No suitable file means no available choice; importing a file is explicit. Version-1 books remain readable but are not choices for these topic links.
+Use the latest eligible retained edition per textbook; exclude withdrawn editions, unreadable maintenance records and corrections whose replacement cannot be verified. A name shared by different textbooks opens a filtered textbook list so the reader chooses the destination. Names never merge topic IDs or answer histories. The link contains only the edition or theme name, opens with no referrer, and preserves article text, selection, highlights and reading position. Missing textbooks leave ordinary text. Unreadable metadata withholds links and leaves the article readable.
 
-**教材を読む（別タブ）** opens the exact retained edition without sending the referring article in the URL or referrer. Closing that tab returns to the original article position. Multiple articles reuse the same edition and its private answers without a generation request. **この記事との関連づけを外す** removes only that article's link, retaining the textbook, answers and other links. There are no automatic suggestions in this step.
+These derived links are not saved article-to-textbook records and are not included in backups or provider input. Existing personal mappings and their source snapshots remain unchanged.
+
+## Earlier explicit article mappings
+
+The earlier optional mapping tools remain for existing personal records; they are not required to follow a linked term. Open **深掘りできる教材** in the article tools, select **教材を関連づける**, choose a saved version-2 textbook and enter a required reason. The preview shows its learning goal and opens its full scope, prerequisites and sources in another tab. No suitable file means no available choice; importing a file is explicit. Version-1 books remain readable but are not choices for these topic links.
+
+**教材を読む（別タブ）** opens the exact retained edition without sending the referring article in the URL or referrer. Closing that tab returns to the original article position. Multiple articles reuse the same edition and its private answers without a generation request. **この記事との関連づけを外す** removes only that article's link, retaining the textbook, answers and other links. These explicit records are separate from the derived word links.
 
 The separate, library-scoped `quilna.article-textbooks.v1` database retains the article ID/title/URL, original-or-translated representation, language, body fingerprint and first 1,000 Unicode code points, plus exact textbook/topic identity, file digest, reason, creation time and revision. Changing the body, language or original/translated representation reports a difference without moving the saved link. Limits are 20 links per article, 20,000 total and 2,000 UTF-16 units per reason. Saving compares revisions in one write transaction; failure retains the draft. A conflicting reason requires reloading and explicitly choosing to continue the draft before overwriting it. If another tab deleted the link, that choice prepares recreation; if it created the same link first, it retains that record's creation time. Different source or textbook identities cannot be adopted into the existing draft. Drafts survive article switches within the open page, but not reload or page closure. Normal close calls, close events and `InvalidStateError` discard the cached connection. The next read or explicit retry can reopen it; reopening preserves stored records and never automatically replays a failed write. Cached connections are checked before being supplied to backup/restore, so a known closed connection is refused before restore writes to other stores. This does not make multi-database restore atomic against failures occurring later.
 
@@ -47,8 +49,8 @@ Private links are excluded from textbook JSON exports and provider input. They a
 - A topic identifies a learning subject with a stable opaque ID and a human-readable name. Create or select it explicitly; matching labels are candidates for reuse, not permission to merge topics or histories automatically.
 - A textbook has its own identity and immutable editions. Its learning goal, prerequisites, explanations, examples and questions describe the topic.
 - The textbook's evidence consists of retained, identified source material that supports its teaching claims. A referring article is not automatically evidence for every explanation or answer.
-- An article-to-textbook link records why the topic is relevant, the referring article/version and the destination textbook/edition. A suggestion remains distinct from a reader-confirmed link.
-- Personal answers, notes, progress, reflections, confirmed links, dismissed suggestions and referring-article records remain private to the current library and outside reusable content, textbook-file exports and provider input, as in the existing file workflow.
+- A derived word link is navigation to a retained edition. Earlier explicit mappings also retain a private reason and referring-article snapshot; following a word link does not create such a record.
+- Personal answers, notes, progress, reflections, earlier confirmed links and referring-article records remain private to the current library and outside reusable content, textbook-file exports and provider input, as in the existing file workflow.
 
 Updating or removing a referring article must not silently replace a textbook, move an answer to a new edition, delete learning history or grant source-sharing rights.
 Changing a textbook's explanation or answer creates a deliberate new edition with the previous edition and its history retained.
@@ -65,7 +67,7 @@ Article text, personal annotations and answer history are not implicitly approve
 The topic, learning goal and separately selected public evidence are candidate inputs; their final scope still requires agreement.
 Key creation alone does not authorize a request, payment, deposit, publication or a shared operator key.
 
-In the textbook library, open **テーマの教材を作る** while signed into an account library.
+The earlier authoring prototype exposes **テーマの教材を作る** in the signed-in textbook library. This excerpt-based form and its receipts are existing implementation, not acceptance of the asynchronous workflow requested in #202.
 Choose a new topic or explicitly reuse an existing topic ID, enter the learning goal and paste one to three public-source excerpts (up to 6,000 UTF-8 bytes each). No article, note or answer history is selected automatically, and source URLs are not fetched.
 Preview the exact topic, goal, excerpts, model, data conditions and per-stage maximum cost before confirming generation. Review is a separate confirmed request with its own quote; a successful operation does not imply a passing review. A rejected review cannot be saved as a textbook and is not automatically retried.
 Only an accepted, explicitly saved candidate becomes an immutable local edition with its source snapshots and review. Its deterministic book identity supports repeated local saving without another provider call or changing existing answers.
@@ -94,19 +96,11 @@ The existing `quilna.shared-textbooks.v1` database moves from IndexedDB schema 1
 An unreadable notice is retained and prevents new answers and new article links for that edition; other editions remain available. Use a compatible app version to inspect an unknown format. The app does not ignore or delete the record to resume answering, because it may contain a withdrawal. The text and earlier answers remain readable, and the textbook file can still be exported.
 An explicit reload keeps editing and saving disabled until both the retained record and replacement choices have been checked. Notice and focus signals received during an operation are processed afterward. New article-link drafts retain their source and reason while withdrawn choices are removed; a selected edition that is no longer eligible cannot be saved as a new link.
 
-## Suggestions from retained textbooks
-
-**保存済み教材の候補** searches the currently displayed original or translated body for literal theme names in validated, retained version-2 textbooks. It shows at most three candidates with the exact matching excerpt, learning goal and a separate-tab link to inspect scope and sources. Latin names match without case sensitivity and avoid partial Latin words. This is a name match, not semantic relevance or factual verification. It does not fetch sources, generate content or call a provider.
-
-Candidates use the latest eligible retained edition per textbook and one representative per opaque topic ID. Equal labels do not merge identities or answers. Withdrawn editions, unreadable maintenance records and corrections with an unavailable replacement are excluded. Confirmed editions remain in the existing links list; suggestions never return the same textbook at or below its confirmed version. Opening a preview does not create a link or learning record; **この候補を関連づける** starts a draft with the exact edition, displayed source version and an editable quoted reason. Only explicit reason saving confirms the link. Changes to the displayed article cannot replace that draft's source or input.
-
-**この記事ではこのテーマを候補に出さない** hides a topic for this article, with an explicit restore action under **非表示にしたテーマを確認**. It preserves confirmed links, textbooks and answers. The account-scoped `quilna.topic-textbook-preferences.v1` database retains at most 100 hidden topics per article and 20,000 total. These private preferences are excluded from textbook exports, article backups and provider inputs; clearing browser storage loses them. Unknown formats and failed reads suppress suggestions with an error while preserving manual linking and retained data. If the textbook catalog itself cannot be read, existing links remain visible, editable and removable while new suggestions stop. Failed writes are not reported as successful.
-
 ## Browser acceptance
 
 - Two different articles can open the same textbook edition without regenerating it; a later RSS update leaves its content and answers intact.
 - Reuse follows explicit topic identity, not equal labels; separate topics with the same name and distinct users' libraries are not merged.
-- A reader can inspect the reason for a link, distinguish suggestions from confirmed links, reject an irrelevant suggestion and return to the original article position.
+- A reader can follow a technical term directly to its textbook without opening suggestions, quoting the article or saving a reason, then return to the original article position.
 - A textbook teaches its topic independently of either article, while its factual claims and questions retain appropriate evidence.
 - Old CAA-demo history, imported version-1 files and their answers survive the addition of the new workflow and any migration failure.
 - A correction identifies the replacement edition, preserves the old link and answers, and requires an explicit choice to open the replacement. Withdrawn editions do not appear as new recommendations.

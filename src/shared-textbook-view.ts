@@ -159,15 +159,18 @@ function download(book: SharedTextbook) {
 
 /** Connect local file review, an independent imported library and recipient-only answers. */
 export async function sharedTextbookView(root: HTMLElement) {
-  document.title = "受け取った教材 | Quilna";
+  const term =
+    new URL(location.href).searchParams.get("term")?.slice(0, 500).trim() ?? "";
+  document.title = "教材 | Quilna";
   root.className = "shared-textbook-page";
   const header = el("header"),
     back = el("a", "記事一覧へ");
   back.href = "/?view=feeds";
-  header.append(el("h1", "受け取った教材"), back);
+  header.append(el("h1", "教材"), back);
   const library = el("div");
   root.append(header, library);
-  library.append(
+  const importHelp = el("div");
+  importHelp.append(
     el(
       "p",
       "教材ファイルを確認して、このブラウザに保存できます。本文・問題・解説・出典と版を保持します。回答履歴は自分のブラウザだけに保存し、書き出しには含めません。教材ファイルの処理はこのブラウザ内で行います。",
@@ -196,16 +199,22 @@ export async function sharedTextbookView(root: HTMLElement) {
   const reader = el("main");
   reader.setAttribute("aria-label", "共有教材の読書");
   reader.hidden = true;
+  const importTools = el("details");
+  importTools.append(
+    el("summary", "教材ファイルを取り込む"),
+    importHelp,
+    label,
+    input,
+    preview,
+  );
   library.append(
+    list,
+    listWarning,
     topicGenerationView(async (id) => {
       await showList(id);
     }),
-    label,
-    input,
+    importTools,
     notice,
-    preview,
-    list,
-    listWarning,
   );
   root.append(reader);
   let fileEpoch = 0,
@@ -252,7 +261,7 @@ export async function sharedTextbookView(root: HTMLElement) {
     selectedBook = "";
     clearRouteNotice();
     if (navigate) pushReaderURL(bookURL());
-    document.title = "受け取った教材 | Quilna";
+    document.title = "教材 | Quilna";
     reader.replaceChildren();
     reader.hidden = true;
     library.hidden = false;
@@ -330,14 +339,26 @@ export async function sharedTextbookView(root: HTMLElement) {
         document.activeElement === focused;
       listWarning.replaceChildren();
       list.replaceChildren(el("h2", "保存した教材"));
-      if (!books.length)
+      if (term) {
+        const all = el("a", "すべての教材");
+        all.href = "/?view=textbooks";
+        list.append(el("p", `「${term}」の教材`), all);
+      }
+      const matchesTerm = (book: (typeof books)[number]) =>
+        !term ||
+        (book.request.schemaVersion === 2 &&
+          book.request.topic.name.trim().toLowerCase() === term.toLowerCase());
+      if (!books.some(matchesTerm))
         list.append(
           el(
             "p",
-            "まだ教材を取り込んでいません。上のファイル欄から確認できます。",
+            term
+              ? "この名前の教材は現在のライブラリにありません。"
+              : "まだ教材を取り込んでいません。「教材ファイルを取り込む」から追加できます。",
           ),
         );
       for (const [i, book] of books.entries()) {
+        if (!matchesTerm(book)) continue;
         const { notice, error } = states[i];
         const row = el("div", undefined, "shared-textbook-row");
         const read = button(
@@ -368,7 +389,12 @@ export async function sharedTextbookView(root: HTMLElement) {
         if (book.id === restoreFocus) read.focus();
       }
       if (restoreWarningFocus)
-        (list.querySelector<HTMLElement>("button") ?? input).focus({
+        (
+          list.querySelector<HTMLElement>("button") ??
+          (importTools.open
+            ? input
+            : importTools.querySelector<HTMLElement>("summary"))
+        )?.focus({
           preventScroll: true,
         });
     } catch (error) {
@@ -710,6 +736,7 @@ export async function sharedTextbookView(root: HTMLElement) {
   }
 
   input.addEventListener("change", () => {
+    importTools.open = true;
     const epoch = ++fileEpoch,
       file = input.files?.[0];
     preview.replaceChildren();

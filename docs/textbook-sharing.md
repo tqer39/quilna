@@ -4,14 +4,14 @@
 
 ## Browser workflow
 
-Open **設定 → 受け取った教材 → 教材ファイルの取り込み・読書へ**, or `/?view=textbooks`.
+Open **教材** in the article header, or `/?view=textbooks`, to see saved textbooks first. **教材ファイルを取り込む** reveals file controls, import instructions and storage details. The older **設定 → 受け取った教材 → 教材ファイルの取り込み・読書へ** link also remains available.
 Select a compatible JSON file, inspect its edition, learning goal, section list, source excerpts/URLs and sender-reported review, then explicitly import or cancel.
 Import does not subscribe to a source, download the source, contact a model or send a file to another person.
 The browser keeps a separate imported library with the original book identity and version.
 An identical record can be imported again; different content under the same original book/version is refused without overwriting it.
 
 Open a retained edition to read its paragraphs, prerequisites, worked examples, questions and explanations.
-Reading hides the import instructions, file controls and library. **教材一覧へ戻る** restores them and returns focus to the originating edition; it also works during an answer-history read, and a late read cannot reopen a closed reader.
+Reading hides the import instructions, file controls and library. **教材一覧へ戻る** restores the library and its previous import-disclosure state, returning focus to the originating edition; it also works during an answer-history read, and a late read cannot reopen a closed reader.
 The return control stays available while scrolling. Completing an answer save restores its control's focus when the same reader is still active and focus has not moved elsewhere.
 The contents links move focus to the selected section; evidence disclosures show the exact quoted passage and source link.
 Text remains plain text, including imported markup; source links open only on an explicit click.

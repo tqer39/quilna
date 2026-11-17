@@ -58,6 +58,7 @@ import { ArticleListView, type ArticleListPosition } from "./article-list-view";
 import { ArticleHighlightView } from "./article-highlight-view";
 import { ArticleLearningView } from "./article-learning-view";
 import { ArticleTextbookView } from "./article-textbook-view";
+import { ArticleTextbookWords } from "./article-textbook-words";
 import { LibraryBackupView } from "./library-backup-view";
 import { SourceDocumentView } from "./source-document-view";
 import { DocumentAcquisition } from "./document-acquisition";
@@ -507,7 +508,9 @@ export async function feedReader(root: HTMLElement) {
     paperLink,
   );
   settingsBody.append(papers);
-  actions.append(skipToArticles, settingsOpen);
+  const textbooksLink = el("a", "教材", "rss-text-link");
+  textbooksLink.href = "/?view=textbooks";
+  actions.append(skipToArticles, textbooksLink, settingsOpen);
   rootHeader.append(brand, actions);
   const locationNavigation = new ReaderLocation({
     list: (next) => {
@@ -583,6 +586,9 @@ export async function feedReader(root: HTMLElement) {
     (quote) => learningRecords.begin(quote),
   );
   const textbookConnections = new ArticleTextbookView();
+  const textbookWords = new ArticleTextbookWords((view, links) =>
+    highlights.setTextbookLinks(view, links),
+  );
   const learningRecords = new ArticleLearningView((quote, signal) =>
     highlights.revealSaved(quote, signal),
   );
@@ -2823,6 +2829,7 @@ export async function feedReader(root: HTMLElement) {
             : article.content?.codeRanges,
         };
         const panel = highlights.mount(readingView, sourceText);
+        body.append(textbookWords.mount(readingView, sourceText));
         const readingLayout = el("div", undefined, "rss-reading-layout");
         readingLayout.append(
           outline.mount(
@@ -2861,6 +2868,7 @@ export async function feedReader(root: HTMLElement) {
         quoteConnections.detach();
         learningRecords.detach();
         textbookConnections.detach();
+        textbookWords.detach();
         learning.detach();
         connections.detach();
         graph.detach();
@@ -2879,6 +2887,7 @@ export async function feedReader(root: HTMLElement) {
       quoteConnections.detach();
       learningRecords.detach();
       textbookConnections.detach();
+      textbookWords.detach();
       learning.detach();
       connections.detach();
       graph.detach();

@@ -8,17 +8,6 @@ import {
 } from "./shared-textbook-store";
 import { textbookNoticeSummary } from "./textbook-notice-view";
 import {
-  topicTextbookCandidates,
-  type TextbookChoice,
-  type TopicTextbookCandidate,
-} from "./topic-textbook-candidates";
-import {
-  readHiddenTextbookTopics,
-  setTextbookTopicHidden,
-  topicPreferenceDatabase,
-  type HiddenTextbookTopic,
-} from "./topic-textbook-preferences";
-import {
   readTextbookLinks,
   writeTextbookLink,
   textbookLinkKey,
@@ -29,12 +18,7 @@ import {
   type TextbookReading,
 } from "./article-textbooks";
 
-type Choice = TextbookChoice;
-type Candidate = TopicTextbookCandidate & {
-  articleId: string;
-  version: string;
-  generation: number;
-};
+type Choice = { target: TextbookLink["target"]; goal: string };
 type Draft = {
   source: TextbookLink["source"];
   target?: TextbookLink["target"];
@@ -64,16 +48,6 @@ export class ArticleTextbookView {
   private readonly summary = el("summary", "深掘りできる教材");
   private readonly status = el("p");
   private readonly list = el("ul");
-  private readonly candidateArea = el("section");
-  private readonly candidateStatus = el("p");
-  private readonly candidateList = el("ul");
-  private readonly hiddenDetails = el("details");
-  private readonly hiddenSummary = el("summary", "非表示にしたテーマを確認");
-  private readonly hiddenList = el("ul");
-  private candidateConnects: HTMLButtonElement[] = [];
-  private preferenceButtons: HTMLButtonElement[] = [];
-  private preferenceError: unknown;
-  private preferenceFeedback = "";
   private readonly start = button("教材を関連づける", () => void this.begin());
   private readonly reload = button(
     "教材の関連づけを再読み込み",
@@ -125,10 +99,6 @@ export class ArticleTextbookView {
     typeof BroadcastChannel === "undefined"
       ? null
       : new BroadcastChannel(sharedTextbookDatabase);
-  private readonly preferenceChannel =
-    typeof BroadcastChannel === "undefined"
-      ? null
-      : new BroadcastChannel(topicPreferenceDatabase);
   private view?: TextbookReading;
   private records: TextbookLink[] = [];
   private draft?: Draft;
@@ -146,29 +116,6 @@ export class ArticleTextbookView {
     this.root.setAttribute("aria-label", "深掘りできる教材");
     this.status.setAttribute("role", "status");
     this.list.setAttribute("aria-label", "この記事に関連づけた教材");
-    this.candidateArea.setAttribute("aria-label", "保存済み教材の候補");
-    this.candidateList.setAttribute("aria-label", "本文から見つかった教材候補");
-    this.hiddenList.setAttribute("aria-label", "この記事で非表示にしたテーマ");
-    this.candidateStatus.setAttribute("aria-live", "polite");
-    this.candidateStatus.tabIndex = -1;
-    this.hiddenDetails.append(
-      this.hiddenSummary,
-      el(
-        "p",
-        "非表示はこのブラウザーのライブラリに保存します。教材ファイルと記事バックアップには含めず、別の端末とは同期しません。",
-      ),
-      this.hiddenList,
-    );
-    this.candidateArea.append(
-      el("h3", "本文から深掘りできる候補"),
-      el(
-        "p",
-        "本文とテーマ名が一致する保存済み教材を最大3件示します。意味の理解や内容の正しさを検証した結果ではありません。範囲と出典を確認して選んでください。",
-      ),
-      this.candidateStatus,
-      this.candidateList,
-      this.hiddenDetails,
-    );
     this.select.id = "rss-textbook-choice";
     const choiceLabel = el("label", "保存済みのテーマ教材");
     choiceLabel.htmlFor = this.select.id;
@@ -215,7 +162,6 @@ export class ArticleTextbookView {
         "自分で関連する理由を残し、保存済みの教材を複数の記事から開けます。教材は別タブで開くので、この記事の読書位置はそのままです。",
       ),
       this.status,
-      this.candidateArea,
       this.start,
       separateLink("教材ファイルを取り込む（別タブ）"),
       this.reload,
@@ -238,9 +184,6 @@ export class ArticleTextbookView {
     this.editionChannel?.addEventListener("message", () => {
       this.refresh();
     });
-    this.preferenceChannel?.addEventListener("message", (event) => {
-      if (event.data === this.view?.articleId) this.refresh();
-    });
     window.addEventListener("focus", () => {
       this.refresh();
     });
@@ -257,14 +200,10 @@ export class ArticleTextbookView {
       );
     const shouldReload = !!readingChanged || !this.ready;
     if (readingChanged) {
-      this.preferenceFeedback = "";
       this.generation++;
       this.ready = false;
       this.currentVersion = undefined;
       this.list.replaceChildren();
-      this.candidateList.replaceChildren();
-      this.candidateList.hidden = true;
-      this.candidateStatus.textContent = "現在の本文で候補を確認しています。";
       this.rowButtons = [];
       this.summary.textContent = "深掘りできる教材";
     }
@@ -289,15 +228,6 @@ export class ArticleTextbookView {
     this.draft = this.shownDraft = undefined;
     this.editor.hidden = true;
     this.list.replaceChildren();
-    this.candidateList.replaceChildren();
-    this.hiddenList.replaceChildren();
-    this.candidateList.hidden = this.hiddenDetails.hidden = true;
-    this.hiddenDetails.open = false;
-    this.candidateConnects = [];
-    this.preferenceButtons = [];
-    this.preferenceError = undefined;
-    this.preferenceFeedback = "";
-    this.candidateStatus.textContent = "";
     this.rowButtons = [];
     this.status.textContent = "";
     this.summary.textContent = "深掘りできる教材";
@@ -318,11 +248,6 @@ export class ArticleTextbookView {
     this.cancel.disabled = this.busy;
     for (const control of this.rowButtons)
       control.disabled = this.busy || !this.ready || !!this.draft;
-    for (const control of this.candidateConnects)
-      control.disabled =
-        this.busy || !this.ready || !!this.draft || !!this.preferenceError;
-    for (const control of this.preferenceButtons)
-      control.disabled = this.busy || !this.ready || !!this.preferenceError;
     const d = this.draft,
       latest =
         d?.target && this.records.find((r) => r.target.id === d.target!.id);
@@ -354,149 +279,21 @@ export class ArticleTextbookView {
   private async choicePool(records: TextbookLink[], preserveId?: string) {
     const books = await listSharedTextbooks();
     const notices = await readTextbookNotices(books);
-    const choices = books
-      .map((b, i) => ({ book: b, state: notices[i] }))
-      .filter(
-        ({ book: b, state }) =>
-          b.request.schemaVersion === 2 &&
-          !state.error &&
-          state.notice?.kind !== "withdrawn" &&
-          (b.id === preserveId || !records.some((r) => r.target.id === b.id)),
-      )
-      .map(({ book: b, state }) => ({
-        choice: { target: textbookLinkTarget(b), goal: b.request.learningGoal },
-        automatic:
-          state.notice?.kind !== "correction" ||
-          state.replacementState === "available",
-      }));
     return {
       unavailable: notices.some((n) => n.error),
-      choices: choices.map((c) => c.choice),
-      candidates: choices
+      choices: books
         .filter(
-          (c) =>
-            c.automatic &&
-            !records.some((r) => {
-              const [bookId, version] = r.target.id.split(":");
-              const [candidateBookId, candidateVersion] =
-                c.choice.target.id.split(":");
-              return (
-                bookId === candidateBookId &&
-                Number(version) >= Number(candidateVersion)
-              );
-            }),
+          (b, i) =>
+            b.request.schemaVersion === 2 &&
+            !notices[i].error &&
+            notices[i].notice?.kind !== "withdrawn" &&
+            (b.id === preserveId || !records.some((r) => r.target.id === b.id)),
         )
-        .map((c) => c.choice),
+        .map((b) => ({
+          target: textbookLinkTarget(b),
+          goal: b.request.learningGoal,
+        })),
     };
-  }
-  private renderCandidates(
-    candidates: Candidate[],
-    hidden: HiddenTextbookTopic[],
-    unavailable: boolean,
-    candidateError?: unknown,
-  ) {
-    this.candidateConnects = [];
-    this.preferenceButtons = [];
-    this.candidateList.replaceChildren();
-    this.hiddenList.replaceChildren();
-    this.candidateList.hidden = !candidates.length;
-    this.hiddenDetails.hidden = !hidden.length;
-    this.hiddenSummary.textContent = `非表示にしたテーマを確認 · ${hidden.length}件`;
-    let message =
-      this.preferenceError || candidateError
-        ? this.message(this.preferenceError || candidateError)
-        : this.preferenceFeedback ||
-          (candidates.length
-            ? "候補は未確認です。関連づけは自分で理由を確認して保存します。"
-            : "本文のテーマ名と一致する保存済み教材の候補はありません。手動で関連づける教材も選べます。");
-    if (!this.preferenceError && !candidateError && unavailable)
-      message +=
-        " 訂正・撤回の記録を確認できない教材版は候補から外しています。";
-    if (this.candidateStatus.textContent !== message)
-      this.candidateStatus.textContent = message;
-    for (const c of candidates) {
-      const item = el("li");
-      item.dataset.candidate = c.choice.target.id;
-      const preview = separateLink(
-        "候補の範囲と出典を確認（別タブ）",
-        c.choice.target.id,
-      );
-      preview.dataset.action = "preview";
-      const choose = button(
-        "この候補を関連づける",
-        () => void this.begin(undefined, c),
-      );
-      choose.dataset.action = "choose";
-      const hide = button(
-        "この記事ではこのテーマを候補に出さない",
-        () => void this.changeHidden(c.choice.target, true),
-      );
-      hide.dataset.action = "hide";
-      item.append(
-        el(
-          "h4",
-          `${c.choice.target.topicName} — ${c.choice.target.title} · 版 ${c.choice.target.id.split(":")[1]}`,
-        ),
-        el("p", c.choice.goal),
-        el(
-          "p",
-          `候補の理由：表示中の本文にテーマ名「${c.matched}」があります。`,
-        ),
-        el("blockquote", c.quote),
-        preview,
-        choose,
-        hide,
-      );
-      this.candidateList.append(item);
-      this.candidateConnects.push(choose);
-      this.preferenceButtons.push(hide);
-    }
-    for (const topic of hidden) {
-      const item = el("li");
-      item.dataset.hiddenTopic = topic.topicId;
-      const restore = button(
-        "このテーマの候補を再び確認する",
-        () => void this.changeHidden(topic, false),
-      );
-      restore.dataset.action = "restore";
-      item.append(el("span", topic.topicName), restore);
-      this.hiddenList.append(item);
-      this.preferenceButtons.push(restore);
-    }
-  }
-  private async changeHidden(
-    topic: { topicId: string; topicName: string },
-    hidden: boolean,
-  ) {
-    if (!this.view || !this.ready || this.busy || this.preferenceError) return;
-    const articleId = this.view.articleId,
-      context = this.context;
-    const focused = document.activeElement;
-    this.busy = true;
-    this.controls();
-    try {
-      await setTextbookTopicHidden(articleId, topic, hidden);
-      this.preferenceChannel?.postMessage(articleId);
-      if (context === this.context)
-        this.preferenceFeedback = hidden
-          ? "この記事ではこのテーマの候補を非表示にしました。確定リンク・教材・回答は保持しています。"
-          : "このテーマを候補として再び確認できるようにしました。";
-    } catch (error) {
-      if (context === this.context)
-        this.preferenceFeedback = this.message(error);
-    } finally {
-      this.busy = false;
-      if (this.view?.articleId === articleId || !this.ready) await this.load();
-      this.controls();
-      if (
-        context === this.context &&
-        this.root.isConnected &&
-        this.details.open &&
-        focused instanceof HTMLElement &&
-        (!focused.isConnected || document.activeElement === document.body)
-      )
-        this.candidateStatus.focus({ preventScroll: true });
-    }
   }
   private renderDraft() {
     const d = this.draft;
@@ -566,22 +363,11 @@ export class ArticleTextbookView {
     this.status.textContent =
       "下書きを取り消しました。保存済みの関連づけと教材は保持しています。";
   }
-  private async begin(record?: TextbookLink, candidate?: Candidate) {
+  private async begin(record?: TextbookLink) {
     if (!this.view || !this.ready || this.busy) return;
     if (this.draft) {
       this.status.textContent =
         "現在の下書きを保存または取り消してから、別の関連づけを編集してください。";
-      return;
-    }
-    if (
-      candidate &&
-      (candidate.generation !== this.generation ||
-        candidate.articleId !== this.view.articleId ||
-        candidate.version !== this.currentVersion ||
-        !this.view.text.includes(candidate.quote))
-    ) {
-      this.candidateStatus.textContent =
-        "本文や候補の状態が変わっています。読み直してから確認してください。";
       return;
     }
     const view = { ...this.view },
@@ -590,24 +376,9 @@ export class ArticleTextbookView {
     this.controls();
     try {
       const pool = record
-        ? {
-            choices: [{ target: record.target, goal: "" }],
-            candidates: [],
-            unavailable: false,
-          }
+        ? { choices: [{ target: record.target, goal: "" }], unavailable: false }
         : await this.choicePool(this.records);
       const choices = pool.choices;
-      const selected =
-        candidate &&
-        pool.candidates.find(
-          (c) =>
-            JSON.stringify(c.target) ===
-            JSON.stringify(candidate.choice.target),
-        );
-      if (candidate && !selected)
-        throw Error(
-          "この候補の教材版を確認できなくなりました。読み直して確認してください。",
-        );
       const source = record?.source ?? (await textbookLinkSource(view));
       if (context !== this.context) return;
       if (!choices.length) {
@@ -618,12 +389,8 @@ export class ArticleTextbookView {
       }
       this.draft = {
         source,
-        target: record?.target ?? (selected ? selected.target : undefined),
-        reason:
-          record?.reason ??
-          (candidate
-            ? `本文の「${candidate.quote}」を、テーマ「${candidate.choice.target.topicName}」の教材で深掘りする。`
-            : ""),
+        target: record?.target,
+        reason: record?.reason ?? "",
         expected: record?.revision ?? null,
         createdAt: record?.createdAt ?? new Date().toISOString(),
         choices,
@@ -733,18 +500,6 @@ export class ArticleTextbookView {
             action: focused.dataset.action,
           }
         : undefined;
-    const candidateFocus =
-      focused instanceof HTMLElement &&
-      this.candidateArea.contains(focused) &&
-      focused.dataset.action
-        ? {
-            id: focused.closest<HTMLLIElement>("li[data-candidate]")?.dataset
-              .candidate,
-            topic: focused.closest<HTMLLIElement>("li[data-hidden-topic]")
-              ?.dataset.hiddenTopic,
-            action: focused.dataset.action,
-          }
-        : undefined;
     this.ready = false;
     this.controls();
     try {
@@ -771,53 +526,17 @@ export class ArticleTextbookView {
           }
         }),
       );
-      let pool: Awaited<ReturnType<ArticleTextbookView["choicePool"]>> = {
-          choices: [],
-          candidates: [],
-          unavailable: true,
-        },
-        candidateError: unknown;
-      // 候補の障害が、保存済みリンクの確認・編集・解除まで止めないよう分ける。
-      try {
-        pool = await this.choicePool(
-          records,
-          draft?.expected === null ? draft.target?.id : undefined,
-        );
-      } catch {
-        candidateError = Error(
-          "教材一覧を確認できないため候補を停止しています。保存済みの関連づけ・教材・回答・下書きは保持しています。",
-        );
-      }
-      let hidden: HiddenTextbookTopic[] = [],
-        preferenceError: unknown;
-      try {
-        hidden = await readHiddenTextbookTopics(view.articleId);
-      } catch (error) {
-        preferenceError = error;
-      }
+      const pool =
+        draft?.expected === null
+          ? await this.choicePool(records, draft.target?.id)
+          : undefined;
       if (generation !== this.generation || context !== this.context) return;
-      if (draft?.expected === null && this.draft === draft)
-        draft.choices = pool.choices;
-      this.preferenceError = preferenceError;
-      const hiddenIds = new Set(hidden.map((r) => r.topicId));
-      const candidates = preferenceError
-        ? []
-        : topicTextbookCandidates(
-            view.text,
-            pool.candidates.filter((c) => !hiddenIds.has(c.target.topicId)),
-          ).map((c) => ({
-            ...c,
-            version,
-            generation,
-            articleId: view.articleId,
-          }));
+      if (pool && this.draft === draft) draft!.choices = pool.choices;
       this.currentVersion = version;
       this.records = records;
       this.ready = true;
       this.summary.textContent = `深掘りできる教材 · ${records.length}件${this.draft ? " · 下書きあり" : ""}`;
       const keepFocus = focusedItem && document.activeElement === focused;
-      const keepCandidateFocus =
-        candidateFocus && document.activeElement === focused;
       const expanded = new Set(
         Array.from(this.list.querySelectorAll<HTMLLIElement>("li[data-link]"))
           .filter((item) => item.querySelector("details")?.open)
@@ -895,28 +614,6 @@ export class ArticleTextbookView {
         this.list.append(item);
       }
       this.renderDraft();
-      this.renderCandidates(
-        candidates,
-        hidden,
-        pool.unavailable,
-        candidateError,
-      );
-      if (keepCandidateFocus) {
-        const item = [
-          ...Array.from(this.candidateList.children),
-          ...Array.from(this.hiddenList.children),
-        ].find((n) =>
-          candidateFocus.id
-            ? (n as HTMLElement).dataset.candidate === candidateFocus.id
-            : (n as HTMLElement).dataset.hiddenTopic === candidateFocus.topic,
-        );
-        (
-          Array.from(
-            item?.querySelectorAll<HTMLElement>("[data-action]") ?? [],
-          ).find((n) => n.dataset.action === candidateFocus.action) ??
-          this.candidateStatus
-        ).focus({ preventScroll: true });
-      }
       if (keepFocus && focusedItem?.id) {
         const item = Array.from(this.list.children).find(
           (n) => (n as HTMLElement).dataset.link === focusedItem.id,
