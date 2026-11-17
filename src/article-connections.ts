@@ -70,7 +70,7 @@ let connection: Promise<IDBDatabase> | undefined;
 export function openConnections(): Promise<IDBDatabase> {
   if (connection)
     return connection.then((db) => {
-      // 復元が他の領域へ書く前に、通知のなかったcloseも検出する。
+      // 復元先を開く時点で、通知のなかったcloseも検出する。
       db.transaction("connections");
       return db;
     });

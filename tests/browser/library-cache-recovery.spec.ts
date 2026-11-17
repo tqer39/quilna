@@ -222,7 +222,7 @@ for (const module of modules) {
     });
   }
   for (const operation of ["export", "restore"]) {
-    test(`${module.label}: 通知のないcloseを${operation}が他領域への書き込み前に検出する`, async ({
+    test(`${module.label}: ${operation}開始前に閉じた接続を他領域への書き込み前に検出する`, async ({
       page,
     }) => {
       await fixture(page);
