@@ -1,6 +1,19 @@
 // No global fetch, key lookup, endpoint setting, retry, redirect or error-body logging.
 // send is an explicitly injected HTTP boundary; current tests inject only network mocks.
-export async function postJson(send, url, headers, body, signal) {
+export async function postJson(
+  send,
+  url,
+  headers,
+  body,
+  signal,
+  maximumBytes = 65536,
+) {
+  if (
+    !Number.isSafeInteger(maximumBytes) ||
+    maximumBytes < 1 ||
+    maximumBytes > 192000
+  )
+    throw Error("transport-unavailable");
   if (typeof send !== "function" || signal?.aborted)
     throw Error("transport-unavailable");
   let response;
@@ -32,7 +45,7 @@ export async function postJson(send, url, headers, body, signal) {
       const { value, done } = await reader.read();
       if (done) break;
       size += value.byteLength;
-      if (size > 65536) throw Error("provider-unknown");
+      if (size > maximumBytes) throw Error("provider-unknown");
       chunks.push(value);
     }
     const bytes = new Uint8Array(size);
@@ -41,7 +54,12 @@ export async function postJson(send, url, headers, body, signal) {
       bytes.set(chunk, offset);
       offset += chunk.byteLength;
     }
-    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+    const parsed = JSON.parse(
+      new TextDecoder("utf-8", { fatal: true }).decode(bytes),
+    );
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed))
+      throw Error("provider-unknown");
+    return parsed;
   } catch {
     await reader.cancel().catch(() => {});
     throw Error("provider-unknown");
