@@ -237,6 +237,18 @@ for (const design of ["studio", "editorial", "focus"])
     await expect(
       page.getByText(/^本文の更新あり。表示中の本文はそのままです。/),
     ).toBeVisible();
+    expect(
+      await page
+        .locator(".rss-body-update")
+        .evaluate(
+          (note) =>
+            !!(
+              note.compareDocumentPosition(
+                document.querySelector(".rss-source-text")!,
+              ) & Node.DOCUMENT_POSITION_FOLLOWING
+            ),
+        ),
+    ).toBe(true);
     await page.screenshot({
       path: `.local-state/article-updates-qa/update-${design}-${test.info().project.name}.png`,
       fullPage: false,

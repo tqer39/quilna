@@ -2412,6 +2412,7 @@ export async function feedReader(root: HTMLElement) {
               `著者：${article.content.info.author}`,
             date(article.content?.info?.published || article.published),
             articleReadingTime(article),
+            article.content && "画像・埋め込みなし",
           ]
             .filter(Boolean)
             .join(" · "),
@@ -2425,13 +2426,15 @@ export async function feedReader(root: HTMLElement) {
       save.id = "rss-save-article";
       save.setAttribute("aria-pressed", String(article.saved));
       save.disabled = changing.has(article.id) || importing.has(article.id);
-      articleNode.append(save);
+      const articleActions = el("div", undefined, "rss-article-actions");
+      articleActions.append(save);
+      articleNode.append(articleActions);
       if (article.url) {
         const original = el("a", "元の記事を開く", "rss-text-link");
         original.href = article.content?.url || article.url;
         original.target = "_blank";
         original.rel = "noopener noreferrer";
-        articleNode.append(original);
+        articleActions.append(original);
         decorateArticleLink(original, original.href);
       }
       const tagsPanel = el("section", undefined, "rss-tag-editor");
@@ -2539,7 +2542,9 @@ export async function feedReader(root: HTMLElement) {
       );
       notice.setAttribute("role", "status");
       renderBodyUpdate(article);
-      articleNode.append(bodyUpdatePanel, notice);
+      const routineContentNotice = article.content && !importingNow;
+      articleNode.append(bodyUpdatePanel);
+      if (!routineContentNotice) articleNode.append(notice);
       if (article.content?.codeRanges !== undefined && article.contentError)
         articleNode.append(el("p", article.contentError, "rss-content-note"));
       if (article.content && article.content.codeRanges === undefined) {
@@ -2875,6 +2880,8 @@ export async function feedReader(root: HTMLElement) {
         appendArticleText(sourceText, text, article.content?.codeRanges);
         articleNode.append(body, tagsPanel);
       }
+      // 通常の取り込み説明で本文を押し下げず、取得中・失敗は本文の前で知らせる。
+      if (routineContentNotice) articleNode.append(notice);
       if (readingTools) {
         extraContents.append(readingTools, documentHistory.root);
         articleNode.append(readingExtras);
