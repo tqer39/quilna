@@ -2,6 +2,25 @@
 import { AccountVault as ProductionVault } from "../../workers/index.mjs";
 import { createHandler } from "../../workers/http.mjs";
 import { registry } from "../../server/registry.mjs";
+import { openaiTopicTextbookTransport } from "../../server/openai-topic-textbook-transport.mjs";
+import { topicTextbookBudgetAdapter } from "../../server/topic-textbook-contract.mjs";
+import topicFixture from "../fixtures/shared-textbook-v2.json";
+const decode = (raw) =>
+  new TextDecoder().decode(Uint8Array.from(atob(raw), (c) => c.charCodeAt(0)));
+const topicRecord = JSON.parse(decode(topicFixture.record));
+const topicDraft = JSON.parse(decode(topicRecord.draft));
+for (const lesson of topicDraft.lessons) {
+  // 旧CAA用の20KB応答・32KB入力上限を越える合成データで配送を検証する。
+  lesson.content.paragraphs = Array.from({ length: 6 }, () =>
+    "合成データ。".repeat(160),
+  );
+  lesson.optionEvidence = Object.entries(lesson.optionEvidence).map(
+    ([optionID, evidence]) => ({ optionID, evidence }),
+  );
+}
+const topicReview = JSON.parse(decode(topicRecord.review));
+delete topicReview.requestDigest;
+delete topicReview.draftDigest;
 const date = "2026-10-11T00:00:00.000Z";
 const source = {
   id: "rfc8659",
@@ -52,6 +71,56 @@ export class AccountVault extends ProductionVault {
           };
         },
       }),
+    };
+    this.core.topicGeneration = {
+      ...this.core.generation,
+      timeoutMs: 1000,
+      makeAdapter: (_provider, secret) =>
+        topicTextbookBudgetAdapter(
+          openaiTopicTextbookTransport({
+            model: registry[0].model,
+            reasoningEffort: "none",
+            mockOnly: true,
+            secret,
+            send: async (url, init) => {
+              if (url.endsWith("input_tokens"))
+                return Response.json({ input_tokens: 1000 });
+              const body = JSON.parse(init.body);
+              if (
+                JSON.parse(body.input[0].content).request.learningGoal ===
+                "WAIT-MOCK"
+              )
+                return new Promise(() => {});
+              return Response.json({
+                model: registry[0].model,
+                service_tier: "default",
+                status: "completed",
+                output: [
+                  {
+                    type: "message",
+                    role: "assistant",
+                    status: "completed",
+                    content: [
+                      {
+                        type: "output_text",
+                        text: JSON.stringify(
+                          body.text.format.name === "topic_textbook"
+                            ? topicDraft
+                            : topicReview,
+                        ),
+                      },
+                    ],
+                  },
+                ],
+                usage: {
+                  input_tokens: 1000,
+                  output_tokens: 500,
+                  total_tokens: 1500,
+                },
+              });
+            },
+          }),
+        ),
     };
   }
 }

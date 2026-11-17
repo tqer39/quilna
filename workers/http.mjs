@@ -1,6 +1,7 @@
 import { z } from "zod";
 import { hash, bytes } from "./crypto.mjs";
 import { libraryStatus } from "./library-status.mjs";
+import { topicTextbookContract } from "../server/topic-textbook-contract.mjs";
 const principal = z
   .object({
     subject: z.string().min(1).max(300),
@@ -211,6 +212,67 @@ export function createHandler({
           }),
         );
       }
+      if (url.pathname.startsWith("/api/topic-textbooks/")) {
+        const action = {
+          "/api/topic-textbooks/proposals": "topic-propose",
+          "/api/topic-textbooks/operations": "topic-lookup",
+        }[url.pathname];
+        if (!action || request.method !== "POST")
+          return json(404, { status: "not-found" });
+        if (request.headers.get("X-Library-Account") !== owner)
+          return json(403, { status: "account-mismatch" });
+        if (action === "topic-propose" && !credentialsEnabled)
+          return json(503, {
+            status: "credentials-unconfigured",
+            realKeyInputEnabled: false,
+          });
+        const csrf = request.headers.get("X-CSRF-Token");
+        if (typeof csrf !== "string" || csrf.length > 200)
+          return json(403, { status: "csrf-invalid" });
+        if (request.headers.get("Content-Type") !== "application/json")
+          return json(415, { status: "json-required" });
+        let data;
+        try {
+          data = await readBody(request, topicTextbookContract.bodyBytes);
+        } catch (error) {
+          return json(error.message === "body-limit" ? 413 : 400, {
+            status:
+              error.message === "body-limit" ? "body-limit" : "invalid-request",
+          });
+        }
+        const parsed = topicTextbookContract.requestSchema.safeParse(data);
+        if (!parsed.success) return json(400, { status: "invalid-request" });
+        // 本文の受信待ちと処理待ちの両方で、別のsessionへ結果を渡さない。
+        const before = principal.safeParse(await authenticate(request));
+        if (
+          !before.success ||
+          before.data.subject !== verified.data.subject ||
+          before.data.sessionId !== verified.data.sessionId
+        )
+          return json(401, { status: "unauthenticated" });
+        const result = await stub.fetch(
+          new Request("https://account.internal/command/topic-textbooks", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action,
+              principal: verified.data,
+              csrf,
+              data: parsed.data,
+            }),
+          }),
+        );
+        const after = principal.safeParse(await authenticate(request));
+        if (
+          !after.success ||
+          after.data.subject !== verified.data.subject ||
+          after.data.sessionId !== verified.data.sessionId
+        ) {
+          await result.body?.cancel();
+          return json(401, { status: "unauthenticated" });
+        }
+        return result;
+      }
       let action;
       let provider;
       const match = /^\/api\/credentials\/(openai|anthropic)$/.exec(
@@ -264,10 +326,18 @@ export function createHandler({
   };
 }
 export async function handleAccount(core, request, collector, documents) {
+  let topic = false,
+    owner;
   try {
-    const command = await readBody(request);
+    topic = new URL(request.url).pathname === "/command/topic-textbooks";
+    const command = await readBody(
+      request,
+      topic ? topicTextbookContract.bodyBytes + 4096 : 32768,
+    );
+    if (topic !== ["topic-propose", "topic-lookup"].includes(command.action))
+      throw Error("invalid-command");
     // Internal binding only. No browser-selected owner or credential handles.
-    const owner = await core.authorize(
+    owner = await core.authorize(
       command.principal,
       command.csrf,
       ![
@@ -281,6 +351,7 @@ export async function handleAccount(core, request, collector, documents) {
         "document-status",
         "document-admin-status",
       ].includes(command.action),
+      { countRate: command.action !== "topic-lookup" },
     );
     if (command.action?.startsWith("document-")) {
       if (!documents) return json(503, { status: "document-unconfigured" });
@@ -327,6 +398,10 @@ export async function handleAccount(core, request, collector, documents) {
       value = await core.check(owner, command.provider, command.data);
     else if (command.action === "propose")
       value = await core.propose(owner, command.data);
+    else if (command.action === "topic-propose")
+      value = await core.proposeTopic(owner, command.data);
+    else if (command.action === "topic-lookup")
+      value = await core.lookupTopic(owner, command.data);
     else
       value = await core.mutate(
         owner,
@@ -335,10 +410,27 @@ export async function handleAccount(core, request, collector, documents) {
         command.data,
       );
     // Bound responses contain metadata/validated proposal only; never plaintext or ciphertext.
-    if (bytes(JSON.stringify(value)).byteLength > 20000)
+    const boundValue = topic ? { ...value, account: owner } : value;
+    if (bytes(JSON.stringify(boundValue)).byteLength > (topic ? 262144 : 20000))
       throw Error("response-limit");
-    return json(200, value);
+    return json(200, boundValue);
   } catch (error) {
+    if (topic) {
+      const failures = {
+        "textbook-input-invalid": [400, "invalid-request"],
+        "textbook-stage": [400, "invalid-stage"],
+        "textbook-unissued-draft": [409, "unissued-draft"],
+        "response-limit": [502, "response-limit"],
+      };
+      const known = Object.hasOwn(failures, error.message)
+        ? failures[error.message]
+        : undefined;
+      if (known)
+        return json(known[0], {
+          status: known[1],
+          ...(owner ? { account: owner } : {}),
+        });
+    }
     const known = [
       "csrf-invalid",
       "owner-mismatch",

@@ -652,3 +652,91 @@ test("private Dev and library markers are both retained when both flags are enab
   await a.api("/api/auth/logout", "POST", {}, csrf);
   assert.equal((await a.api("/assets/app.js")).status, 401);
 });
+
+test("本番構築でも認証済みの保存操作照会は使え、生成と実キー入力は無効を保つ", async (t) => {
+  const f = await fixture(t, {
+      entry: "workers/index.mjs",
+      missing: {
+        LIBRARY_ISOLATION_ENABLED: "true",
+        LIBRARY_LEGACY_OWNER_HASH: "f".repeat(64),
+      },
+    }),
+    a = f.browser();
+  await a.api(f.callback(await f.start(a)));
+  const account = (await a.api("/api/library/status")).value.account;
+  const csrf = (await a.api("/api/session")).value.csrfToken;
+  const file = JSON.parse(
+    await (
+      await import("node:fs/promises")
+    ).readFile(
+      new URL("../fixtures/shared-textbook-v2.json", import.meta.url),
+      "utf8",
+    ),
+  );
+  const record = JSON.parse(
+    Buffer.from(file.record, "base64").toString("utf8"),
+  );
+  const requestRaw = Buffer.from(record.request, "base64").toString("utf8");
+  const body = {
+    requestId: JSON.parse(requestRaw).id,
+    requestRaw,
+    purpose: "book-addition",
+    modelId: "openai-luna-candidate",
+    approvedPublicText: true,
+  };
+  const headers = { "X-Library-Account": account },
+    calls = f.calls.length;
+  const generated = await a.api(
+    "/api/topic-textbooks/proposals",
+    "POST",
+    body,
+    csrf,
+    headers,
+  );
+  assert.equal(generated.status, 503);
+  assert.equal(generated.value.realKeyInputEnabled, false);
+  const lookedUp = await a.api(
+    "/api/topic-textbooks/operations",
+    "POST",
+    body,
+    csrf,
+    headers,
+  );
+  assert.equal(lookedUp.status, 200);
+  assert.deepEqual(lookedUp.value, { status: "not-found", account });
+  assert.equal(
+    (
+      await a.api(
+        "/api/topic-textbooks/operations",
+        "POST",
+        body,
+        undefined,
+        headers,
+      )
+    ).status,
+    403,
+  );
+  assert.equal(
+    (
+      await a.api("/api/topic-textbooks/operations", "POST", body, csrf, {
+        "X-Library-Account": "0".repeat(64),
+      })
+    ).status,
+    403,
+  );
+  const logoutCsrf = (await a.api("/api/auth/status")).value.csrfToken;
+  assert.equal((await a.api("/api/auth/logout", "POST", {}, logoutCsrf)).status, 200);
+  assert.equal(
+    (
+      await a.api(
+        "/api/topic-textbooks/operations",
+        "POST",
+        body,
+        csrf,
+        headers,
+      )
+    ).status,
+    401,
+  );
+  assert.equal(f.calls.length, calls);
+});
