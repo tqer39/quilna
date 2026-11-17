@@ -174,6 +174,14 @@ export class ArticleHighlightView {
       return;
     const selection = document.getSelection(),
       focused = document.activeElement;
+    const shadowFocus =
+      focused instanceof HTMLElement && this.body.contains(focused)
+        ? focused.shadowRoot?.activeElement
+        : undefined;
+    const focusedOffset =
+      focused instanceof HTMLElement && this.body.contains(focused)
+        ? this.spans.find((s) => focused.contains(s.node))?.start
+        : undefined;
     const range =
       selection?.rangeCount && !selection.isCollapsed
         ? selection.getRangeAt(0)
@@ -215,6 +223,18 @@ export class ArticleHighlightView {
         this.body.tabIndex = -1;
         this.body.focus({ preventScroll: true });
       }
+    } else if (shadowFocus instanceof HTMLElement && shadowFocus.isConnected) {
+      shadowFocus.focus({ preventScroll: true });
+    } else if (focusedOffset !== undefined && focused instanceof HTMLElement) {
+      this.spans
+        .find(
+          (s) =>
+            s.start <= focusedOffset && s.start + s.node.length > focusedOffset,
+        )
+        ?.node.parentElement?.closest<HTMLElement>(
+          focused.tagName.toLowerCase(),
+        )
+        ?.focus({ preventScroll: true });
     }
     if (pieces.length && selection) {
       const start = pieces[0].start,

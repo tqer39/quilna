@@ -16,6 +16,7 @@ import {
   readSharedAnswers,
   answerSharedTextbook,
   readTextbookNotices,
+  eligibleTopicEditions,
   sharedTextbookDatabase,
   type TextbookNoticeState,
   type SharedAnswer,
@@ -344,10 +345,18 @@ export async function sharedTextbookView(root: HTMLElement) {
         all.href = "/?view=textbooks";
         list.append(el("p", `「${term}」の教材`), all);
       }
+      const termEditions = new Set(
+        eligibleTopicEditions(books, states)
+          .filter(
+            (book) =>
+              book.request.schemaVersion === 2 &&
+              book.request.topic.name.trim().toLowerCase() ===
+                term.toLowerCase(),
+          )
+          .map((book) => book.id),
+      );
       const matchesTerm = (book: (typeof books)[number]) =>
-        !term ||
-        (book.request.schemaVersion === 2 &&
-          book.request.topic.name.trim().toLowerCase() === term.toLowerCase());
+        !term || termEditions.has(book.id);
       if (!books.some(matchesTerm))
         list.append(
           el(

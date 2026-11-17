@@ -3,6 +3,7 @@ import type { ArticleLink } from "./article-structure";
 import { plainArticleLinks } from "./article-code";
 import {
   listSharedTextbooks,
+  eligibleTopicEditions,
   readTextbookNotices,
   sharedTextbookDatabase,
 } from "./shared-textbook-store";
@@ -12,7 +13,7 @@ import { libraryAccount } from "./library-context";
 
 /** 教材の確認は本文表示と独立させ、別の記事へ移った後の結果を混ぜない。 */
 export class ArticleTextbookWords {
-  readonly status = el("p", undefined, "muted");
+  readonly status = el("p", undefined, "muted rss-textbook-links-status");
   private view?: ReadingView;
   private body?: HTMLElement;
   private generation = 0;
@@ -29,6 +30,8 @@ export class ArticleTextbookWords {
     window.addEventListener("focus", () => void this.load());
   }
   mount(view: ReadingView, body: HTMLElement) {
+    this.status.hidden = true;
+    this.status.textContent = "";
     this.view = view;
     this.body = body;
     void this.load();
@@ -45,28 +48,13 @@ export class ArticleTextbookWords {
       body = this.body;
     if (!view || !body) return;
     const generation = ++this.generation;
+    this.status.setAttribute("aria-busy", "true");
     try {
       const account = libraryAccount();
       const books = await listSharedTextbooks(),
         states = await readTextbookNotices(books);
-      const latest = new Map<string, (typeof books)[number]>();
-      for (const [i, book] of books.entries()) {
-        const state = states[i];
-        if (
-          book.request.schemaVersion !== 2 ||
-          state.error ||
-          state.notice?.kind === "withdrawn" ||
-          (state.notice?.kind === "correction" &&
-            state.replacementState !== "available")
-        )
-          continue;
-        const key = book.record.bookID.toLowerCase(),
-          old = latest.get(key);
-        if (!old || old.record.version < book.record.version)
-          latest.set(key, book);
-      }
       const groups = new Map<string, typeof books>();
-      for (const book of latest.values()) {
+      for (const book of eligibleTopicEditions(books, states)) {
         if (book.request.schemaVersion !== 2) continue;
         const key = book.request.topic.name.trim().toLowerCase();
         const matches = groups.get(key) ?? [];
@@ -115,6 +103,9 @@ export class ArticleTextbookWords {
         "教材のリンクを確認できませんでした。記事と保存済みの記録は保持しています。";
       if (this.status.textContent !== message)
         this.status.textContent = message;
+    } finally {
+      if (generation === this.generation && view === this.view)
+        this.status.removeAttribute("aria-busy");
     }
   }
 }

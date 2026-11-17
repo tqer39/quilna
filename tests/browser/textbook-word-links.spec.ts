@@ -185,10 +185,7 @@ test("記事本文の語から理由入力なしで教材を開き、別の記�
   expect(posts).toEqual([]);
 });
 
-test("遅れて教材リンクが届いても本文の選択・ハイライトと読書位置を保持する", async ({
-  page,
-  context,
-}) => {
+async function holdBookReads(context: BrowserContext) {
   await context.addInitScript(() => {
     const get = IDBObjectStore.prototype.getAll;
     let released = false;
@@ -198,6 +195,10 @@ test("遅れて教材リンクが届いても本文の選択・ハイライト�
         const tx = this.transaction,
           complete = tx.oncomplete;
         tx.oncomplete = (event) => {
+          if (released) {
+            complete?.call(tx, event);
+            return;
+          }
           completions.push(() => complete?.call(tx, event));
           Object.assign(window, {
             wordReadHeld: true,
@@ -211,6 +212,13 @@ test("遅れて教材リンクが届いても本文の選択・ハイライト�
       return get.apply(this, args);
     };
   });
+}
+
+test("遅れて教材リンクが届いても本文の選択・ハイライトと読書位置を保持する", async ({
+  page,
+  context,
+}) => {
+  await holdBookReads(context);
   await seed(page, context);
   await page.waitForFunction(
     () => (window as unknown as { wordReadHeld: boolean }).wordReadHeld,
@@ -481,5 +489,201 @@ test("同じ名前の別テーマは一覧で選び、回答や教材を統合�
     catalog.getByText(`「${topic.name}」の教材`, { exact: true }),
   ).toBeVisible();
   expect(second).not.toBe(bookId);
+  await page.evaluate(async (id) => {
+    const path = "/src/shared-textbook-store.ts",
+      api = await import(path);
+    await api.writeTextbookNotice(
+      await api.readSharedTextbook(id),
+      {
+        kind: "withdrawn",
+        reason: "同名の別教材を撤回",
+        evidence: "合成の根拠",
+      },
+      null,
+    );
+    const channel = new BroadcastChannel(api.sharedTextbookDatabase);
+    channel.postMessage("changed");
+    channel.close();
+  }, second);
+  await expect(
+    catalog
+      .getByRole("region", { name: "保存した教材", exact: true })
+      .getByRole("button", { name: /版 7を読む$/ }),
+  ).toHaveCount(1);
+  await catalog
+    .getByRole("link", { name: "すべての教材", exact: true })
+    .click();
+  await expect(
+    catalog
+      .getByRole("region", { name: "保存した教材", exact: true })
+      .getByRole("button", { name: /版 7を読む$/ }),
+  ).toHaveCount(2);
   await catalog.close();
+});
+
+test("遅れてリンクが追加されてもコードのコピー操作のフォーカスを保つ", async ({
+  page,
+  context,
+}) => {
+  await holdBookReads(context);
+  await seed(page, context);
+  const text = `const answer = 42;\n\n${topic.name}を深掘りする。`;
+  await changeBody(page, "b", text, [{ start: 0, end: 18, block: true }]);
+  await openArticle(page, "b");
+  await expect(page.locator(".rss-highlights [role=status]")).toHaveText(
+    "気になる言葉を残して、あとで読み返せます。",
+  );
+  await page.waitForFunction(
+    () => (window as unknown as { wordReadHeld: boolean }).wordReadHeld,
+  );
+  const copy = page.getByRole("button", {
+    name: "コードをコピー",
+    exact: true,
+  });
+  await copy.focus();
+  const y = await page.evaluate(() => scrollY);
+  await page.evaluate(() =>
+    (window as unknown as { releaseWordRead: () => void }).releaseWordRead(),
+  );
+  await expect(wordLinks(page)).toHaveCount(1);
+  await expect(copy).toBeFocused();
+  expect(await page.evaluate(() => scrollY)).toBe(y);
+});
+
+test("前の記事の遅い教材確認で次の記事にリンクを作らない", async ({
+  page,
+  context,
+}) => {
+  await holdBookReads(context);
+  await seed(page, context);
+  await page.waitForFunction(
+    () => (window as unknown as { wordReadHeld: boolean }).wordReadHeld,
+  );
+  const text = "この別の記事には教材と一致する名前がありません。";
+  await changeBody(page, "b", text);
+  await openArticle(page, "b");
+  await page.evaluate(() =>
+    (window as unknown as { releaseWordRead: () => void }).releaseWordRead(),
+  );
+  await expect(page.locator(".rss-textbook-links-status")).not.toHaveAttribute(
+    "aria-busy",
+    "true",
+  );
+  await expect(wordLinks(page)).toHaveCount(0);
+  await expect(page.locator(".rss-source-text")).toHaveText(text);
+});
+
+test("本文の教材リンクを検証済みアカウントごとに分離し、以前の回答を保持する", async ({
+  page,
+  context,
+}) => {
+  let owner = "a".repeat(64);
+  await context.route("**/api/**", (r) => r.fulfill({ status: 404, json: {} }));
+  await context.route("**/api/library/status", (r) => {
+    const expected = r.request().headers()["x-library-account"];
+    return r.fulfill({
+      status: expected && expected !== owner ? 403 : 200,
+      json: { schema: 1, account: owner, legacy: false },
+    });
+  });
+  await context.route(
+    (url) => url.pathname === "/",
+    async (r) => {
+      const response = await r.fetch();
+      await r.fulfill({
+        response,
+        body: (await response.text()).replace(
+          "</head>",
+          '<meta name="account-libraries" content="required"></head>',
+        ),
+      });
+    },
+  );
+  await page.route("**/__account_words", (r) =>
+    r.fulfill({
+      contentType: "text/html",
+      body: '<!doctype html><meta name="account-libraries" content="required"><title>Account fixture</title>',
+    }),
+  );
+  const open = async (withBook: boolean) => {
+    await page.goto("/__account_words");
+    await page.evaluate(
+      async ({ raw, name, withBook }) => {
+        const ctx = "/src/library-context.ts",
+          context = await import(ctx);
+        await context.initializeLibraryContext();
+        localStorage.setItem(
+          context.libraryName("quilna.feed.refresh.v1"),
+          "0",
+        );
+        localStorage.setItem(
+          context.libraryName("quilna.article.updates.v1"),
+          "false",
+        );
+        const books = "/src/shared-textbook-store.ts",
+          api = await import(books);
+        if (withBook) {
+          const book = await api.importSharedTextbook(raw);
+          if (!(await api.readSharedAnswers(book)).length) {
+            const lesson = book.draft.lessons[0];
+            await api.answerSharedTextbook(
+              book,
+              lesson.content.id,
+              lesson.content.question.correctOptionID,
+            );
+          }
+        }
+        const feed = "/src/feed-store.ts",
+          db = await (await import(feed)).openFeedLibrary();
+        const text = `この記事では${name}を学びます。`;
+        await new Promise<void>((resolve, reject) => {
+          const tx = db.transaction("articles", "readwrite");
+          tx.objectStore("articles").put({
+            id: "a",
+            title: "教材記事 a",
+            url: "https://example.org/account-article",
+            feedUrl: "",
+            published: null,
+            fetchedAt: "2026-11-17T00:00:00Z",
+            body: text,
+            read: true,
+            saved: true,
+            content: {
+              text,
+              title: "教材記事 a",
+              url: "https://example.org/account-article",
+              language: "ja",
+              fetchedAt: "2026-11-17T00:00:00Z",
+              codeRanges: [],
+            },
+          });
+          tx.oncomplete = () => resolve();
+          tx.onabort = () => reject(tx.error);
+        });
+        db.close();
+      },
+      { raw, name: topic.name, withBook },
+    );
+    await page.goto("/?view=feeds");
+    await openArticle(page, "a");
+    await expect(
+      page.locator(".rss-textbook-links-status"),
+    ).not.toHaveAttribute("aria-busy", "true");
+  };
+  await open(true);
+  await expect(wordLinks(page)).toHaveCount(1);
+  owner = "b".repeat(64);
+  await open(false);
+  await expect(wordLinks(page)).toHaveCount(0);
+  owner = "a".repeat(64);
+  await open(false);
+  await expect(wordLinks(page)).toHaveCount(1);
+  expect(
+    await page.evaluate(async (id) => {
+      const path = "/src/shared-textbook-store.ts",
+        api = await import(path);
+      return (await api.readSharedAnswers(await api.readSharedTextbook(id)))
+        .length;
+    }, bookId),
+  ).toBe(1);
 });

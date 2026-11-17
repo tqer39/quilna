@@ -165,6 +165,29 @@ export type TextbookNoticeState = {
   error?: Error;
   replacementState?: "available" | "withdrawn" | "unavailable";
 };
+/** 本文リンクと、その選択先一覧で同じ保存版の利用条件を使う。 */
+export function eligibleTopicEditions(
+  books: readonly SharedTextbook[],
+  states: readonly TextbookNoticeState[],
+) {
+  const latest = new Map<string, SharedTextbook>();
+  for (const [i, book] of books.entries()) {
+    const state = states[i];
+    if (
+      book.request.schemaVersion !== 2 ||
+      !state ||
+      state.error ||
+      state.notice?.kind === "withdrawn" ||
+      (state.notice?.kind === "correction" &&
+        state.replacementState !== "available")
+    )
+      continue;
+    const key = book.record.bookID.toLowerCase(),
+      old = latest.get(key);
+    if (!old || old.record.version < book.record.version) latest.set(key, book);
+  }
+  return Array.from(latest.values());
+}
 /** 表示名ではなく、教材・テーマの同一性と後の版であることを確認する。 */
 function correctionTarget(book: SharedTextbook, target: SharedTextbook) {
   return (
