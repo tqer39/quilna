@@ -53,6 +53,16 @@ export class ArticleTextbookWords {
       const account = libraryAccount();
       const books = await listSharedTextbooks(),
         states = await readTextbookNotices(books);
+      const identities = new Map<string, Set<string>>();
+      for (const book of books) {
+        if (book.request.schemaVersion !== 2) continue;
+        const label = book.request.topic.name.trim().toLowerCase(),
+          known = identities.get(label) ?? new Set<string>();
+        known.add(
+          `${book.record.bookID.toLowerCase()}:${book.request.topic.id.toLowerCase()}`,
+        );
+        identities.set(label, known);
+      }
       const groups = new Map<string, typeof books>();
       for (const book of eligibleTopicEditions(books, states)) {
         if (book.request.schemaVersion !== 2) continue;
@@ -67,7 +77,12 @@ export class ArticleTextbookWords {
         if (book.request.schemaVersion !== 2) continue;
         const url = new URL("/", location.origin);
         url.searchParams.set("view", "textbooks");
-        if (group.length === 1) url.searchParams.set("book", book.id);
+        if (
+          group.length === 1 &&
+          identities.get(book.request.topic.name.trim().toLowerCase())?.size ===
+            1
+        )
+          url.searchParams.set("book", book.id);
         else url.searchParams.set("term", book.request.topic.name);
         words.push({ label: book.request.topic.name, href: url.href });
       }

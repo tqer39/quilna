@@ -79,3 +79,21 @@ it("訂正先が撤回・利用不能なら旧版を新しい入口へ戻さな�
     ),
   ).toEqual([book]);
 });
+
+it("新版だけの撤回では、撤回されていない保存旧版を案内する", () => {
+  expect(
+    eligibleTopicEditions(
+      [book, later],
+      [
+        {},
+        {
+          notice: {
+            ...notice("withdrawn"),
+            id: later.id,
+            digest: later.digest,
+          },
+        },
+      ],
+    ).map((b) => b.id),
+  ).toEqual([book.id]);
+});

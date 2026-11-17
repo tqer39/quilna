@@ -12,13 +12,26 @@ export function textbookWordLinks(
   const latin = /[\p{Script=Latin}\p{Number}\p{Mark}_]/u;
   for (const { label, href } of words) {
     const name = label.trim();
-    if (!name) continue;
+    if (!name || !/[\p{Letter}\p{Number}]/u.test(name)) continue;
     const literal = name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
     const edge = "[\\p{Script=Latin}\\p{Number}\\p{Mark}_]";
+    const katakana = /[\p{Script=Katakana}ー]/u;
+    const first = Array.from(name)[0],
+      last = Array.from(name).at(-1)!;
+    const after =
+      name.length === 1 ? "[\\p{Script=Latin}\\p{Number}\\p{Mark}_#+]" : edge;
     const expression = new RegExp(
-      (latin.test(Array.from(name)[0]) ? `(?<!${edge})` : "") +
+      (latin.test(first)
+        ? `(?<!${edge})`
+        : katakana.test(first)
+          ? "(?<![\\p{Script=Katakana}ー])"
+          : "") +
         literal +
-        (latin.test(Array.from(name).at(-1)!) ? `(?!${edge})` : ""),
+        (latin.test(last)
+          ? `(?!${after})`
+          : katakana.test(last)
+            ? "(?![\\p{Script=Katakana}ー])"
+            : ""),
       "giu",
     );
     for (const match of text.matchAll(expression)) {

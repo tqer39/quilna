@@ -1088,3 +1088,41 @@ for (const outcome of ["invalid-output", "unknown"])
       undefined,
     );
   });
+
+test(
+  "テーマの送信境界の後だけ時計を進め、期限超過を結果不明として保持する",
+  { timeout: 10000 },
+  async (t) => {
+    t.mock.timers.enable({ apis: ["setTimeout"] });
+    let dispatched;
+    const entered = new Promise((resolve) => {
+      dispatched = resolve;
+    });
+    const f = await topicFixtureCore({
+      output: async () => {
+        dispatched();
+        return new Promise(() => {});
+      },
+      extra: { timeoutMs: 50 },
+    });
+    const input = topicRequest(),
+      pending = f.core.proposeTopic(f.owner, input);
+    await Promise.race([
+      entered,
+      pending.then(() => {
+        throw Error("送信境界より前に終了した");
+      }),
+    ]);
+    assert.equal(f.calls(), 1);
+    t.mock.timers.tick(50);
+    const result = await pending;
+    assert.deepEqual(result, { status: "unknown", draft: null });
+    const record = f.storage.data.get("budget").records[0];
+    assert.equal(record.state, "unknown");
+    assert.notEqual(record.knownUnsent, true);
+    assert.ok((await f.core.budget(f.owner)).heldMilliYen > 0);
+    assert.deepEqual(await f.core.lookupTopic(f.owner, input), result);
+    assert.deepEqual(await f.core.proposeTopic(f.owner, input), result);
+    assert.equal(f.calls(), 1);
+  },
+);

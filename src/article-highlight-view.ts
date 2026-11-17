@@ -172,6 +172,16 @@ export class ArticleHighlightView {
       JSON.stringify(links) === JSON.stringify(this.textbookLinks)
     )
       return;
+    this.textbookLinks = links;
+    this.repaint();
+  }
+  /** 同じ本文の再確認では、描画の都合で読書中の操作を捨てない。 */
+  private repaint() {
+    if (!this.body || !this.view) return;
+    if (!this.body.isConnected) {
+      this.paint();
+      return;
+    }
     const selection = document.getSelection(),
       focused = document.activeElement;
     const shadowFocus =
@@ -186,6 +196,10 @@ export class ArticleHighlightView {
       selection?.rangeCount && !selection.isCollapsed
         ? selection.getRangeAt(0)
         : undefined;
+    const backwards =
+      !!range &&
+      selection?.anchorNode === range.endContainer &&
+      selection.anchorOffset === range.endOffset;
     const pieces =
       range &&
       this.body.contains(range.startContainer) &&
@@ -210,8 +224,25 @@ export class ArticleHighlightView {
         : undefined;
     const x = scrollX,
       y = scrollY;
-    this.textbookLinks = links;
+    const codeScroll = new Map(
+      Array.from(
+        this.body.querySelectorAll<HTMLElement>("pre[data-reading-start]"),
+        (pre) => [
+          pre.dataset.readingStart,
+          { left: pre.scrollLeft, top: pre.scrollTop },
+        ],
+      ),
+    );
     this.paint();
+    for (const pre of Array.from(
+      this.body.querySelectorAll<HTMLElement>("pre[data-reading-start]"),
+    )) {
+      const position = codeScroll.get(pre.dataset.readingStart);
+      if (position) {
+        pre.scrollLeft = position.left;
+        pre.scrollTop = position.top;
+      }
+    }
     if (anchor) {
       const next = Array.from(
         this.body.querySelectorAll<HTMLAnchorElement>("a[data-link-start]"),
@@ -246,11 +277,12 @@ export class ArticleHighlightView {
         (s) => s.start < end && s.start + s.node.length >= end,
       );
       if (first && last) {
-        const restored = document.createRange();
-        restored.setStart(first.node, start - first.start);
-        restored.setEnd(last.node, end - last.start);
-        selection.removeAllRanges();
-        selection.addRange(restored);
+        selection.setBaseAndExtent(
+          backwards ? last.node : first.node,
+          backwards ? end - last.start : start - first.start,
+          backwards ? first.node : last.node,
+          backwards ? start - first.start : end - last.start,
+        );
         this.captureSelection();
       }
     }
@@ -382,7 +414,7 @@ export class ArticleHighlightView {
           ? `${records.length}件の引用を保存しています。`
           : "気になる言葉を残して、あとで読み返せます。",
       );
-      this.paint();
+      this.repaint();
       this.renderList();
     } catch (error) {
       if (generation !== this.generation) return;

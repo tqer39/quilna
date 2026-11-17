@@ -78,3 +78,34 @@ it("長い名称に含まれる短い語も、後の独立した出現からリ�
     { start: 4, end: 5, href: "/c" },
   ]);
 });
+
+it("カタカナ語の途中と別の一文字言語名にはリンクを付けない", () => {
+  const text = "キーボードのキーとC#、C++、Cを読む。";
+  expect(
+    textbookWordLinks(text, [
+      { label: "キー", href: "/key" },
+      { label: "C", href: "/c" },
+    ]),
+  ).toEqual([
+    {
+      start: text.lastIndexOf("キー"),
+      end: text.lastIndexOf("キー") + 2,
+      href: "/key",
+    },
+    {
+      start: text.lastIndexOf("C"),
+      end: text.lastIndexOf("C") + 1,
+      href: "/c",
+    },
+  ]);
+});
+it("句読点を自動リンクの語として扱わず、技術用語のC・R・πは残す", () => {
+  const text = "CとR、πを読む。";
+  const links = textbookWordLinks(text, [
+    { label: "。", href: "/punctuation" },
+    { label: "C", href: "/c" },
+    { label: "R", href: "/r" },
+    { label: "π", href: "/pi" },
+  ]);
+  expect(links.map((l) => text.slice(l.start, l.end))).toEqual(["C", "R", "π"]);
+});

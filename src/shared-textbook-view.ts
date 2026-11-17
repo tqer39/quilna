@@ -17,6 +17,7 @@ import {
   answerSharedTextbook,
   readTextbookNotices,
   eligibleTopicEditions,
+  ownTextbookImport,
   sharedTextbookDatabase,
   type TextbookNoticeState,
   type SharedAnswer,
@@ -237,7 +238,9 @@ export async function sharedTextbookView(root: HTMLElement) {
   const refreshLibrary = () => {
     if (!library.hidden) void showList(undefined, true);
   };
-  editionChannel?.addEventListener("message", refreshLibrary);
+  editionChannel?.addEventListener("message", (event) => {
+    if (!ownTextbookImport(event.data)) refreshLibrary();
+  });
   window.addEventListener("focus", refreshLibrary);
   // The notice is shared with imports; clear only an error about a URL we left.
   function clearRouteNotice() {
@@ -362,7 +365,7 @@ export async function sharedTextbookView(root: HTMLElement) {
           el(
             "p",
             term
-              ? "この名前の教材は現在のライブラリにありません。"
+              ? "この名前で新しく案内できる版はありません。保存済みの版は「すべての教材」から確認できます。"
               : "まだ教材を取り込んでいません。「教材ファイルを取り込む」から追加できます。",
           ),
         );

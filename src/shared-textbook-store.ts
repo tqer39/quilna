@@ -7,6 +7,19 @@ import {
 } from "./shared-textbook-format";
 
 export const sharedTextbookDatabase = libraryName("quilna.shared-textbooks.v1");
+let importOrigin: string | undefined;
+/** 自分の取り込み画面は確定後に直接描画し、他の画面からの変更は取りこぼさない。 */
+export function ownTextbookImport(message: unknown) {
+  return (
+    importOrigin !== undefined &&
+    typeof message === "object" &&
+    message !== null &&
+    "kind" in message &&
+    message.kind === "import" &&
+    "origin" in message &&
+    message.origin === importOrigin
+  );
+}
 /** Keep storage failure explicit while retaining earlier books and private answers. */
 const unavailable = () =>
   Error(
@@ -437,37 +450,55 @@ async function transaction<T>(
 /** Atomically add a validated file or accept an exact record reimport, never replacing a conflicting edition. */
 export async function importSharedTextbook(raw: string) {
   const book = await parseSharedTextbook(raw);
-  await transaction<void>(["books"], "readwrite", (tx, done, fail) => {
-    const store = tx.objectStore("books"),
-      existing = store.get(book.id),
-      count = store.count();
-    count.onsuccess = () => {
-      try {
-        if (existing.result !== undefined) {
-          if (
-            retainedRecord(existing.result, book.id) !==
-            sharedEnvelopeRecord(book.raw)
-          ) {
-            fail(conflict());
-            return;
+  const added = await transaction<boolean>(
+    ["books"],
+    "readwrite",
+    (tx, done, fail) => {
+      const store = tx.objectStore("books"),
+        existing = store.get(book.id),
+        count = store.count();
+      count.onsuccess = () => {
+        try {
+          if (existing.result !== undefined) {
+            if (
+              retainedRecord(existing.result, book.id) !==
+              sharedEnvelopeRecord(book.raw)
+            ) {
+              fail(conflict());
+              return;
+            }
+          } else {
+            if (count.result >= 100) {
+              fail(
+                Error(
+                  "教材の保存上限（100版）に達しました。既存の教材は保持しています。",
+                ),
+              );
+              return;
+            }
+            store.add({ id: book.id, raw: book.raw });
           }
-        } else {
-          if (count.result >= 100) {
-            fail(
-              Error(
-                "教材の保存上限（100版）に達しました。既存の教材は保持しています。",
-              ),
-            );
-            return;
-          }
-          store.add({ id: book.id, raw: book.raw });
+          done(existing.result === undefined);
+        } catch {
+          fail(unavailable());
         }
-        done();
-      } catch {
-        fail(unavailable());
-      }
-    };
-  });
+      };
+    },
+  );
+  if (added && typeof BroadcastChannel !== "undefined") {
+    try {
+      importOrigin ??= crypto.randomUUID();
+      const channel = new BroadcastChannel(sharedTextbookDatabase);
+      channel.postMessage({
+        kind: "import",
+        origin: importOrigin,
+        id: book.id,
+      });
+      channel.close();
+    } catch {
+      // 通知だけの失敗で、確定した取り込みを失敗扱いにして再送しない。
+    }
+  }
   return book;
 }
 
