@@ -3,7 +3,7 @@
   "extends": ["github>tqer39/renovate-config:renovate.json5"],
   "automerge": false,
   "platformAutomerge": false,
-  "dependencyDashboard": true,
+  "dependencyDashboard": { "enabled": true },
   "ignoreScripts": true,
   "ignorePlugins": true,
   "vulnerabilityAlerts": {
