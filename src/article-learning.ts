@@ -1,4 +1,8 @@
-import { libraryName, openLibraryDatabase } from "./library-context";
+import {
+  guardLibraryConnection,
+  libraryName,
+  openLibraryDatabase,
+} from "./library-context";
 import { validHighlight, type ArticleHighlight } from "./article-highlights";
 
 // Explicit reflections are independent of read/save flags and mutable highlights.
@@ -32,7 +36,12 @@ export function validLearningRecord(value: unknown): value is LearningRecord {
 let connection: Promise<IDBDatabase> | undefined;
 /** Cache this library's reflection connection; opening failures retain saved records. */
 export function openLearning(): Promise<IDBDatabase> {
-  if (connection) return connection;
+  if (connection)
+    return connection.then((db) => {
+      // 復元先を開く時点で、通知のなかったcloseも検出する。
+      db.transaction("records");
+      return db;
+    });
   let failed = false;
   const pending = new Promise<IDBDatabase>((resolve, reject) => {
     const request = openLibraryDatabase(learningDatabase, 1);
@@ -53,10 +62,9 @@ export function openLearning(): Promise<IDBDatabase> {
         db.close();
         return;
       }
-      db.onversionchange = () => {
-        db.close();
+      guardLibraryConnection(db, () => {
         if (connection === pending) connection = undefined;
-      };
+      });
       resolve(db);
     };
   });
