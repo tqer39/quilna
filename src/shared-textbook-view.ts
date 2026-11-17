@@ -1,3 +1,4 @@
+import { topicGenerationView } from "./topic-generation-view";
 import { hasAccountLibrary } from "./library-context";
 import { button, el } from "./ui";
 import { pushReaderURL, revealReaderAnchor } from "./reader-route";
@@ -189,7 +190,16 @@ export async function sharedTextbookView(root: HTMLElement) {
   const reader = el("main");
   reader.setAttribute("aria-label", "共有教材の読書");
   reader.hidden = true;
-  library.append(label, input, notice, preview, list);
+  library.append(
+    topicGenerationView(async (id) => {
+      await showList(id);
+    }),
+    label,
+    input,
+    notice,
+    preview,
+    list,
+  );
   root.append(reader);
   let fileEpoch = 0,
     readEpoch = 0,

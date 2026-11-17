@@ -26,6 +26,11 @@ function assertActive() {
 }
 /** Select account-specific UI text only after server verification. */
 export const hasAccountLibrary = () => current !== null && !stopped;
+/** ブラウザーの合図ではなく、初期化時に検証した所有者だけを送信へ使う。 */
+export function libraryAccount(): string | null {
+  assertActive();
+  return current?.account ?? null;
+}
 /** A document keeps one assignment for its lifetime, without switching databases in place. */
 export function libraryName(base: string): string {
   assertActive();

@@ -1,15 +1,8 @@
 import { z } from "zod";
 import { draftSchema, usageSchema } from "./contracts.mjs";
 import { topicTextbookEnvelopeSchema } from "./topic-textbook-envelope.mjs";
-export const providerOutcomeSchema = z.enum([
-  "complete",
-  "refused",
-  "incomplete",
-  "invalid-output",
-  "input-limit",
-  "cancelled",
-  "credential-unavailable",
-]);
+import { topicGenerationOutcomeSchema as providerOutcomeSchema } from "../src/topic-generation-protocol.ts";
+export { providerOutcomeSchema };
 const recordSchema = z
   .object({
     requestId: z.string().uuid(),
@@ -24,6 +17,7 @@ const recordSchema = z
     provider: z.string(),
     reservedMilliYen: z.number().int().positive().max(500000),
     spentMilliYen: z.number().int().min(0).max(500000),
+    knownUnsent: z.literal(true).optional(),
     state: z.enum(["reserved", "unknown", "complete", "rejected"]),
     draft: z.union([draftSchema, topicTextbookEnvelopeSchema]).nullable(),
     usage: usageSchema.optional(),

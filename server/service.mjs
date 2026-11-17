@@ -53,6 +53,13 @@ const additionContract = {
     return validateDraft(raw, prepared.sources);
   },
 };
+// 送信済み・不明・有料の失敗は再実行せず、ホストが確認した未送信だけを明示再承認する。
+const retryKnownUnsent = (record, request) =>
+  request.retryUnsent === true &&
+  record.knownUnsent === true &&
+  record.state === "rejected" &&
+  record.spentMilliYen === 0 &&
+  record.draft === null;
 export class GenerationService {
   constructor({
     ledger,
@@ -77,24 +84,7 @@ export class GenerationService {
       contract,
     });
   }
-  async propose(input) {
-    const request = this.contract.requestSchema.parse(input);
-    const operationDigest = this.contract.identity
-      ? await this.contract.identity(request)
-      : undefined;
-    if (operationDigest) {
-      const previous = (await this.ledger.read()).records.find(
-        (r) => r.requestId === request.requestId,
-      );
-      if (previous)
-        return previous.operationDigest === operationDigest
-          ? {
-              status: previous.state,
-              draft: previous.draft,
-              ...(previous.outcome ? { outcome: previous.outcome } : {}),
-            }
-          : { status: "id-conflict" };
-    }
+  configuration(request) {
     // Prepared provider transports cannot run through this service; only test injection is allowed.
     const candidate = modelSchema.safeParse(
       this.registry.find(
@@ -134,6 +124,77 @@ export class GenerationService {
       model.outputUsdMicrosPerMillion === null
     )
       return { status: "cost-unconfigured" };
+    return { status: "configured", model, adapter, now, policy };
+  }
+  quoteDigest(request, model, policy) {
+    return digest({
+      contract: this.contract.id ?? "caa-addition",
+      purpose: request.purpose,
+      model,
+      policy,
+    });
+  }
+  async describe(request) {
+    const configured = this.configuration(request);
+    if (configured.status !== "configured") return configured;
+    const { model, policy } = configured;
+    const maxMilliYen = reservationMilliYen(policy, model);
+    if (!maxMilliYen || maxMilliYen > 500000)
+      return { status: "budget-exhausted" };
+    return {
+      status: "available",
+      quote: {
+        modelId: model.id,
+        provider: model.provider,
+        model: model.model,
+        purpose: request.purpose,
+        maxMilliYen,
+        quoteDigest: await this.quoteDigest(request, model, policy),
+        inputTokens: model.inputTokens,
+        outputTokens: model.outputTokens,
+        dataConditions: model.dataConditions,
+        priceCheckedAt: model.priceCheckedAt,
+        costCheckedAt: policy.checkedAt,
+      },
+      fixedMilliYen: policy.fixedMilliYen,
+      safetyMilliYen: policy.safetyMilliYen,
+    };
+  }
+  async propose(input) {
+    const request = this.contract.requestSchema.parse(input);
+    const operationDigest = this.contract.identity
+      ? await this.contract.identity(request)
+      : undefined;
+    if (operationDigest) {
+      const previous = (await this.ledger.read()).records.find(
+        (r) => r.requestId === request.requestId,
+      );
+      if (
+        previous &&
+        !(
+          previous.operationDigest === operationDigest &&
+          retryKnownUnsent(previous, request)
+        )
+      )
+        return previous.operationDigest === operationDigest
+          ? {
+              status: previous.state,
+              draft: previous.draft,
+              ...(previous.outcome ? { outcome: previous.outcome } : {}),
+            }
+          : { status: "id-conflict" };
+    }
+    const configuration = this.configuration(request);
+    if (configuration.status !== "configured") return configuration;
+    const { model, adapter, now, policy } = configuration;
+    const reserved = reservationMilliYen(policy, model);
+    if (this.contract.approve) {
+      const reason = this.contract.approve(request, {
+        reserved,
+        quoteDigest: await this.quoteDigest(request, model, policy),
+      });
+      if (reason) return { status: reason };
+    }
     const prepared = await this.contract.prepare(request, {
       sources: this.sources,
       now,
@@ -149,12 +210,17 @@ export class GenerationService {
     const requestDigest = await digest({ request, sources, model });
     const policyDigest = await digest(policy);
     const month = now.toISOString().slice(0, 7);
-    const reserved = reservationMilliYen(policy, model);
     const reservation = await this.ledger.transaction((ledger) => {
       const previous = ledger.records.find(
         (r) => r.requestId === request.requestId,
       );
-      if (previous)
+      if (
+        previous &&
+        !(
+          previous.operationDigest === operationDigest &&
+          retryKnownUnsent(previous, request)
+        )
+      )
         return (
           operationDigest
             ? previous.operationDigest === operationDigest
@@ -193,6 +259,7 @@ export class GenerationService {
           providerCap
       )
         return { status: "provider-budget-exhausted" };
+      if (previous) ledger.records.splice(ledger.records.indexOf(previous), 1);
       ledger.records.push({
         requestId: request.requestId,
         digest: requestDigest,
@@ -289,6 +356,16 @@ export class GenerationService {
     } finally {
       clearTimeout(timer);
     }
+    let knownUnsent = false;
+    try {
+      knownUnsent =
+        this.contract.captureOutcome === true &&
+        state === "rejected" &&
+        spentMilliYen === 0 &&
+        adapter.confirmUnsent?.() === true;
+    } catch {
+      /* 不確実な場合は再送を許可しない。 */
+    }
     return this.ledger.transaction((ledger) => {
       const record = ledger.records.find(
         (r) => r.requestId === request.requestId,
@@ -299,6 +376,7 @@ export class GenerationService {
         state,
         draft,
         spentMilliYen,
+        ...(knownUnsent ? { knownUnsent: true } : {}),
         ...(usage ? { usage } : {}),
         ...(outcome ? { outcome } : {}),
       });

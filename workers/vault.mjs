@@ -5,6 +5,7 @@ import { GenerationService } from "../server/service.mjs";
 import { registry } from "../server/registry.mjs";
 import { requestSchema } from "../server/contracts.mjs";
 import { topicTextbookContract } from "../server/topic-textbook-contract.mjs";
+import { topicQuoteSchema } from "../src/topic-generation-protocol.ts";
 const providerSchema = z.enum(["openai", "anthropic"]);
 const principalSchema = z
   .object({
@@ -307,6 +308,58 @@ export class AccountVaultCore {
     const request = topicTextbookContract.requestSchema.parse(input);
     return this.proposeUsing(owner, request, this.topicGeneration, true);
   }
+  async topicStatus(owner) {
+    const budget = await this.budget(owner);
+    const result = {
+      mode: "unconnected",
+      quotes: [],
+      budget: {
+        limitMilliYen: budget.limitMilliYen,
+        spentMilliYen: budget.spentMilliYen,
+        heldMilliYen: budget.heldMilliYen,
+        fixedMilliYen: null,
+        safetyMilliYen: null,
+      },
+    };
+    const configuration = this.topicGeneration;
+    if (!configuration) return result;
+    const credential = await this.status(owner, "openai");
+    if (credential.state !== "registered") return result;
+    let adapter;
+    try {
+      // 見積りで資格情報を復号・送信しない。
+      adapter = configuration.makeAdapter("openai", () => {
+        throw Error("credential-before-reservation");
+      });
+    } catch {
+      return result;
+    }
+    if (adapter?.protocol !== "provider-v1") return result;
+    const service = new GenerationService({
+      ...configuration,
+      contract: topicTextbookContract,
+      adapters: { openai: adapter },
+      now: this.now,
+    });
+    for (const model of configuration.registry.slice(0, 20)) {
+      if (model.provider !== "openai" || model.model !== credential.model)
+        continue;
+      for (const purpose of ["book-addition", "evidence-check"]) {
+        const description = await service.describe({
+          modelId: model.id,
+          purpose,
+        });
+        if (description.status !== "available") continue;
+        const quote = topicQuoteSchema.safeParse(description.quote);
+        if (!quote.success) continue;
+        result.quotes.push(quote.data);
+        result.budget.fixedMilliYen = description.fixedMilliYen;
+        result.budget.safetyMilliYen = description.safetyMilliYen;
+      }
+    }
+    if (result.quotes.length) result.mode = "test-only";
+    return result;
+  }
   async lookupTopic(owner, input) {
     const request = topicTextbookContract.requestSchema.parse(input);
     const identity = await topicTextbookContract.identity(request);
@@ -326,6 +379,11 @@ export class AccountVaultCore {
         status: previous.state,
         draft: previous.draft,
         ...(previous.outcome ? { outcome: previous.outcome } : {}),
+        ...(previous.knownUnsent === true &&
+        previous.state === "rejected" &&
+        previous.spentMilliYen === 0
+          ? { retryable: true }
+          : {}),
       };
     });
   }

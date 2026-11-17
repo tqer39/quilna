@@ -214,10 +214,12 @@ export function createHandler({
       }
       if (url.pathname.startsWith("/api/topic-textbooks/")) {
         const action = {
+          "/api/topic-textbooks/status": "topic-status",
           "/api/topic-textbooks/proposals": "topic-propose",
           "/api/topic-textbooks/operations": "topic-lookup",
         }[url.pathname];
-        if (!action || request.method !== "POST")
+        const readingStatus = action === "topic-status";
+        if (!action || request.method !== (readingStatus ? "GET" : "POST"))
           return json(404, { status: "not-found" });
         if (request.headers.get("X-Library-Account") !== owner)
           return json(403, { status: "account-mismatch" });
@@ -227,21 +229,33 @@ export function createHandler({
             realKeyInputEnabled: false,
           });
         const csrf = request.headers.get("X-CSRF-Token");
-        if (typeof csrf !== "string" || csrf.length > 200)
+        if (!readingStatus && (typeof csrf !== "string" || csrf.length > 200))
           return json(403, { status: "csrf-invalid" });
-        if (request.headers.get("Content-Type") !== "application/json")
+        if (
+          !readingStatus &&
+          request.headers.get("Content-Type") !== "application/json"
+        )
           return json(415, { status: "json-required" });
         let data;
         try {
-          data = await readBody(request, topicTextbookContract.bodyBytes);
+          if (!readingStatus)
+            data = await readBody(request, topicTextbookContract.bodyBytes);
         } catch (error) {
           return json(error.message === "body-limit" ? 413 : 400, {
             status:
               error.message === "body-limit" ? "body-limit" : "invalid-request",
           });
         }
-        const parsed = topicTextbookContract.requestSchema.safeParse(data);
+        const parsed = readingStatus
+          ? { success: true, data: null }
+          : topicTextbookContract.requestSchema.safeParse(data);
         if (!parsed.success) return json(400, { status: "invalid-request" });
+        if (
+          action === "topic-propose" &&
+          (parsed.data.approvedMaxMilliYen === undefined ||
+            !parsed.data.approvedQuoteDigest)
+        )
+          return json(400, { status: "cost-unapproved" });
         // 本文の受信待ちと処理待ちの両方で、別のsessionへ結果を渡さない。
         const before = principal.safeParse(await authenticate(request));
         if (
@@ -259,6 +273,7 @@ export function createHandler({
               principal: verified.data,
               csrf,
               data: parsed.data,
+              ...(readingStatus ? { proposalEnabled: credentialsEnabled } : {}),
             }),
           }),
         );
@@ -334,7 +349,10 @@ export async function handleAccount(core, request, collector, documents) {
       request,
       topic ? topicTextbookContract.bodyBytes + 4096 : 32768,
     );
-    if (topic !== ["topic-propose", "topic-lookup"].includes(command.action))
+    if (
+      topic !==
+      ["topic-propose", "topic-lookup", "topic-status"].includes(command.action)
+    )
       throw Error("invalid-command");
     // Internal binding only. No browser-selected owner or credential handles.
     owner = await core.authorize(
@@ -342,6 +360,7 @@ export async function handleAccount(core, request, collector, documents) {
       command.csrf,
       ![
         "session",
+        "topic-status",
         "budget",
         "status",
         "collection-status",
@@ -398,9 +417,22 @@ export async function handleAccount(core, request, collector, documents) {
       value = await core.check(owner, command.provider, command.data);
     else if (command.action === "propose")
       value = await core.propose(owner, command.data);
-    else if (command.action === "topic-propose")
+    else if (command.action === "topic-status") {
+      value = await core.topicStatus(owner);
+      if (command.proposalEnabled !== true)
+        value = { ...value, mode: "unconnected", quotes: [] };
+      value = {
+        ...value,
+        csrfToken: (await core.session(command.principal)).csrfToken,
+      };
+    } else if (command.action === "topic-propose") {
+      if (
+        command.data?.approvedMaxMilliYen === undefined ||
+        !command.data?.approvedQuoteDigest
+      )
+        return json(400, { status: "cost-unapproved", account: owner });
       value = await core.proposeTopic(owner, command.data);
-    else if (command.action === "topic-lookup")
+    } else if (command.action === "topic-lookup")
       value = await core.lookupTopic(owner, command.data);
     else
       value = await core.mutate(

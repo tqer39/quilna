@@ -1,4 +1,3 @@
-import { z } from "zod";
 import {
   topicGenerationInput,
   topicReviewInput,
@@ -7,36 +6,40 @@ import {
   parseReviewedTextbookCandidate,
   sharedTextbookDigest,
 } from "../src/shared-textbook-format.ts";
-import { topicTextbookEnvelopeSchema } from "./topic-textbook-envelope.mjs";
+import {
+  topicTextbookEnvelopeSchema,
+  topicGenerationInputSchema,
+} from "../src/topic-generation-protocol.ts";
 
 const utf8 = (value) => new TextEncoder().encode(value);
-const uuid = z
-  .string()
-  .uuid()
-  .transform((value) => value.toLowerCase());
-const inputSchema = z
-  .object({
-    requestId: uuid,
-    purpose: z.enum(["book-addition", "evidence-check"]),
-    modelId: z.string().min(1).max(100).optional(),
-    requestRaw: z.string().min(1).max(96000),
-    generationRequestId: uuid.optional(),
-    generatorInvocation: uuid.optional(),
-    draftRaw: z.string().min(1).max(96000).optional(),
-    approvedPublicText: z.literal(true),
-  })
-  .strict();
 
 export const topicTextbookContract = {
   id: "topic-textbook-v2",
-  requestSchema: inputSchema,
+  requestSchema: topicGenerationInputSchema,
   bodyBytes: 384000,
-  identity: (input) =>
-    sharedTextbookDigest(
-      utf8(JSON.stringify({ contract: "topic-textbook-v2", input })),
-    ),
+  identity(input) {
+    // 費用の再確認でも同じ操作を参照し、競合した古い送信が二重課金にならないようにする。
+    const retained = { ...input };
+    delete retained.retryUnsent;
+    delete retained.approvedMaxMilliYen;
+    delete retained.approvedQuoteDigest;
+    return sharedTextbookDigest(
+      utf8(JSON.stringify({ contract: "topic-textbook-v2", input: retained })),
+    );
+  },
   permits: (adapter, model) => adapter.acceptsModel?.(model) === true,
   captureOutcome: true,
+  approve(input, { reserved, quoteDigest }) {
+    if (
+      input.approvedMaxMilliYen === undefined &&
+      input.approvedQuoteDigest === undefined
+    )
+      return null;
+    if (input.approvedMaxMilliYen === undefined || !input.approvedQuoteDigest)
+      return "cost-unapproved";
+    if (reserved > input.approvedMaxMilliYen) return "cost-limit";
+    return input.approvedQuoteDigest === quoteDigest ? null : "quote-changed";
+  },
   async prepare(input, { ledger }) {
     const prepared = await topicGenerationInput(input.requestRaw);
     const generate = input.purpose === "book-addition";
