@@ -18,7 +18,17 @@ export default defineConfig(() => {
   const sourceStats = new Map(),
     sourceInodes = new Map(),
     sourceWatchers = new Map(),
+    sourceWatchFailures = new Map(),
     checking = new Map();
+  const reportRecoveryFailure = (server, file, error) => {
+    if (!sourceStats.has(file)) return;
+    const message = error instanceof Error ? error.message : "unknown error";
+    const code = typeof error?.code === "string" ? error.code : message;
+    // 資源不足が続く場合も実通知では再確認し、同じ原因のログだけを集約する。
+    if (sourceWatchFailures.get(file) === code) return;
+    sourceWatchFailures.set(file, code);
+    server.config.logger.error(`Source watcher recovery failed: ${message}`);
+  };
   // 属性だけの通知を除き、内容の更新・置換に関係する属性を比較する。
   const fingerprint = (info) =>
     JSON.stringify([info.mtimeMs, info.size, info.ino]);
@@ -55,23 +65,20 @@ export default defineConfig(() => {
             const previous = sourceWatchers.get(file);
             sourceWatchers.set(file, recovery);
             sourceInodes.set(file, info.ino);
+            sourceWatchFailures.delete(file);
             previous?.close();
             recovery.on("error", (error) => {
               if (sourceWatchers.get(file) !== recovery) return;
               recovery.close();
               sourceWatchers.delete(file);
               sourceInodes.delete(file);
-              server.config.logger.error(
-                `Source watcher recovery failed: ${error.message}`,
-              );
+              reportRecoveryFailure(server, file, error);
             });
             state.again = true;
           } catch (error) {
             // 監視資源が不足しても、今届いた変更の配信更新は失わない。
             if (!["ENOENT", "ENOTDIR"].includes(error?.code))
-              server.config.logger.error(
-                `Source watcher recovery failed: ${error instanceof Error ? error.message : "unknown error"}`,
-              );
+              reportRecoveryFailure(server, file, error);
           }
         }
         const next = fingerprint(info);
@@ -81,9 +88,7 @@ export default defineConfig(() => {
         }
       }
     } catch (error) {
-      server.config.logger.error(
-        `Source watcher recovery failed: ${error instanceof Error ? error.message : "unknown error"}`,
-      );
+      reportRecoveryFailure(server, file, error);
     } finally {
       if (checking.get(file) === state) checking.delete(file);
     }
@@ -98,6 +103,7 @@ export default defineConfig(() => {
           sourceWatchers.clear();
           sourceStats.clear();
           sourceInodes.clear();
+          sourceWatchFailures.clear();
           checking.clear();
         },
         load: {
@@ -176,6 +182,7 @@ export default defineConfig(() => {
             sourceWatchers.delete(resolve(file));
             sourceStats.delete(resolve(file));
             sourceInodes.delete(resolve(file));
+            sourceWatchFailures.delete(resolve(file));
           });
           server.watcher.on("change", (file, info) => {
             const key = resolve(file);
