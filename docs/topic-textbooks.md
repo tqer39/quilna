@@ -8,7 +8,7 @@ The owner's clarification on 2026-11-17 in [Issue #7](https://github.com/tqer39/
 An article can lead to “explore this topic with this textbook”; the textbook teaches the underlying topic and can serve readers arriving from different articles.
 Stable technical material can remain fixed between deliberate revisions. Reading an article or receiving an RSS update must not require generating a new textbook.
 
-This page specifies the browser direction and separates implemented steps from remaining acceptance. The [version-2 file workflow](textbook-sharing.md#file-contract-and-validation) supports standalone topic textbooks with independent source snapshots. Readers can now manually connect articles to retained topic editions; a browser authoring flow is available for injected test connections, while live authoring, automatic suggestions, correction/withdrawal metadata and owner usability acceptance remain incomplete.
+This page specifies the browser direction and separates implemented steps from remaining acceptance. The [version-2 file workflow](textbook-sharing.md#file-contract-and-validation) supports standalone topic textbooks with independent source snapshots. Readers can manually connect articles to retained topic editions and record local correction/withdrawal judgments. A browser authoring flow is available for injected test connections, while live authoring, automatic suggestions and owner usability acceptance remain incomplete.
 The existing CAA lesson is a fixed demo; imported version-1 textbook files remain readable through the same file workflow.
 OpenAI was selected for the next generation integration, and the owner requested secure creation of a new key.
 Key setup, sending scope, model selection and a concrete live-run spending allowance are not yet complete.
@@ -80,6 +80,18 @@ Retain the actual source snapshots and review result; do not label model-provide
 Stable concepts need no periodic regeneration solely because another article mentions them.
 Correct factual defects and review version-dependent claims against current primary sources when maintaining an edition.
 Keep the existing manual question/addition workflow and old learning history; a fixed edition can still receive a reviewed improvement.
+
+## Local correction and withdrawal records
+
+For a retained version-2 textbook, open **教材の訂正・撤回を記録**. Record the reason and the evidence for the judgment (each at most 2,000 UTF-16 units). These are the current library reader's private records, not authenticated publisher announcements. No source is fetched and no provider or publisher is contacted. The record is excluded from textbook JSON exports and article backups; it is lost if that library's browser storage is erased.
+
+A correction selects an already retained higher version with the same textbook and topic IDs. The exact source and replacement edition IDs and digests are retained. A withdrawn target cannot be selected. Existing article links keep their old edition and show the record; **訂正先の版を読む** opens the replacement only after an explicit click. Textbook bytes, sources, old answers and article links are not rewritten or transferred.
+Article entries open the replacement in a separate tab without a referrer. If the replacement is later withdrawn or cannot be verified, the old edition shows that problem and withholds the replacement link.
+
+A withdrawn edition remains readable as history with a warning, but is excluded from new article-link choices. Answer storage checks withdrawal in the same transaction as the append, so a stale open reader cannot append another answer after withdrawal commits. Article links use a separate database: withdrawal concurrent with a link's final validation can leave a historical link, which displays the warning instead of moving or deleting it. Existing reasons can still be edited and links removed.
+
+The existing `quilna.shared-textbooks.v1` database moves from IndexedDB schema 1 to 2, retaining `books` and `answers` and adding `notices`. File format versions 1 and 2 do not change. Unknown layouts/versions are refused without reset; older app builds cannot open the upgraded database. Records bind the immutable edition digest, a fresh revision UUID, kind, reason, evidence, reader attribution, update time and optional replacement. Writes compare the expected revision in one transaction; deletion and recreation cannot satisfy an old revision. Failures preserve the input and stored records, and an explicit reload discards the input in favor of the latest record. Account-specific library naming and session invalidation apply to these records too.
+An unreadable notice is retained and prevents new answers and new article links for that edition; other editions remain available. Use a compatible app version to inspect an unknown format. The app does not ignore or delete the record to resume answering, because it may contain a withdrawal. The text and earlier answers remain readable, and the textbook file can still be exported.
 
 ## Browser acceptance
 

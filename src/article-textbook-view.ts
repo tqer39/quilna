@@ -3,7 +3,10 @@ import { highlightVersion } from "./article-highlights";
 import {
   listSharedTextbooks,
   readSharedTextbook,
+  readTextbookNotices,
+  sharedTextbookDatabase,
 } from "./shared-textbook-store";
+import { textbookNoticeSummary } from "./textbook-notice-view";
 import {
   readTextbookLinks,
   writeTextbookLink,
@@ -91,6 +94,10 @@ export class ArticleTextbookView {
     typeof BroadcastChannel === "undefined"
       ? null
       : new BroadcastChannel(textbookLinkDatabase);
+  private readonly editionChannel =
+    typeof BroadcastChannel === "undefined"
+      ? null
+      : new BroadcastChannel(sharedTextbookDatabase);
   private view?: TextbookReading;
   private records: TextbookLink[] = [];
   private draft?: Draft;
@@ -175,6 +182,10 @@ export class ArticleTextbookView {
         this.details.open &&
         !this.busy
       )
+        void this.load();
+    });
+    this.editionChannel?.addEventListener("message", () => {
+      if (this.root.isConnected && this.details.open && !this.busy)
         void this.load();
     });
     window.addEventListener("focus", () => {
@@ -315,12 +326,16 @@ export class ArticleTextbookView {
     this.busy = true;
     this.controls();
     try {
+      const books = record ? [] : await listSharedTextbooks();
+      const notices = await readTextbookNotices(books);
       const choices = record
         ? [{ target: record.target, goal: "" }]
-        : (await listSharedTextbooks())
+        : books
             .filter(
-              (b) =>
+              (b, i) =>
                 b.request.schemaVersion === 2 &&
+                !notices[i].error &&
+                notices[i].notice?.kind !== "withdrawn" &&
                 !this.records.some((r) => r.target.id === b.id),
             )
             .map((b) => ({
@@ -330,8 +345,9 @@ export class ArticleTextbookView {
       const source = record?.source ?? (await textbookLinkSource(view));
       if (context !== this.context) return;
       if (!choices.length) {
-        this.status.textContent =
-          "関連づけられるテーマ教材がありません。教材ファイルを取り込むか、保存済みの関連づけを確認してください。";
+        this.status.textContent = notices.some((n) => n.error)
+          ? "訂正・撤回の記録を確認できない版は選択肢から外しています。再読み込みして確認してください。不明な保存形式の場合は対応するアプリの版を使ってください。"
+          : "関連づけられるテーマ教材がありません。教材ファイルを取り込むか、保存済みの関連づけを確認してください。";
         return;
       }
       this.draft = {
@@ -345,6 +361,9 @@ export class ArticleTextbookView {
       this.drafts.set(view.articleId, this.draft);
       this.status.textContent =
         "関連する理由はこの記事用の個人記録です。教材ファイルには含めません。下書きはこの画面を開いている間、記事を切り替えても残ります。";
+      if (notices.some((n) => n.error))
+        this.status.textContent +=
+          " 訂正・撤回の記録を確認できない版は選択肢から外しています。";
       this.renderDraft();
     } catch (error) {
       if (context === this.context)
@@ -449,13 +468,15 @@ export class ArticleTextbookView {
         records.map(async (r) => {
           try {
             const book = await readSharedTextbook(r.target.id);
-            return (
-              !!book &&
-              JSON.stringify(textbookLinkTarget(book)) ===
+            if (
+              !book ||
+              JSON.stringify(textbookLinkTarget(book)) !==
                 JSON.stringify(r.target)
-            );
+            )
+              return undefined;
+            return (await readTextbookNotices([book]))[0];
           } catch {
-            return false;
+            return undefined;
           }
         }),
       );
@@ -504,6 +525,21 @@ export class ArticleTextbookView {
           read,
           snapshot,
         );
+        if (available[i]?.notice)
+          item.append(
+            textbookNoticeSummary(
+              available[i]!.notice,
+              available[i]!.replacementState,
+              true,
+            ),
+          );
+        if (available[i]?.error)
+          item.append(
+            el(
+              "p",
+              "この教材版の訂正・撤回の記録を確認できません。保存済みの教材と記録を確認してください。",
+            ),
+          );
         if (record.source.version !== version)
           item.append(
             el(

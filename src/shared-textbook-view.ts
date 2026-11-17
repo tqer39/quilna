@@ -1,4 +1,5 @@
 import { topicGenerationView } from "./topic-generation-view";
+import { textbookNoticeView } from "./textbook-notice-view";
 import { hasAccountLibrary } from "./library-context";
 import { button, el } from "./ui";
 import { pushReaderURL, revealReaderAnchor } from "./reader-route";
@@ -14,6 +15,9 @@ import {
   readSharedTextbook,
   readSharedAnswers,
   answerSharedTextbook,
+  readTextbookNotices,
+  sharedTextbookDatabase,
+  type TextbookNoticeState,
   type SharedAnswer,
 } from "./shared-textbook-store";
 
@@ -187,6 +191,8 @@ export async function sharedTextbookView(root: HTMLElement) {
   preview.setAttribute("aria-label", "教材ファイルのプレビュー");
   const list = el("section");
   list.setAttribute("aria-label", "保存した教材");
+  const listWarning = el("p");
+  listWarning.setAttribute("aria-live", "polite");
   const reader = el("main");
   reader.setAttribute("aria-label", "共有教材の読書");
   reader.hidden = true;
@@ -199,6 +205,7 @@ export async function sharedTextbookView(root: HTMLElement) {
     notice,
     preview,
     list,
+    listWarning,
   );
   root.append(reader);
   let fileEpoch = 0,
@@ -209,6 +216,19 @@ export async function sharedTextbookView(root: HTMLElement) {
     selectedBook = "",
     routeNotice = "",
     readerTrigger: HTMLElement | undefined;
+  let disposeNotice: (() => void) | undefined;
+  let foregroundLists = 0,
+    backgroundList = false,
+    refreshPending = false;
+  const editionChannel =
+    typeof BroadcastChannel === "undefined"
+      ? null
+      : new BroadcastChannel(sharedTextbookDatabase);
+  const refreshLibrary = () => {
+    if (!library.hidden) void showList(undefined, true);
+  };
+  editionChannel?.addEventListener("message", refreshLibrary);
+  window.addEventListener("focus", refreshLibrary);
   // The notice is shared with imports; clear only an error about a URL we left.
   function clearRouteNotice() {
     if (routeNotice && notice.textContent === routeNotice)
@@ -223,7 +243,10 @@ export async function sharedTextbookView(root: HTMLElement) {
     url.hash = hash;
     return url;
   }
-  function showLibrary(navigate = true, focus = true) {
+  function showLibrary(navigate = true, focus = true, refresh = true) {
+    const leavingBook = !!selectedBook;
+    disposeNotice?.();
+    disposeNotice = undefined;
     routeEpoch++;
     readEpoch++;
     selectedBook = "";
@@ -238,6 +261,7 @@ export async function sharedTextbookView(root: HTMLElement) {
         ? readerTrigger
         : list.querySelector<HTMLElement>("button")
       )?.focus();
+    if (refresh && leavingBook) refreshLibrary();
   }
   /** Resolve only this library's retained edition, never a remote source. */
   async function restoreRoute() {
@@ -248,7 +272,7 @@ export async function sharedTextbookView(root: HTMLElement) {
         window.scrollTo(0, Number(history.state?.readerScroll) || 0);
       return;
     }
-    showLibrary(false, false);
+    showLibrary(false, false, !id);
     const ticket = routeEpoch;
     if (!id) {
       window.scrollTo(0, Number(history.state?.readerScroll) || 0);
@@ -273,15 +297,38 @@ export async function sharedTextbookView(root: HTMLElement) {
   });
 
   /** Publish only the latest complete library read and return focus after a confirmed import. */
-  async function showList(focusId?: string) {
+  async function showList(focusId?: string, background = false) {
+    if (background && (foregroundLists > 0 || backgroundList)) {
+      refreshPending = true;
+      return;
+    }
+    if (background) backgroundList = true;
+    else foregroundLists++;
     const epoch = ++listEpoch;
-    list.replaceChildren(
-      el("h2", "保存した教材"),
-      el("p", "教材を確認しています。"),
-    );
+    const focused = document.activeElement;
+    const focusedId =
+      focused instanceof HTMLElement && list.contains(focused)
+        ? focused.dataset.edition
+        : undefined;
+    if (!background) {
+      listWarning.replaceChildren();
+      list.replaceChildren(
+        el("h2", "保存した教材"),
+        el("p", "教材を確認しています。"),
+      );
+    }
     try {
       const books = await listSharedTextbooks();
-      if (epoch !== listEpoch) return;
+      const states = await readTextbookNotices(books);
+      if (epoch !== listEpoch || (background && library.hidden)) return;
+      const restoreFocus =
+        background && document.activeElement === focused ? focusedId : focusId;
+      const restoreWarningFocus =
+        background &&
+        focused instanceof HTMLElement &&
+        listWarning.contains(focused) &&
+        document.activeElement === focused;
+      listWarning.replaceChildren();
       list.replaceChildren(el("h2", "保存した教材"));
       if (!books.length)
         list.append(
@@ -290,7 +337,8 @@ export async function sharedTextbookView(root: HTMLElement) {
             "まだ教材を取り込んでいません。上のファイル欄から確認できます。",
           ),
         );
-      for (const book of books) {
+      for (const [i, book] of books.entries()) {
+        const { notice, error } = states[i];
         const row = el("div", undefined, "shared-textbook-row");
         const read = button(
           `${book.draft.title} · 版 ${book.record.version}を読む`,
@@ -298,12 +346,43 @@ export async function sharedTextbookView(root: HTMLElement) {
             void showBook(book, read);
           },
         );
+        read.dataset.edition = book.id;
         row.append(read);
+        if (error)
+          row.append(
+            el(
+              "p",
+              "この版の訂正・撤回の記録を確認できません。本文と以前の回答は開いて確認できます。",
+            ),
+          );
+        if (notice)
+          row.append(
+            el(
+              "p",
+              notice.kind === "withdrawn"
+                ? "撤回の記録あり · 過去の本文と回答を確認できます"
+                : "訂正先の記録あり · 開いて確認してください",
+            ),
+          );
         list.append(row);
-        if (book.id === focusId) read.focus();
+        if (book.id === restoreFocus) read.focus();
       }
+      if (restoreWarningFocus)
+        (list.querySelector<HTMLElement>("button") ?? input).focus({
+          preventScroll: true,
+        });
     } catch (error) {
       if (epoch !== listEpoch) return;
+      if (background) {
+        listWarning.replaceChildren(
+          el(
+            "span",
+            "教材一覧の再確認に失敗しました。表示中の教材は保持しています。",
+          ),
+          button("教材一覧の再確認", () => void showList()),
+        );
+        return;
+      }
       list.replaceChildren(
         el("h2", "保存した教材"),
         el("p", message(error)),
@@ -311,6 +390,13 @@ export async function sharedTextbookView(root: HTMLElement) {
           void showList();
         }),
       );
+    } finally {
+      if (background) backgroundList = false;
+      else foregroundLists--;
+      if (!foregroundLists && !backgroundList && refreshPending) {
+        refreshPending = false;
+        queueMicrotask(refreshLibrary);
+      }
     }
   }
 
@@ -320,6 +406,8 @@ export async function sharedTextbookView(root: HTMLElement) {
     trigger?: HTMLElement,
     navigate = true,
   ) {
+    disposeNotice?.();
+    disposeNotice = undefined;
     routeEpoch++;
     selectedBook = book.id;
     readerTrigger = trigger;
@@ -346,15 +434,31 @@ export async function sharedTextbookView(root: HTMLElement) {
     );
     let answers: SharedAnswer[] = [];
     let answerError: unknown;
+    let editionState: TextbookNoticeState = {};
+    const questionControls: Array<() => void> = [];
     try {
       answers = await readSharedAnswers(book);
     } catch (error) {
       answerError = error;
     }
+    if (book.request.schemaVersion === 2) {
+      [editionState] = await readTextbookNotices([book]);
+    }
     if (epoch !== readEpoch) return;
     const heading = el("h2", book.draft.title);
     heading.tabIndex = -1;
     reader.replaceChildren(heading, navigation());
+    if (book.request.schemaVersion === 2) {
+      const view = textbookNoticeView(book, editionState, (notice, failed) => {
+        editionState = {
+          notice,
+          error: failed ? Error("記録を確認できません") : undefined,
+        };
+        for (const update of questionControls) update();
+      });
+      reader.append(view.root);
+      disposeNotice = view.dispose;
+    }
     if (answerError)
       reader.append(
         el("p", message(answerError)),
@@ -446,10 +550,18 @@ export async function sharedTextbookView(root: HTMLElement) {
       );
       const question = el("fieldset"),
         legend = el("legend", q.prompt);
-      question.disabled = !!answerError;
       question.append(legend);
       let chosen = "",
         saving = false;
+      const updateControls = () => {
+        question.disabled =
+          saving ||
+          !!answerError ||
+          !!editionState.error ||
+          editionState.notice?.kind === "withdrawn";
+      };
+      questionControls.push(updateControls);
+      updateControls();
       for (const option of q.options) {
         const radio = el("input");
         radio.type = "radio";
@@ -577,7 +689,7 @@ export async function sharedTextbookView(root: HTMLElement) {
           .finally(() => {
             pending--;
             saving = false;
-            question.disabled = false;
+            updateControls();
             if (
               keepFocus &&
               epoch === readEpoch &&

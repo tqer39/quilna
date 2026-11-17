@@ -30,16 +30,85 @@ const answerSchema = z
   .strict();
 export type SharedAnswer = z.infer<typeof answerSchema>;
 
+const editionID = z
+  .string()
+  .regex(/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}:[1-9]\d{0,9}$/);
+const boundedNote = z
+  .string()
+  .min(1)
+  .max(2000)
+  .refine((s) => !!s.trim() && !s.includes("\0"));
+const noticeSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    id: editionID,
+    digest: z.string().regex(/^[a-f0-9]{64}$/),
+    revision: z.string().uuid(),
+    kind: z.enum(["correction", "withdrawn"]),
+    reason: boundedNote,
+    evidence: boundedNote,
+    writer: z.literal("library-reader"),
+    updatedAt: z.string().datetime(),
+    replacement: z
+      .object({ id: editionID, digest: z.string().regex(/^[a-f0-9]{64}$/) })
+      .strict()
+      .optional(),
+  })
+  .strict()
+  .refine((n) => (n.kind === "correction") === !!n.replacement);
+export type TextbookNotice = z.infer<typeof noticeSchema>;
+
+/** 旧版の本文・回答を保持したまま、既知の保存構造だけを移行する。 */
+function compatibleLayout(
+  db: IDBDatabase,
+  tx: IDBTransaction,
+  notices: boolean,
+) {
+  try {
+    const books = tx.objectStore("books"),
+      answers = tx.objectStore("answers");
+    const index = answers.index("textbook");
+    return (
+      db.objectStoreNames.length === (notices ? 3 : 2) &&
+      books.keyPath === "id" &&
+      !books.autoIncrement &&
+      books.indexNames.length === 0 &&
+      answers.keyPath === "id" &&
+      !answers.autoIncrement &&
+      answers.indexNames.length === 1 &&
+      index.keyPath === "textbook" &&
+      !index.unique &&
+      !index.multiEntry &&
+      (!notices ||
+        (tx.objectStore("notices").keyPath === "id" &&
+          !tx.objectStore("notices").autoIncrement &&
+          tx.objectStore("notices").indexNames.length === 0))
+    );
+  } catch {
+    return false;
+  }
+}
+
 /** Open the separate imported-book database without upgrading or resetting a future schema. */
 async function open() {
   return new Promise<IDBDatabase>((resolve, reject) => {
-    const request = openLibraryDatabase(sharedTextbookDatabase, 1);
+    const request = openLibraryDatabase(sharedTextbookDatabase, 2);
     let settled = false;
-    request.onupgradeneeded = () => {
+    request.onupgradeneeded = (event) => {
+      if (settled) {
+        request.transaction!.abort();
+        return;
+      }
       const db = request.result;
-      db.createObjectStore("books", { keyPath: "id" });
-      const answers = db.createObjectStore("answers", { keyPath: "id" });
-      answers.createIndex("textbook", "textbook");
+      if (event.oldVersion === 0) {
+        db.createObjectStore("books", { keyPath: "id" });
+        const answers = db.createObjectStore("answers", { keyPath: "id" });
+        answers.createIndex("textbook", "textbook");
+      } else if (!compatibleLayout(db, request.transaction!, false)) {
+        request.transaction!.abort();
+        return;
+      }
+      db.createObjectStore("notices", { keyPath: "id" });
     };
     request.onsuccess = () => {
       if (settled) {
@@ -48,12 +117,244 @@ async function open() {
       }
       settled = true;
       const db = request.result;
+      let compatible = false;
+      try {
+        compatible = compatibleLayout(
+          db,
+          db.transaction(["books", "answers", "notices"]),
+          true,
+        );
+      } catch {
+        /* 不明な構造も既存データを保持して拒む。 */
+      }
+      if (!compatible) {
+        db.close();
+        reject(unavailable());
+        return;
+      }
       db.onversionchange = () => db.close();
       resolve(db);
     };
     request.onerror = request.onblocked = () => {
       settled = true;
       reject(unavailable());
+    };
+  });
+}
+
+/** 保守メモは作成者の署名ではなく、現在のライブラリ利用者の私的な判断として検査する。 */
+function retainedNotice(row: unknown, book: SharedTextbook) {
+  if (row === undefined) return undefined;
+  const parsed = noticeSchema.safeParse(row);
+  if (!parsed.success)
+    throw Error(
+      "訂正・撤回の記録の保存形式を確認できません。既存の記録を変更せず、対応するアプリの版で確認してください。",
+    );
+  const notice = parsed.data;
+  if (
+    book.request.schemaVersion !== 2 ||
+    notice.id !== book.id ||
+    notice.digest !== book.digest
+  )
+    throw unavailable();
+  return notice;
+}
+
+export type TextbookNoticeState = {
+  notice?: TextbookNotice;
+  error?: Error;
+  replacementState?: "available" | "withdrawn" | "unavailable";
+};
+/** 表示名ではなく、教材・テーマの同一性と後の版であることを確認する。 */
+function correctionTarget(book: SharedTextbook, target: SharedTextbook) {
+  return (
+    book.request.schemaVersion === 2 &&
+    target.request.schemaVersion === 2 &&
+    target.request.topic.id.toLowerCase() ===
+      book.request.topic.id.toLowerCase() &&
+    target.record.bookID.toLowerCase() === book.record.bookID.toLowerCase() &&
+    target.record.version > book.record.version
+  );
+}
+/** 一度の読み込みで版ごとに結果を分離し、破損した1記録で別教材を読めなくしない。 */
+export async function readTextbookNotices(
+  books: SharedTextbook[],
+): Promise<TextbookNoticeState[]> {
+  type Row = { raw?: unknown; target?: unknown; targetNotice?: unknown };
+  let rows: Row[];
+  try {
+    rows = await transaction<Row[]>(
+      ["books", "notices"],
+      "readonly",
+      (tx, done) => {
+        const rows: Row[] = books.map(() => ({}));
+        done(rows);
+        for (const [i, book] of books.entries()) {
+          const get = tx.objectStore("notices").get(book.id);
+          get.onsuccess = () => {
+            rows[i].raw = get.result;
+            try {
+              const notice = retainedNotice(get.result, book);
+              if (notice?.replacement) {
+                const target = tx
+                  .objectStore("books")
+                  .get(notice.replacement.id);
+                const note = tx
+                  .objectStore("notices")
+                  .get(notice.replacement.id);
+                target.onsuccess = () => {
+                  rows[i].target = target.result;
+                };
+                note.onsuccess = () => {
+                  rows[i].targetNotice = note.result;
+                };
+              }
+            } catch {
+              /* この版の不明な記録は保存したまま、他の版の読み込みを続ける。 */
+            }
+          };
+        }
+      },
+    );
+  } catch {
+    return books.map(() => ({ error: unavailable() }));
+  }
+  return Promise.all(
+    rows.map(async (row, i): Promise<TextbookNoticeState> => {
+      try {
+        const notice = retainedNotice(row.raw, books[i]);
+        if (!notice?.replacement) return { notice };
+        try {
+          retainedRecord(row.target, notice.replacement.id);
+          const target = await parseSharedTextbook(
+            (row.target as { raw: string }).raw,
+          );
+          if (
+            target.id !== notice.replacement.id ||
+            target.digest !== notice.replacement.digest ||
+            !correctionTarget(books[i], target)
+          )
+            throw unavailable();
+          const targetNotice = retainedNotice(row.targetNotice, target);
+          return {
+            notice,
+            replacementState:
+              targetNotice?.kind === "withdrawn" ? "withdrawn" : "available",
+          };
+        } catch {
+          return { notice, replacementState: "unavailable" };
+        }
+      } catch (error) {
+        return { error: error instanceof Error ? error : unavailable() };
+      }
+    }),
+  );
+}
+/** 一つの版の不明な記録は明示的に拒否し、保存した内容は変更しない。 */
+export async function readTextbookNotice(book: SharedTextbook) {
+  const [state] = await readTextbookNotices([book]);
+  if (state.error) throw state.error;
+  return state.notice;
+}
+
+/** 同じ教材・テーマの後の版だけを訂正先とし、回答や既存の関連づけを移動しない。 */
+export async function writeTextbookNotice(
+  book: SharedTextbook,
+  input: {
+    kind: TextbookNotice["kind"];
+    reason: string;
+    evidence: string;
+    replacement?: SharedTextbook;
+  },
+  expected: string | null,
+) {
+  const verified = await parseSharedTextbook(book.raw);
+  const replacement =
+    input.replacement && (await parseSharedTextbook(input.replacement.raw));
+  if (
+    verified.request.schemaVersion !== 2 ||
+    (expected !== null && !z.string().uuid().safeParse(expected).success)
+  )
+    throw unavailable();
+  if (replacement && !correctionTarget(verified, replacement))
+    throw Error("同じテーマ・教材の後の版を訂正先に選んでください。");
+  const notice = noticeSchema.parse({
+    schemaVersion: 1,
+    id: verified.id,
+    digest: verified.digest,
+    revision: crypto.randomUUID(),
+    kind: input.kind,
+    reason: input.reason.trim(),
+    evidence: input.evidence.trim(),
+    writer: "library-reader",
+    updatedAt: new Date().toISOString(),
+    ...(replacement
+      ? { replacement: { id: replacement.id, digest: replacement.digest } }
+      : {}),
+  });
+  await transaction<void>(
+    ["books", "notices"],
+    "readwrite",
+    (tx, done, fail) => {
+      const books = tx.objectStore("books"),
+        notices = tx.objectStore("notices");
+      const own = books.get(verified.id),
+        previous = notices.get(verified.id);
+      const target = replacement && books.get(replacement.id);
+      const targetNotice = replacement && notices.get(replacement.id);
+      const last = targetNotice ?? previous;
+      last.onsuccess = () => {
+        try {
+          if (
+            retainedRecord(own.result, verified.id) !==
+            sharedEnvelopeRecord(verified.raw)
+          )
+            throw unavailable();
+          const old = retainedNotice(previous.result, verified);
+          if ((old?.revision ?? null) !== expected)
+            throw Error(
+              "別の画面で訂正・撤回の記録が変わりました。再読み込みして確認してください。",
+            );
+          if (
+            replacement &&
+            (retainedRecord(target!.result, replacement.id) !==
+              sharedEnvelopeRecord(replacement.raw) ||
+              retainedNotice(targetNotice!.result, replacement)?.kind ===
+                "withdrawn")
+          )
+            throw Error(
+              "訂正先の保存済み版を確認できないか、撤回されています。",
+            );
+          notices.put(notice);
+          done();
+        } catch (error) {
+          fail(error instanceof Error ? error : unavailable());
+        }
+      };
+    },
+  );
+  return notice;
+}
+
+/** 削除後の同じ版への新規記録も別のrevisionとし、古い画面からの取り消しを拒む。 */
+export async function removeTextbookNotice(
+  book: SharedTextbook,
+  expected: string,
+) {
+  await transaction<void>(["notices"], "readwrite", (tx, done, fail) => {
+    const store = tx.objectStore("notices"),
+      request = store.get(book.id);
+    request.onsuccess = () => {
+      try {
+        if (retainedNotice(request.result, book)?.revision !== expected)
+          throw Error(
+            "別の画面で訂正・撤回の記録が変わりました。再読み込みして確認してください。",
+          );
+        store.delete(book.id);
+        done();
+      } catch (error) {
+        fail(error instanceof Error ? error : unavailable());
+      }
     };
   });
 }
@@ -249,15 +550,24 @@ export async function answerSharedTextbook(
     time: new Date().toISOString(),
   });
   await transaction<void>(
-    ["books", "answers"],
+    ["books", "answers", "notices"],
     "readwrite",
     (tx, done, fail) => {
       const books = tx.objectStore("books"),
         answers = tx.objectStore("answers"),
         stored = books.get(verified.id),
+        notice = tx.objectStore("notices").get(verified.id),
         count = answers.index("textbook").count(verified.digest);
       count.onsuccess = () => {
         try {
+          if (retainedNotice(notice.result, verified)?.kind === "withdrawn") {
+            fail(
+              Error(
+                "撤回として記録された版には新しい回答を保存できません。以前の回答は保持しています。",
+              ),
+            );
+            return;
+          }
           if (
             retainedRecord(stored.result, verified.id) !==
             sharedEnvelopeRecord(verified.raw)
@@ -275,8 +585,12 @@ export async function answerSharedTextbook(
           }
           answers.add(answer);
           done();
-        } catch {
-          fail(unavailable());
+        } catch (error) {
+          fail(
+            error instanceof Error && !(error instanceof DOMException)
+              ? error
+              : unavailable(),
+          );
         }
       };
     },

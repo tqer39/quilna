@@ -5,7 +5,10 @@ import {
   openLibraryDatabase,
 } from "./library-context";
 import { highlightVersion, type HighlightSource } from "./article-highlights";
-import { readSharedTextbook } from "./shared-textbook-store";
+import {
+  readSharedTextbook,
+  readTextbookNotice,
+} from "./shared-textbook-store";
 import type { SharedTextbook } from "./shared-textbook-format";
 
 export const textbookLinkDatabase = libraryName("quilna.article-textbooks.v1");
@@ -246,6 +249,10 @@ export async function writeTextbookLink(
     )
       throw Error(
         "選んだ教材の版を確認できません。教材を取り込み直してから再試行してください。",
+      );
+    if ((await readTextbookNotice(book))?.kind === "withdrawn")
+      throw Error(
+        "撤回として記録された教材版には、新しい関連づけを作れません。別の版を確認してください。",
       );
   }
   const db = await openTextbookLinks();
