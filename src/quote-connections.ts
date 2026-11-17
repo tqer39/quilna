@@ -1,4 +1,8 @@
-import { libraryName, openLibraryDatabase } from "./library-context";
+import {
+  guardLibraryConnection,
+  libraryName,
+  openLibraryDatabase,
+} from "./library-context";
 import { validHighlight, type ArticleHighlight } from "./article-highlights";
 import { connectionKey } from "./article-connections";
 
@@ -41,7 +45,12 @@ export function validQuoteConnection(value: unknown): value is QuoteConnection {
 let connection: Promise<IDBDatabase> | undefined;
 /** Keep the selected library's retained quote relationships intact if opening fails. */
 export function openQuoteConnections(): Promise<IDBDatabase> {
-  if (connection) return connection;
+  if (connection)
+    return connection.then((db) => {
+      // 復元先を開く時点で、通知のなかったcloseも検出する。
+      db.transaction("connections");
+      return db;
+    });
   let failed = false;
   const pending = new Promise<IDBDatabase>((resolve, reject) => {
     const request = openLibraryDatabase(quoteConnectionDatabase, 1);
@@ -66,10 +75,9 @@ export function openQuoteConnections(): Promise<IDBDatabase> {
         db.close();
         return;
       }
-      db.onversionchange = () => {
-        db.close();
+      guardLibraryConnection(db, () => {
         if (connection === pending) connection = undefined;
-      };
+      });
       resolve(db);
     };
   });

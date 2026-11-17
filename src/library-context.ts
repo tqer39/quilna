@@ -60,6 +60,34 @@ export function openLibraryDatabase(
   });
   return request;
 }
+/** 閉じた接続を再利用せず、失敗した操作自体は再送しない。 */
+export function guardLibraryConnection(
+  db: IDBDatabase,
+  invalidate: () => void,
+  unavailable = () =>
+    Error(
+      "保存領域との接続が閉じています。既存の記録と入力は保持しています。再試行してください。",
+    ),
+) {
+  const close = db.close.bind(db);
+  db.close = () => {
+    invalidate();
+    close();
+  };
+  const transaction = db.transaction.bind(db);
+  db.transaction = ((...args: Parameters<IDBDatabase["transaction"]>) => {
+    try {
+      return transaction(...args);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === "InvalidStateError") {
+        db.close();
+        throw unavailable();
+      }
+      throw error;
+    }
+  }) as IDBDatabase["transaction"];
+  db.onclose = db.onversionchange = () => db.close();
+}
 /** Probe without retaining an empty registry; preserve incompatible existing schemas. */
 function openRegistry(probe: boolean): Promise<IDBDatabase | null> {
   return new Promise((resolve, reject) => {

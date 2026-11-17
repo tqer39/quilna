@@ -1,5 +1,9 @@
 import { z } from "zod";
-import { libraryName, openLibraryDatabase } from "./library-context";
+import {
+  guardLibraryConnection,
+  libraryName,
+  openLibraryDatabase,
+} from "./library-context";
 import { highlightVersion, type HighlightSource } from "./article-highlights";
 import { readSharedTextbook } from "./shared-textbook-store";
 import type { SharedTextbook } from "./shared-textbook-format";
@@ -174,28 +178,13 @@ export function openTextbookLinks(): Promise<IDBDatabase> {
         reject(unsupportedFormat());
         return;
       }
-      const close = db.close.bind(db);
-      db.close = () => {
-        if (connection === pending) connection = undefined;
-        close();
-      };
-      const transaction = db.transaction.bind(db);
-      // バックアップなど直接この接続を使う処理も、次の明示操作で開き直せるようにする。
-      db.transaction = ((...args: Parameters<IDBDatabase["transaction"]>) => {
-        try {
-          return transaction(...args);
-        } catch (error) {
-          if (
-            error instanceof DOMException &&
-            error.name === "InvalidStateError"
-          ) {
-            db.close();
-            throw unavailable();
-          }
-          throw error;
-        }
-      }) as IDBDatabase["transaction"];
-      db.onclose = db.onversionchange = () => db.close();
+      guardLibraryConnection(
+        db,
+        () => {
+          if (connection === pending) connection = undefined;
+        },
+        unavailable,
+      );
       resolve(db);
     };
   });
