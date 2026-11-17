@@ -15,7 +15,8 @@ Existing CI and necessary security maintenance may still validate native code an
 ## Reading, curiosity and connections
 
 The owner's 2026-11-17 clarification in [Issue #7](https://github.com/tqer39/quilna/issues/7) makes [reusable topic textbooks](topic-textbooks.md) the next textbook direction: articles lead to deeper knowledge in independently maintained textbooks, whose stable content can be reused across articles.
-This workflow is planned; existing article-bound learning cues and imported textbooks remain available and do not establish its completion.
+Manual article-to-edition links and a browser authoring flow with injected test connections are implemented; live authoring, automatic suggestions, correction/withdrawal metadata and owner usability acceptance remain incomplete.
+Existing article-bound learning cues and imported textbooks remain available and do not establish completion of the full workflow.
 
 Implementation and acceptance of viewer designs are tracked in [Issue #72](https://github.com/tqer39/quilna/issues/72), and highlights/article connections in [Issue #73](https://github.com/tqer39/quilna/issues/73). Reusable topic textbooks are tracked separately in #7, with file sharing in #30.
 
@@ -84,7 +85,7 @@ Do not represent a fixed sample lesson as completion of the full generated-textb
 - Address security and data-loss problems first, including [security maintenance](security-maintenance.md).
 - Use Issue #41 for browser usability and concrete feedback. Validate the [collection entry in #48](https://github.com/tqer39/quilna/issues/48) first; repair blocking defects before optional additions.
 - Prioritize subscriptions and reading, then highlights and source-backed connections as described above. Continue the source-to-textbook-to-comprehension workflow in [Issue #7](https://github.com/tqer39/quilna/issues/7) as an optional deepening path on the browser.
-- Preserve source-aware sharing in [Issue #30](https://github.com/tqer39/quilna/issues/30) and paper discovery in [Issue #31](https://github.com/tqer39/quilna/issues/31) as follow-ups to the learning flow. The browser [textbook-file workflow](textbook-sharing.md) implements explicit import, reading and re-export with separate recipient answers; connected browser authoring and owner acceptance remain unfinished.
+- Preserve source-aware sharing in [Issue #30](https://github.com/tqer39/quilna/issues/30) and paper discovery in [Issue #31](https://github.com/tqer39/quilna/issues/31) as follow-ups to the learning flow. The browser [textbook-file workflow](textbook-sharing.md) implements explicit import, reading and re-export with separate recipient answers; [topic authoring](topic-textbooks.md#preparing-and-maintaining-a-textbook) is connected for injected test responses, while live authoring and owner acceptance remain unfinished.
   The [paper-source workflow](paper-sources.md) adds explicit Crossref bibliographic keyword search, DOI detail preview, immutable local observations and metadata-file exchange; explicit Europe PMC body retrieval with matching identity/CC BY 4.0 or CC0 attribution and bounded citation selection/save/file exchange are connected. Paper-to-textbook generation and owner usability acceptance remain unfinished.
 - Keep native-only work deferred until all agreed browser features are complete and the owner accepts the browser experience.
 
