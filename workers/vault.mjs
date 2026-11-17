@@ -378,6 +378,13 @@ export class AccountVaultCore {
         this.keyring,
       );
       if (operationSignal.aborted) throw Error("credential-cancelled");
+      const confirmed = await this.status(owner, provider);
+      if (operationSignal.aborted) throw Error("credential-cancelled");
+      if (
+        confirmed.state !== "registered" ||
+        confirmed.revision !== credential.revision
+      )
+        throw Error("credential-changed");
       credentialReleased = true;
       return secret;
     };

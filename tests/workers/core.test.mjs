@@ -841,3 +841,62 @@ test("未束縛の台帳の照会は所有者や台帳を新規保存しない",
   });
   assert.equal(f.storage.data.size, 0);
 });
+for (const stage of ["caa", "topic"])
+  for (const action of ["delete", "replace"])
+    test(`${stage}: 復号待ち中のキー${action}を送信前に再確認する`, async () => {
+      let calls = 0;
+      const f =
+        stage === "topic"
+          ? await topicFixtureCore()
+          : await fixture({
+              generation: generation(() => {
+                calls++;
+                throw Error("must not dispatch");
+              }),
+            });
+      if (stage === "caa")
+        await f.core.mutate(f.owner, "openai", "register", mutation());
+      let entered, release;
+      const decrypting = new Promise((resolve) => {
+        entered = resolve;
+      });
+      const gate = new Promise((resolve) => {
+        release = resolve;
+      });
+      const decrypt = crypto.subtle.decrypt;
+      crypto.subtle.decrypt = async function (...args) {
+        const result = Reflect.apply(decrypt, this, args);
+        entered();
+        await gate;
+        return result;
+      };
+      try {
+        const pending =
+          stage === "topic"
+            ? f.core.proposeTopic(f.owner, topicRequest())
+            : f.core.propose(f.owner, proposal(registry[0].id));
+        await decrypting;
+        await f.core.mutate(
+          f.owner,
+          "openai",
+          action,
+          action === "delete"
+            ? { requestId: randomUUID(), expectedRevision: 1 }
+            : mutation(1),
+        );
+        release();
+        assert.deepEqual(await pending, {
+          status: "credential-changed",
+          draft: null,
+        });
+        assert.equal(stage === "topic" ? f.calls() : calls, 0);
+        const record = f.storage.data.get("budget").records[0];
+        assert.equal(record.state, "rejected");
+        assert.deepEqual(record.usage, { inputTokens: 0, outputTokens: 0 });
+        assert.equal(record.spentMilliYen, 0);
+        assert.equal((await f.core.budget(f.owner)).heldMilliYen, 0);
+      } finally {
+        release();
+        crypto.subtle.decrypt = decrypt;
+      }
+    });
