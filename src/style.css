@@ -1518,6 +1518,22 @@ header {
 .shared-textbook-row {
   margin-block: 0.5rem;
 }
+.textbook-notice-editor label,
+.textbook-notice-editor select,
+.textbook-notice-editor textarea {
+  display: block;
+  margin-block: 0.5rem;
+}
+.textbook-notice-editor select,
+.textbook-notice-editor textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+}
+.textbook-notice-editor textarea {
+  resize: vertical;
+}
 
 .shared-textbook-page p {
   white-space: pre-wrap;

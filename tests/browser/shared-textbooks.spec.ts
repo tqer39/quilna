@@ -21,6 +21,7 @@ async function holdAnswerCompletion(
         first &&
         this.name === "quilna.shared-textbooks.v1" &&
         tx.mode === mode &&
+        tx.objectStoreNames.length === (mode === "readonly" ? 1 : 3) &&
         Array.from(tx.objectStoreNames).includes("answers")
       ) {
         first = false;
@@ -485,7 +486,7 @@ test("simultaneous conflicting imports are atomic and a corrupt retained file is
   expect(saved).toEqual([results[0] ? fixture : alternate]);
   await page.evaluate(async () => {
     await new Promise<void>((resolve, reject) => {
-      const request = indexedDB.open("quilna.shared-textbooks.v1", 1);
+      const request = indexedDB.open("quilna.shared-textbooks.v1");
       request.onsuccess = () => {
         const db = request.result,
           tx = db.transaction("books", "readwrite"),
@@ -518,7 +519,7 @@ test("simultaneous conflicting imports are atomic and a corrupt retained file is
   const raw = await page.evaluate(
     async () =>
       new Promise<string>((resolve) => {
-        const request = indexedDB.open("quilna.shared-textbooks.v1", 1);
+        const request = indexedDB.open("quilna.shared-textbooks.v1");
         request.onsuccess = () => {
           const db = request.result,
             tx = db.transaction("books"),
@@ -662,7 +663,7 @@ test("the 100-edition limit is atomic across competing imports and never evicts 
         ),
       );
     await new Promise<void>((resolve, reject) => {
-      const request = indexedDB.open("quilna.shared-textbooks.v1", 1);
+      const request = indexedDB.open("quilna.shared-textbooks.v1");
       request.onsuccess = () => {
         const db = request.result,
           tx = db.transaction("books", "readwrite"),
@@ -730,7 +731,7 @@ test("a future database version is reported without resetting its books or unkno
   await importBook(page);
   await page.evaluate(async () => {
     await new Promise<void>((resolve, reject) => {
-      const request = indexedDB.open("quilna.shared-textbooks.v1", 2);
+      const request = indexedDB.open("quilna.shared-textbooks.v1", 3);
       request.onupgradeneeded = () =>
         request.result
           .createObjectStore("future")
@@ -770,7 +771,7 @@ test("a future database version is reported without resetting its books or unkno
       ),
   );
   expect(retained).toEqual({
-    version: 2,
+    version: 3,
     marker: "PRESERVE_FUTURE",
     raw: fixture,
   });
@@ -787,7 +788,7 @@ test("10,000 retained answers are paged without loss and capacity failure preser
       [book] = await api.listSharedTextbooks(),
       content = book.draft.lessons[0].content;
     await new Promise<void>((resolve, reject) => {
-      const request = indexedDB.open("quilna.shared-textbooks.v1", 1);
+      const request = indexedDB.open("quilna.shared-textbooks.v1");
       request.onsuccess = () => {
         const db = request.result,
           tx = db.transaction("answers", "readwrite"),
@@ -944,7 +945,7 @@ for (const [zone, date, time] of [
           api = await import(path),
           [book] = await api.listSharedTextbooks();
         await new Promise<void>((resolve, reject) => {
-          const request = indexedDB.open("quilna.shared-textbooks.v1", 1);
+          const request = indexedDB.open("quilna.shared-textbooks.v1");
           request.onsuccess = () => {
             const db = request.result,
               tx = db.transaction("answers", "readwrite");

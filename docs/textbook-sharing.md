@@ -59,6 +59,7 @@ Unknown extra fields are refused, including fields that might otherwise conceal 
 ## Local retention and verification
 
 `quilna.shared-textbooks.v1` is a separate IndexedDB database with imported editions and recipient-only answers.
+Its schema-2 migration retains both stores and adds private [correction/withdrawal records](topic-textbooks.md#local-correction-and-withdrawal-records); those records are excluded from the immutable textbook archive and its export.
 By default the library is shared within one browser profile/origin; different people need separate profiles. The opt-in [account libraries](source-document-catalog.md#account-bound-browser-libraries-opt-in) also scope imported books and recipient answers, while logging out retains them for that account. This does not change the exported file or grant synchronization.
 It is not synchronized between devices or included in the article-library backup. Keep the original textbook files as well.
 Reading retained data assumes the app has loaded; offline startup installation is not provided.
@@ -72,5 +73,6 @@ Deletion and answer-history backup are not provided by this workflow.
 `tests/topic-textbook.test.ts` covers standalone topic identity, matching format versions, exact source snapshots, privacy extras and retained evidence/review checks.
 The browser suite also imports both formats together, keeps their answers separate, reloads a version-2 edition, rejects changed/private payloads and re-exports exact bytes to a separate recipient profile without source or provider requests.
 `tests/browser/shared-textbooks.spec.ts` uses disposable profiles and synthetic version-1 data for preview/cancel, two-recipient answer isolation, exact re-export/reload, concurrent conflict/capacity, corruption, failed storage/retry, stale file reads, markup and narrow-width behavior.
+`tests/browser/textbook-notices.spec.ts` covers schema migration/refusal, local correction/withdrawal records, immutable answers and links, account isolation, concurrent changes, failed transactions, late completions and desktop/narrow-screen controls.
 The synthetic record is derived from the existing native-format fixture; its successful sender checks are test data, not model-quality or fresh native-runtime evidence.
 Run the maintained [browser checks](browser-validation.md); the existing native development and owner-acceptance gates remain unchanged.
