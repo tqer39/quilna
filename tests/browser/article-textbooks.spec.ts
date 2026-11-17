@@ -841,6 +841,9 @@ test("教材の候補を待つ間に表示が変わっても下書きを保存�
     });
   });
   await seed(page, context);
+  await expect(
+    panel(page).getByRole("button", { name: "教材を関連づける", exact: true }),
+  ).toBeEnabled();
   await page.evaluate(() => {
     let release;
     const pending = new Promise<void>((resolve) => {
@@ -1146,10 +1149,15 @@ for (const operation of ["export", "restore"])
       } catch (error) {
         first = String(error);
       }
-      const articleAddedBeforeFailure = await new Promise<boolean>((resolve) => {
-        const r = articleDb.transaction("articles").objectStore("articles").get("b");
-        r.onsuccess = () => resolve(!!r.result);
-      });
+      const articleAddedBeforeFailure = await new Promise<boolean>(
+        (resolve) => {
+          const r = articleDb
+            .transaction("articles")
+            .objectStore("articles")
+            .get("b");
+          r.onsuccess = () => resolve(!!r.result);
+        },
+      );
       try {
         await run();
       } catch (error) {

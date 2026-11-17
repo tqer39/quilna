@@ -629,7 +629,8 @@
 .rss-highlights li {
   margin-block: 1.5rem;
 }
-.rss-highlights blockquote {
+.rss-highlights blockquote,
+.rss-textbooks blockquote {
   margin: 0.75rem 0;
   padding-inline-start: 1rem;
   border-inline-start: 3px solid currentColor;

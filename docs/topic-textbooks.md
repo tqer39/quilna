@@ -94,6 +94,14 @@ The existing `quilna.shared-textbooks.v1` database moves from IndexedDB schema 1
 An unreadable notice is retained and prevents new answers and new article links for that edition; other editions remain available. Use a compatible app version to inspect an unknown format. The app does not ignore or delete the record to resume answering, because it may contain a withdrawal. The text and earlier answers remain readable, and the textbook file can still be exported.
 An explicit reload keeps editing and saving disabled until both the retained record and replacement choices have been checked. Notice and focus signals received during an operation are processed afterward. New article-link drafts retain their source and reason while withdrawn choices are removed; a selected edition that is no longer eligible cannot be saved as a new link.
 
+## Suggestions from retained textbooks
+
+**保存済み教材の候補** searches the currently displayed original or translated body for literal theme names in validated, retained version-2 textbooks. It shows at most three candidates with the exact matching excerpt, learning goal and a separate-tab link to inspect scope and sources. Latin names match without case sensitivity and avoid partial Latin words. This is a name match, not semantic relevance or factual verification. It does not fetch sources, generate content or call a provider.
+
+Candidates use the latest eligible retained edition per textbook and one representative per opaque topic ID. Equal labels do not merge identities or answers. Withdrawn editions, unreadable maintenance records and corrections with an unavailable replacement are excluded. Confirmed editions remain in the existing links list; suggestions never return the same textbook at or below its confirmed version. Opening a preview does not create a link or learning record; **この候補を関連づける** starts a draft with the exact edition, displayed source version and an editable quoted reason. Only explicit reason saving confirms the link. Changes to the displayed article cannot replace that draft's source or input.
+
+**この記事ではこのテーマを候補に出さない** hides a topic for this article, with an explicit restore action under **非表示にしたテーマを確認**. It preserves confirmed links, textbooks and answers. The account-scoped `quilna.topic-textbook-preferences.v1` database retains at most 100 hidden topics per article and 20,000 total. These private preferences are excluded from textbook exports, article backups and provider inputs; clearing browser storage loses them. Unknown formats and failed reads suppress suggestions with an error while preserving manual linking and retained data. If the textbook catalog itself cannot be read, existing links remain visible, editable and removable while new suggestions stop. Failed writes are not reported as successful.
+
 ## Browser acceptance
 
 - Two different articles can open the same textbook edition without regenerating it; a later RSS update leaves its content and answers intact.
