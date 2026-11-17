@@ -177,6 +177,16 @@ export function openaiTopicTextbookTransport({
   return {
     kind: mockOnly ? "test-only" : "prepared",
     protocol: "topic-textbook-v2",
+    acceptsModel(requested) {
+      if (!configured || requested !== model || typeof send !== "function")
+        return false;
+      try {
+        secretHeaders(secret, "openai");
+        return true;
+      } catch {
+        return false;
+      }
+    },
     generate: (requestRaw, options) =>
       run("generate", requestRaw, undefined, options),
     review: (requestRaw, draftRaw, options) =>

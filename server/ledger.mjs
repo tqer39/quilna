@@ -7,6 +7,17 @@ export class FileLedger {
   constructor(directory) {
     this.directory = directory;
   }
+  async read() {
+    try {
+      // transactionが原子的に置換する確定済みのsnapshotだけを読む。
+      return ledgerSchema.parse(
+        JSON.parse(await readFile(join(this.directory, "budget.json"), "utf8")),
+      );
+    } catch (error) {
+      if (error.code === "ENOENT") return { schema: 1, records: [] };
+      throw Error("ledger-invalid");
+    }
+  }
   async transaction(update) {
     await mkdir(this.directory, { recursive: true, mode: 0o700 });
     const lock = join(this.directory, "transaction.lock");
