@@ -277,6 +277,15 @@ export class GenerationService {
       }
     } catch {
       /* No retry or refund on uncertain dispatch. No provider errors or secrets in logs. */
+      try {
+        if (adapter.confirmUnsent?.() === true) {
+          state = "rejected";
+          usage = { inputTokens: 0, outputTokens: 0 };
+          if (this.contract.captureOutcome) outcome = "cancelled";
+        }
+      } catch {
+        /* 未送信を確認できない場合は予約を保持する。 */
+      }
     } finally {
       clearTimeout(timer);
     }

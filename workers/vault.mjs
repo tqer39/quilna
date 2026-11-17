@@ -4,6 +4,7 @@ import { ledgerSchema } from "../server/ledger-schema.mjs";
 import { GenerationService } from "../server/service.mjs";
 import { registry } from "../server/registry.mjs";
 import { requestSchema } from "../server/contracts.mjs";
+import { topicTextbookContract } from "../server/topic-textbook-contract.mjs";
 const providerSchema = z.enum(["openai", "anthropic"]);
 const principalSchema = z
   .object({
@@ -51,9 +52,14 @@ const publicSetting = (record) =>
 export class AccountVaultCore {
   constructor(
     storage,
-    { keyring, generation = null, now = () => new Date() } = {},
+    {
+      keyring,
+      generation = null,
+      topicGeneration = null,
+      now = () => new Date(),
+    } = {},
   ) {
-    Object.assign(this, { storage, keyring, generation, now });
+    Object.assign(this, { storage, keyring, generation, topicGeneration, now });
     if (storage.sql)
       storage.sql.exec(
         "CREATE TABLE IF NOT EXISTS budget_records (request_id TEXT PRIMARY KEY, record TEXT NOT NULL)",
@@ -293,8 +299,36 @@ export class AccountVaultCore {
   }
   async propose(owner, input) {
     const request = requestSchema.parse(input);
-    if (!this.generation) return { status: "unconnected" };
-    const configuration = this.generation;
+    return this.proposeUsing(owner, request, this.generation);
+  }
+  async proposeTopic(owner, input) {
+    const request = topicTextbookContract.requestSchema.parse(input);
+    return this.proposeUsing(owner, request, this.topicGeneration, true);
+  }
+  async lookupTopic(owner, input) {
+    const request = topicTextbookContract.requestSchema.parse(input);
+    const identity = await topicTextbookContract.identity(request);
+    return this.storage.transaction(async (tx) => {
+      const bound = await tx.get("owner");
+      if (!bound) return { status: "not-found" };
+      if (bound !== owner) throw Error("owner-mismatch");
+      const ledger = await this.readLedger(tx);
+      const previous = ledger.records.find(
+        (r) => r.requestId === request.requestId,
+      );
+      if (!previous) return { status: "not-found" };
+      if (previous.operationDigest !== identity)
+        return { status: "id-conflict" };
+      // キー削除で有料結果を消さず、同じ所有者の明示的な照会だけで回収する。
+      return {
+        status: previous.state,
+        draft: previous.draft,
+        ...(previous.outcome ? { outcome: previous.outcome } : {}),
+      };
+    });
+  }
+  async proposeUsing(owner, request, configuration, topic = false) {
+    if (!configuration) return { status: "unconnected" };
     const model = configuration.registry.find(
       (m) =>
         m.id ===
@@ -313,6 +347,7 @@ export class AccountVaultCore {
     )
       return { status: "unconnected" };
     const ledger = {
+      read: () => this.transaction(owner, (tx) => this.readLedger(tx)),
       transaction: (update) =>
         this.transaction(owner, async (tx) => {
           const records = await this.readLedger(tx);
@@ -322,33 +357,83 @@ export class AccountVaultCore {
           return result;
         }),
     };
-    const adapter = {
-      kind: "test-only",
-      protocol: "provider-v1",
-      generate: async (payload, options) => {
-        // Resolve only after the durable reservation; deletion/rotation invalidates this lease.
-        const latest = await this.status(owner, provider);
-        if (
-          latest.state !== "registered" ||
-          latest.revision !== credential.revision
-        )
-          throw Error("credential-changed");
-        const secret = await decrypt(
-          credential.blob,
-          owner,
-          provider,
-          credential.revision,
-          this.keyring,
-        );
-        return configuration
-          .makeAdapter(provider, secret)
-          .generate(payload, options);
-      },
+    let dispatchReady = false,
+      credentialReleased = false,
+      operationSignal;
+    const resolveSecret = async () => {
+      if (!dispatchReady) throw Error("credential-before-reservation");
+      if (operationSignal.aborted) throw Error("credential-cancelled");
+      const latest = await this.status(owner, provider);
+      if (operationSignal.aborted) throw Error("credential-cancelled");
+      if (
+        latest.state !== "registered" ||
+        latest.revision !== credential.revision
+      )
+        throw Error("credential-changed");
+      const secret = await decrypt(
+        credential.blob,
+        owner,
+        provider,
+        credential.revision,
+        this.keyring,
+      );
+      if (operationSignal.aborted) throw Error("credential-cancelled");
+      const confirmed = await this.status(owner, provider);
+      if (operationSignal.aborted) throw Error("credential-cancelled");
+      if (
+        confirmed.state !== "registered" ||
+        confirmed.revision !== credential.revision
+      )
+        throw Error("credential-changed");
+      credentialReleased = true;
+      return secret;
     };
+    let adapter;
+    if (topic) {
+      let resolved;
+      try {
+        resolved = configuration.makeAdapter(provider, resolveSecret);
+      } catch {
+        return { status: "unconnected" };
+      }
+      if (resolved?.protocol !== "provider-v1")
+        return { status: "unconnected" };
+      // 本物のkind・contract・モデル検査を予約前に通し、秘密の解決だけを遅らせる。
+      adapter = {
+        ...resolved,
+        confirmUnsent: () => !credentialReleased,
+        generate: (payload, options) => {
+          dispatchReady = true;
+          operationSignal = options.signal;
+          return resolved.generate(payload, options);
+        },
+      };
+    } else {
+      adapter = {
+        kind: "test-only",
+        protocol: "provider-v1",
+        confirmUnsent: () => !credentialReleased,
+        generate: async (payload, options) => {
+          dispatchReady = true;
+          operationSignal = options.signal;
+          let secret;
+          try {
+            secret = await resolveSecret();
+          } catch {
+            // この境界ではまだadapterを呼んでおらず、外部使用量は0と確定できる。
+            return { json: "", usage: { inputTokens: 0, outputTokens: 0 } };
+          }
+          return configuration
+            .makeAdapter(provider, secret)
+            .generate(payload, options);
+        },
+      };
+    }
     const service = new GenerationService({
       ...configuration,
       ledger,
       adapters: { [provider]: adapter },
+      ...(topic ? { contract: topicTextbookContract } : {}),
       now: this.now,
     });
     const result = await service.propose(request);

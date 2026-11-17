@@ -52,7 +52,29 @@ export function openaiTopicTextbookTransport({
       stage === "generate"
         ? await topicGenerationInput(requestRaw)
         : await topicReviewInput(requestRaw, draftRaw);
-    const headers = secretHeaders(secret, "openai");
+    let headers;
+    if (typeof secret === "function") {
+      try {
+        headers = secretHeaders(await secret(), "openai");
+      } catch (error) {
+        // 遅延した資格情報の解決より前には計数も生成も送っていない。
+        return {
+          json: "",
+          usage: { inputTokens: 0, outputTokens: 0 },
+          outcome: ["credential-changed", "credential-cancelled"].includes(
+            error?.message,
+          )
+            ? "cancelled"
+            : "credential-unavailable",
+        };
+      }
+    } else headers = secretHeaders(secret, "openai");
+    if (options.signal.aborted)
+      return {
+        json: "",
+        usage: { inputTokens: 0, outputTokens: 0 },
+        outcome: "cancelled",
+      };
     const common = {
       model,
       reasoning: { effort: reasoningEffort },
@@ -183,7 +205,7 @@ export function openaiTopicTextbookTransport({
       if (!configured || requested !== model || typeof send !== "function")
         return false;
       try {
-        secretHeaders(secret, "openai");
+        if (typeof secret !== "function") secretHeaders(secret, "openai");
         return true;
       } catch {
         return false;

@@ -4,6 +4,8 @@ import { randomUUID } from "node:crypto";
 import { AccountVaultCore } from "../../workers/vault.mjs";
 import { encrypt, decrypt, hash, encode } from "../../workers/crypto.mjs";
 import { registry } from "../../server/registry.mjs";
+import { openaiTopicTextbookTransport } from "../../server/openai-topic-textbook-transport.mjs";
+import { topicTextbookBudgetAdapter } from "../../server/topic-textbook-contract.mjs";
 const date = "2026-10-11T00:00:00.000Z";
 // Ephemeral random test data, not credentials for any service.
 const keyring = () =>
@@ -393,3 +395,508 @@ test("deletion while generation is in flight suppresses late output but retains 
   assert.ok((await f.core.budget(f.owner)).spentMilliYen > 0);
   assert.equal((await f.core.status(f.owner, "openai")).state, "deleted");
 });
+
+const topicFixture = JSON.parse(
+  await (
+    await import("node:fs/promises")
+  ).readFile(
+    new URL("../fixtures/shared-textbook-v2.json", import.meta.url),
+    "utf8",
+  ),
+);
+const topicRecord = JSON.parse(
+  Buffer.from(topicFixture.record, "base64").toString("utf8"),
+);
+const topicRequestRaw = Buffer.from(topicRecord.request, "base64").toString(
+  "utf8",
+);
+const topicDraftRaw = Buffer.from(topicRecord.draft, "base64").toString("utf8");
+const topicReviewRaw = Buffer.from(topicRecord.review, "base64").toString(
+  "utf8",
+);
+const topicRequest = () => ({
+  requestId: JSON.parse(topicRequestRaw).id,
+  requestRaw: topicRequestRaw,
+  purpose: "book-addition",
+  modelId: registry[0].id,
+  approvedPublicText: true,
+});
+async function topicFixtureCore({ output, extra = {}, ownerSubject } = {}) {
+  let f,
+    calls = 0;
+  const configuration = generation(
+    (provider, resolveSecret) => ({
+      kind: "test-only",
+      protocol: "provider-v1",
+      contract: "topic-textbook-v2",
+      acceptsModel: (m) => m.model === registry[0].model,
+      generate: async (payload) => {
+        assert.equal(provider, "openai");
+        assert.equal(
+          f.storage.data.get("budget").records.at(-1).state,
+          "reserved",
+        );
+        const secret = await resolveSecret();
+        assert.ok(secret.startsWith("DUMMY-"));
+        calls++;
+        if (output) return output(payload, f);
+        return {
+          json: payload.draftRaw === undefined ? topicDraftRaw : topicReviewRaw,
+          usage: { inputTokens: 100, outputTokens: 50 },
+          outcome: "complete",
+        };
+      },
+    }),
+    extra,
+  );
+  f = await fixture({ topicGeneration: configuration });
+  if (ownerSubject) f.owner = await hash(ownerSubject);
+  await f.core.mutate(f.owner, "openai", "register", mutation());
+  return { ...f, configuration, calls: () => calls };
+}
+test("テーマ生成と検証を同じ所有者の永続予算へ記録し再送しない", async () => {
+  const f = await topicFixtureCore();
+  const input = topicRequest(),
+    generated = await f.core.proposeTopic(f.owner, input);
+  assert.equal(generated.status, "complete");
+  assert.equal(generated.draft.kind, "topic-textbook-draft");
+  const reviewInput = {
+    ...input,
+    requestId: randomUUID(),
+    purpose: "evidence-check",
+    generationRequestId: input.requestId,
+    generatorInvocation: generated.draft.invocation.id,
+    draftRaw: generated.draft.json,
+  };
+  const reviewed = await f.core.proposeTopic(f.owner, reviewInput);
+  assert.equal(reviewed.status, "complete");
+  assert.equal(reviewed.draft.allChecksPassed, true);
+  assert.deepEqual(await f.core.proposeTopic(f.owner, input), generated);
+  assert.deepEqual(await f.core.proposeTopic(f.owner, reviewInput), reviewed);
+  const restarted = new AccountVaultCore(f.storage, f.config);
+  assert.deepEqual(await restarted.proposeTopic(f.owner, input), generated);
+  assert.equal(f.calls(), 2);
+  assert.equal(f.storage.data.get("budget").records.length, 2);
+  assert.ok((await f.core.budget(f.owner)).spentMilliYen > 0);
+});
+test("テーマの再送は現行の料金が古くても保存結果を返す", async () => {
+  const f = await topicFixtureCore(),
+    input = topicRequest();
+  const result = await f.core.proposeTopic(f.owner, input);
+  f.configuration.policy.checkedAt = "2020-01-01T00:00:00.000Z";
+  assert.deepEqual(await f.core.proposeTopic(f.owner, input), result);
+  assert.equal(f.calls(), 1);
+});
+test("テーマ生成の台帳を別の所有者から読む操作を拒否する", async () => {
+  const f = await topicFixtureCore();
+  await f.core.proposeTopic(f.owner, topicRequest());
+  const before = structuredClone([...f.storage.data]);
+  await assert.rejects(
+    f.core.proposeTopic(await hash("another-owner"), topicRequest()),
+    /owner-mismatch/,
+  );
+  assert.deepEqual([...f.storage.data], before);
+  assert.equal(f.calls(), 1);
+});
+test("別の所有者が持つ候補を同じ公開出典でも検証へ送らない", async () => {
+  const a = await topicFixtureCore(),
+    b = await topicFixtureCore({ ownerSubject: "verified-test-owner-b" }),
+    input = topicRequest();
+  const result = await a.core.proposeTopic(a.owner, input);
+  await assert.rejects(
+    b.core.proposeTopic(b.owner, {
+      ...input,
+      requestId: randomUUID(),
+      purpose: "evidence-check",
+      generationRequestId: input.requestId,
+      generatorInvocation: result.draft.invocation.id,
+      draftRaw: result.draft.json,
+    }),
+    /textbook-unissued-draft/,
+  );
+  assert.equal(b.calls(), 0);
+  assert.equal(b.storage.data.get("budget"), undefined);
+});
+test("テーマ送信中にキーを削除した結果を返さず使用量を保持する", async () => {
+  const f = await topicFixtureCore({
+    output: async (_payload, f) => {
+      await f.core.mutate(f.owner, "openai", "delete", {
+        requestId: randomUUID(),
+        expectedRevision: 1,
+      });
+      return {
+        json: topicDraftRaw,
+        usage: { inputTokens: 100, outputTokens: 50 },
+        outcome: "complete",
+      };
+    },
+  });
+  assert.deepEqual(await f.core.proposeTopic(f.owner, topicRequest()), {
+    status: "credential-changed",
+    draft: null,
+  });
+  assert.equal(f.calls(), 1);
+  assert.ok((await f.core.budget(f.owner)).spentMilliYen > 0);
+});
+test("台帳永続化に失敗したテーマ依頼はキーを解決せず送信しない", async () => {
+  const f = await topicFixtureCore();
+  f.storage.failSync = true;
+  await assert.rejects(
+    f.core.proposeTopic(f.owner, topicRequest()),
+    /test durability unknown/,
+  );
+  assert.equal(f.calls(), 0);
+});
+test("静的に未接続のテーマモデルを予約せず既存CAA入力との混用も拒否する", async () => {
+  const f = await topicFixtureCore();
+  const make = f.configuration.makeAdapter;
+  f.configuration.makeAdapter = (...args) => ({
+    ...make(...args),
+    acceptsModel: () => false,
+  });
+  assert.equal(
+    (await f.core.proposeTopic(f.owner, topicRequest())).status,
+    "unconnected",
+  );
+  assert.equal(f.storage.data.get("budget"), undefined);
+  await assert.rejects(f.core.propose(f.owner, topicRequest()));
+  await assert.rejects(f.core.proposeTopic(f.owner, proposal(registry[0].id)));
+  assert.equal(f.calls(), 0);
+});
+test("通常のAccountVaultCoreはテーマ生成を有効にしない", async () => {
+  const f = await fixture();
+  assert.deepEqual(await f.core.proposeTopic(f.owner, topicRequest()), {
+    status: "unconnected",
+  });
+  assert.equal(f.storage.data.size, 0);
+});
+test("テーマの結果不明予約が同じ所有者のCAAも止める", async () => {
+  const f = await topicFixtureCore({
+    output: async () => new Promise(() => {}),
+    extra: { timeoutMs: 5 },
+  });
+  const result = await f.core.proposeTopic(f.owner, topicRequest());
+  assert.equal(result.status, "unknown");
+  let caaCalls = 0;
+  f.core.generation = generation(() => {
+    caaCalls++;
+    throw Error("must not dispatch");
+  });
+  const caa = await f.core.propose(f.owner, proposal(registry[0].id));
+  assert.equal(caa.status, "busy");
+  assert.equal(caaCalls, 0);
+  assert.equal(f.storage.data.get("budget").records.length, 1);
+  assert.deepEqual(await f.core.proposeTopic(f.owner, topicRequest()), result);
+  assert.equal(f.calls(), 1);
+});
+test("テーマの予約書き込み失敗ではキーを解決しない", async () => {
+  const f = await topicFixtureCore();
+  f.storage.failWrite = true;
+  await assert.rejects(
+    f.core.proposeTopic(f.owner, topicRequest()),
+    /test storage failure/,
+  );
+  assert.equal(f.storage.data.get("budget"), undefined);
+  assert.equal(f.calls(), 0);
+});
+for (const broken of ["kind", "protocol", "contract", "model"])
+  test(`テーマの不一致adapter(${broken})を秘密の解決・予約前に拒否する`, async () => {
+    const f = await topicFixtureCore();
+    let secretResolutions = 0;
+    const make = f.configuration.makeAdapter;
+    f.configuration.makeAdapter = (provider, resolveSecret) => {
+      const adapter = make(provider, async () => {
+        secretResolutions++;
+        return resolveSecret();
+      });
+      if (broken === "model") adapter.acceptsModel = () => false;
+      else adapter[broken] = broken === "kind" ? "prepared" : "wrong";
+      return adapter;
+    };
+    assert.equal(
+      (await f.core.proposeTopic(f.owner, topicRequest())).status,
+      "unconnected",
+    );
+    assert.equal(secretResolutions, 0);
+    assert.equal(f.storage.data.get("budget"), undefined);
+    assert.equal(f.calls(), 0);
+  });
+test("キー削除で進行中の応答を伏せても同じ所有者は有料の保存結果を明示的に回収できる", async () => {
+  const f = await topicFixtureCore({
+    output: async (_payload, f) => {
+      await f.core.mutate(f.owner, "openai", "delete", {
+        requestId: randomUUID(),
+        expectedRevision: 1,
+      });
+      return {
+        json: topicDraftRaw,
+        usage: { inputTokens: 100, outputTokens: 50 },
+        outcome: "complete",
+      };
+    },
+  });
+  const input = topicRequest();
+  assert.equal(
+    (await f.core.proposeTopic(f.owner, input)).status,
+    "credential-changed",
+  );
+  const recovered = await f.core.lookupTopic(f.owner, input);
+  assert.equal(recovered.status, "complete");
+  assert.equal(recovered.draft.kind, "topic-textbook-draft");
+  assert.equal(f.calls(), 1);
+  await assert.rejects(
+    f.core.lookupTopic(await hash("different-owner"), input),
+    /owner-mismatch/,
+  );
+  f.core.topicGeneration = null;
+  assert.deepEqual(await f.core.lookupTopic(f.owner, input), recovered);
+  assert.equal(f.calls(), 1);
+  assert.equal(
+    (await f.core.lookupTopic(f.owner, { ...input, modelId: "other-model" }))
+      .status,
+    "id-conflict",
+  );
+  assert.equal(
+    (await f.core.lookupTopic(f.owner, { ...input, requestId: randomUUID() }))
+      .status,
+    "not-found",
+  );
+});
+test("保存済みの予約と結果不明は照会しても解除・再送しない", async () => {
+  const f = await topicFixtureCore({
+    output: async () => new Promise(() => {}),
+    extra: { timeoutMs: 5 },
+  });
+  const input = topicRequest();
+  const result = await f.core.proposeTopic(f.owner, input);
+  assert.equal(result.status, "unknown");
+  assert.deepEqual(await f.core.lookupTopic(f.owner, input), result);
+  const record = f.storage.data.get("budget").records[0];
+  record.state = "reserved";
+  const expected = structuredClone([...f.storage.data]);
+  assert.deepEqual(await f.core.lookupTopic(f.owner, input), {
+    status: "reserved",
+    draft: null,
+  });
+  assert.deepEqual([...f.storage.data], expected);
+  assert.equal(f.calls(), 1);
+});
+test("CAAの予約直後にキーが失効しても未送信の予算を結果不明にしない", async () => {
+  let calls = 0;
+  const f = await fixture({
+    generation: generation(() => {
+      calls++;
+      throw Error("must not dispatch");
+    }),
+  });
+  await f.core.mutate(f.owner, "openai", "register", mutation());
+  const sync = f.storage.sync.bind(f.storage);
+  let revoked = false;
+  f.storage.sync = async () => {
+    await sync();
+    if (
+      !revoked &&
+      f.storage.data.get("budget")?.records.at(-1)?.state === "reserved"
+    ) {
+      revoked = true;
+      await f.core.mutate(f.owner, "openai", "delete", {
+        requestId: randomUUID(),
+        expectedRevision: 1,
+      });
+    }
+  };
+  assert.deepEqual(await f.core.propose(f.owner, proposal(registry[0].id)), {
+    status: "credential-changed",
+    draft: null,
+  });
+  assert.equal(revoked, true);
+  assert.equal(calls, 0);
+  const record = f.storage.data.get("budget").records[0];
+  assert.equal(record.state, "rejected");
+  assert.deepEqual(record.usage, { inputTokens: 0, outputTokens: 0 });
+  assert.equal((await f.core.budget(f.owner)).heldMilliYen, 0);
+});
+for (const action of ["delete", "replace"])
+  test(`テーマの予約後かつ送信前のキー${action}を使用量0で終了する`, async () => {
+    const f = await topicFixtureCore();
+    let outbound = 0;
+    f.configuration.makeAdapter = (_provider, secret) =>
+      topicTextbookBudgetAdapter(
+        openaiTopicTextbookTransport({
+          model: registry[0].model,
+          reasoningEffort: "none",
+          mockOnly: true,
+          secret,
+          send: async () => {
+            outbound++;
+            throw Error("must not send");
+          },
+        }),
+      );
+    const sync = f.storage.sync.bind(f.storage);
+    let revoked = false;
+    f.storage.sync = async () => {
+      await sync();
+      if (
+        !revoked &&
+        f.storage.data.get("budget")?.records.at(-1)?.state === "reserved"
+      ) {
+        revoked = true;
+        await f.core.mutate(
+          f.owner,
+          "openai",
+          action,
+          action === "delete"
+            ? { requestId: randomUUID(), expectedRevision: 1 }
+            : mutation(1),
+        );
+      }
+    };
+    assert.equal(
+      (await f.core.proposeTopic(f.owner, topicRequest())).status,
+      "credential-changed",
+    );
+    assert.equal(outbound, 0);
+    const record = f.storage.data.get("budget").records[0];
+    assert.equal(record.state, "rejected");
+    assert.equal(record.outcome, "cancelled");
+    assert.deepEqual(record.usage, { inputTokens: 0, outputTokens: 0 });
+    assert.equal((await f.core.budget(f.owner)).heldMilliYen, 0);
+  });
+test("資格情報待機中の期限超過を未送信で確定し遅い成功も送信へ進めない", async () => {
+  const f = await topicFixtureCore({ extra: { timeoutMs: 30 } });
+  let outbound = 0,
+    entered,
+    release,
+    finished;
+  const enteredGate = new Promise((resolve) => {
+    entered = resolve;
+  });
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const done = new Promise((resolve) => {
+    finished = resolve;
+  });
+  f.configuration.makeAdapter = (_provider, secret) => {
+    const adapter = topicTextbookBudgetAdapter(
+      openaiTopicTextbookTransport({
+        model: registry[0].model,
+        reasoningEffort: "none",
+        mockOnly: true,
+        secret,
+        send: async () => {
+          outbound++;
+          throw Error("must not send");
+        },
+      }),
+    );
+    return {
+      ...adapter,
+      generate: async (...args) => {
+        try {
+          return await adapter.generate(...args);
+        } finally {
+          finished();
+        }
+      },
+    };
+  };
+  const sync = f.storage.sync.bind(f.storage);
+  let reservedSyncs = 0;
+  f.storage.sync = async () => {
+    await sync();
+    if (
+      f.storage.data.get("budget")?.records.at(-1)?.state === "reserved" &&
+      ++reservedSyncs === 2
+    ) {
+      entered();
+      await gate;
+    }
+  };
+  const pending = f.core.proposeTopic(f.owner, topicRequest());
+  await enteredGate;
+  let result, beforeLate;
+  try {
+    result = await pending;
+    beforeLate = structuredClone(f.storage.data.get("budget"));
+  } finally {
+    release();
+  }
+  await done;
+  assert.equal(result.status, "rejected");
+  assert.equal(result.outcome, "cancelled");
+  assert.equal(outbound, 0);
+  assert.equal((await f.core.budget(f.owner)).heldMilliYen, 0);
+  assert.deepEqual(f.storage.data.get("budget"), beforeLate);
+  assert.deepEqual(beforeLate.records[0].usage, {
+    inputTokens: 0,
+    outputTokens: 0,
+  });
+});
+test("未束縛の台帳の照会は所有者や台帳を新規保存しない", async () => {
+  const f = await fixture();
+  assert.deepEqual(await f.core.lookupTopic(f.owner, topicRequest()), {
+    status: "not-found",
+  });
+  assert.equal(f.storage.data.size, 0);
+});
+for (const stage of ["caa", "topic"])
+  for (const action of ["delete", "replace"])
+    test(`${stage}: 復号待ち中のキー${action}を送信前に再確認する`, async () => {
+      let calls = 0;
+      const f =
+        stage === "topic"
+          ? await topicFixtureCore()
+          : await fixture({
+              generation: generation(() => {
+                calls++;
+                throw Error("must not dispatch");
+              }),
+            });
+      if (stage === "caa")
+        await f.core.mutate(f.owner, "openai", "register", mutation());
+      let entered, release;
+      const decrypting = new Promise((resolve) => {
+        entered = resolve;
+      });
+      const gate = new Promise((resolve) => {
+        release = resolve;
+      });
+      const decrypt = crypto.subtle.decrypt;
+      crypto.subtle.decrypt = async function (...args) {
+        const result = Reflect.apply(decrypt, this, args);
+        entered();
+        await gate;
+        return result;
+      };
+      try {
+        const pending =
+          stage === "topic"
+            ? f.core.proposeTopic(f.owner, topicRequest())
+            : f.core.propose(f.owner, proposal(registry[0].id));
+        await decrypting;
+        await f.core.mutate(
+          f.owner,
+          "openai",
+          action,
+          action === "delete"
+            ? { requestId: randomUUID(), expectedRevision: 1 }
+            : mutation(1),
+        );
+        release();
+        assert.deepEqual(await pending, {
+          status: "credential-changed",
+          draft: null,
+        });
+        assert.equal(stage === "topic" ? f.calls() : calls, 0);
+        const record = f.storage.data.get("budget").records[0];
+        assert.equal(record.state, "rejected");
+        assert.deepEqual(record.usage, { inputTokens: 0, outputTokens: 0 });
+        assert.equal(record.spentMilliYen, 0);
+        assert.equal((await f.core.budget(f.owner)).heldMilliYen, 0);
+      } finally {
+        release();
+        crypto.subtle.decrypt = decrypt;
+      }
+    });
