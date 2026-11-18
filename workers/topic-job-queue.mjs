@@ -90,8 +90,19 @@ const stored = (schema, value) => {
 
 /** 生成の再実行と結果の再照会を分け、alarmの再配送で有料処理を繰り返さない。 */
 export class TopicJobQueue {
-  constructor(storage, { enabled = false, run, lookup, now = Date.now } = {}) {
-    Object.assign(this, { storage, enabled, run, lookup, now });
+  constructor(
+    storage,
+    {
+      enabled = false,
+      run,
+      lookup,
+      now = Date.now,
+      nextWake = async () => null,
+      terminalStatuses = [],
+    } = {},
+  ) {
+    Object.assign(this, { storage, enabled, run, lookup, now, nextWake });
+    this.terminalStatuses = new Set(terminalStatuses);
   }
   async index(tx, owner) {
     const raw = await tx.get(indexKey);
@@ -147,16 +158,26 @@ export class TopicJobQueue {
       throw Error("topic-job-invalid");
     }
   }
+  async deleteParts(tx, id, kind, count) {
+    for (let n = 0; n < count; n++) await tx.delete(part(id, kind, n));
+  }
   async schedule(tx, index) {
     let next = Infinity;
-    if (this.enabled)
-      for (const id of index.ids) {
+    if (this.enabled) {
+      const extra = await this.nextWake(tx);
+      if (extra !== null) {
+        if (!Number.isSafeInteger(extra) || extra < 0)
+          throw Error("topic-job-invalid");
+        next = extra;
+      }
+      for (const id of index?.ids ?? []) {
         const record = await this.availableRecord(tx, id);
         if (!record) continue;
         if (record.state === "queued") next = Math.min(next, this.now() + 1000);
         if (record.state === "running")
           next = Math.min(next, record.checkAt ?? this.now() + 1000);
       }
+    }
     if (Number.isFinite(next))
       await tx.setAlarm(Math.max(this.now() + 1000, next));
     else await tx.deleteAlarm();
@@ -379,24 +400,29 @@ export class TopicJobQueue {
   async remove(owner, id) {
     ownerSchema.parse(owner);
     id = idSchema.parse(id);
-    return this.storage.transaction(async (tx) => {
-      const index = await this.index(tx, owner);
-      if (!index?.ids.includes(id)) return;
-      const record = await this.record(tx, id);
-      if (!["complete", "rejected", "cancelled"].includes(record.state))
-        throw Error("topic-job-active");
-      for (const kind of ["input", "result"])
-        for (
-          let n = 0;
-          n < (kind === "input" ? record.parts : record.resultParts);
-          n++
-        )
-          await tx.delete(part(id, kind, n));
-      await tx.delete(key(id));
-      index.ids = index.ids.filter((value) => value !== id);
-      await tx.put(indexKey, index);
-      await this.schedule(tx, index);
-    });
+    return this.storage.transaction((tx) =>
+      this.removeInTransaction(tx, owner, id),
+    );
+  }
+  async removeInTransaction(tx, owner, id) {
+    ownerSchema.parse(owner);
+    id = idSchema.parse(id);
+    const index = await this.index(tx, owner);
+    if (!index?.ids.includes(id)) return;
+    const record = await this.record(tx, id);
+    if (!["complete", "rejected", "cancelled"].includes(record.state))
+      throw Error("topic-job-active");
+    for (const kind of ["input", "result"])
+      for (
+        let n = 0;
+        n < (kind === "input" ? record.parts : record.resultParts);
+        n++
+      )
+        await tx.delete(part(id, kind, n));
+    await tx.delete(key(id));
+    index.ids = index.ids.filter((value) => value !== id);
+    await tx.put(indexKey, index);
+    await this.schedule(tx, index);
   }
   async cancel(owner, id) {
     ownerSchema.parse(owner);
@@ -437,7 +463,7 @@ export class TopicJobQueue {
     const ticket = await this.storage.transaction(async (tx) => {
       const raw = await tx.get(indexKey);
       if (raw === undefined) {
-        await tx.deleteAlarm();
+        await this.schedule(tx, null);
         return null;
       }
       const index = stored(indexSchema, raw);
@@ -520,12 +546,14 @@ export class TopicJobQueue {
         ticket.manual &&
         record.state === "running" &&
         result?.status !== "complete" &&
-        result?.status !== "rejected";
+        result?.status !== "rejected" &&
+        !this.terminalStatuses.has(result?.status);
       record.state = keepRunning
         ? "running"
         : result?.status === "complete"
           ? "complete"
-          : ["rejected", "account-forbidden"].includes(result?.status)
+          : ["rejected", "account-forbidden"].includes(result?.status) ||
+              this.terminalStatuses.has(result?.status)
             ? "rejected"
             : "held";
       record.reason =
