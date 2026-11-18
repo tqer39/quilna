@@ -72,6 +72,7 @@ export const topicGenerationFailureStatusSchema = z.enum([
   "cost-unapproved",
   "cost-limit",
   "quote-changed",
+  "materials-unavailable",
 ]);
 export const topicGenerationReplySchema = z.discriminatedUnion("status", [
   object({
@@ -119,6 +120,10 @@ export const topicCapabilitiesSchema = object({
   account,
   csrfToken: z.string().min(20).max(100),
   quotes: z.array(topicQuoteSchema).max(40),
+  creations: object({
+    available: z.boolean(),
+    enabled: z.boolean(),
+  }).optional(),
   budget: object({
     limitMilliYen: z.literal(500000),
     spentMilliYen: z.number().int().min(0).max(500000),

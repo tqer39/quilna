@@ -838,3 +838,287 @@ test("原文3件と題名・語句が最大でエスケープの多い資料候�
   assert.equal(new TextEncoder().encode(raw).length < 262144, true);
   assert.equal(JSON.parse(raw).sources.length, 3);
 });
+
+const creationQuote = (purpose) => ({
+  modelId: "fixture",
+  provider: "openai",
+  model: "fixture",
+  purpose,
+  maxMilliYen: 1000,
+  quoteDigest: "e".repeat(64),
+  inputTokens: 8000,
+  outputTokens: 2000,
+  dataConditions: "合成検証のみ",
+  priceCheckedAt: "2026-11-18T00:00:00Z",
+  costCheckedAt: "2026-11-18T00:00:00Z",
+});
+const creationRevision = "d".repeat(64);
+const creationBodies = {
+  save: { requestRaw: raw },
+  read: { id: input.requestId.toLowerCase() },
+  list: {},
+  refresh: { id: input.requestId.toLowerCase() },
+  remove: { id: input.requestId.toLowerCase(), confirm: true },
+  resume: { id: input.requestId.toLowerCase(), confirm: true },
+  approve: {
+    id: input.requestId.toLowerCase(),
+    expectedRevision: creationRevision,
+    confirm: true,
+    approvedPublicText: true,
+    generation: creationQuote("book-addition"),
+    review: creationQuote("evidence-check"),
+  },
+  retry: {
+    id: input.requestId.toLowerCase(),
+    expectedRevision: creationRevision,
+    confirm: true,
+    approvedPublicText: true,
+    quote: creationQuote("evidence-check"),
+  },
+  "review-again": {
+    id: input.requestId.toLowerCase(),
+    expectedRevision: creationRevision,
+    reviewRequestId: crypto.randomUUID(),
+    confirm: true,
+    approvedPublicText: true,
+    quote: creationQuote("evidence-check"),
+  },
+};
+async function creationSetup(options) {
+  const f = await setup(options);
+  f.env.TOPIC_TEXTBOOK_CREATIONS = {};
+  f.env.TOPIC_TEXTBOOK_CREATIONS_ENABLED = "true";
+  return f;
+}
+test("作成受付の全操作で所有者・CSRFをAccountへ渡し、現在見積り/所有者/余分な確認を注入させない", async () => {
+  for (const [action, body] of Object.entries(creationBodies)) {
+    const f = await creationSetup();
+    assert.equal(
+      (
+        await f.handler(
+          f.request("creations/" + action, JSON.stringify(body)),
+          f.env,
+        )
+      ).status,
+      200,
+    );
+    assert.deepEqual(f.calls[0].command, {
+      action: "topic-creation-" + action,
+      principal: ownerA,
+      csrf: "synthetic-csrf",
+      data: body,
+    });
+    assert.equal(
+      f.calls[0].url,
+      "https://account.internal/command/topic-creations",
+    );
+    for (const injected of [
+      { owner: "b".repeat(64) },
+      { currentQuotes: [] },
+      { action: "approve" },
+    ])
+      assert.equal(
+        (
+          await f.handler(
+            f.request(
+              "creations/" + action,
+              JSON.stringify({ ...body, ...injected }),
+            ),
+            f.env,
+          )
+        ).status,
+        400,
+      );
+    assert.equal(f.calls.length, 1);
+  }
+});
+test("生成の受付停止中にも草案の保存/読取/整理ができ、費用承認・再予約・再開は停止する", async () => {
+  const f = await creationSetup({ credentialsEnabled: false });
+  f.env.TOPIC_TEXTBOOK_CREATIONS_ENABLED = "false";
+  for (const [action, body] of Object.entries(creationBodies))
+    assert.equal(
+      (
+        await f.handler(
+          f.request("creations/" + action, JSON.stringify(body)),
+          f.env,
+        )
+      ).status,
+      ["approve", "retry", "resume", "review-again"].includes(action)
+        ? 503
+        : 200,
+    );
+  delete f.env.TOPIC_TEXTBOOK_CREATIONS;
+  assert.equal(
+    (await f.handler(f.request("creations/list", "{}"), f.env)).status,
+    503,
+  );
+});
+for (const phase of ["before-dispatch", "after-processing"])
+  test(`作成受付の ${phase} のセッション変更で配送/応答を拒否する`, async () => {
+    let checks = 0;
+    const f = await creationSetup({
+      authenticate: async () =>
+        ++checks >= (phase === "before-dispatch" ? 2 : 3)
+          ? { subject: "other", sessionId: "other" }
+          : ownerA,
+    });
+    assert.equal(
+      (
+        await f.handler(
+          f.request("creations/save", JSON.stringify(creationBodies.save)),
+          f.env,
+        )
+      ).status,
+      401,
+    );
+    assert.equal(f.calls.length, phase === "before-dispatch" ? 0 : 1);
+  });
+
+test("AccountがCSRF・流量を確認し、資料と保存版を照合してホストの見積りだけを作成DOへ渡す", async () => {
+  const owner = await hash(ownerA.subject),
+    calls = [],
+    checks = [],
+    materials = [];
+  let exhausted = false,
+    missing = false,
+    revision = creationRevision;
+  const core = {
+    authorize: async (_p, csrf, mutating, options) => {
+      assert.equal(mutating, true);
+      if (csrf !== "valid-csrf") throw Error("csrf-invalid");
+      checks.push(options);
+      if (exhausted && options.countRate) throw Error("rate-limit");
+      return owner;
+    },
+    topicStatus: async () => ({
+      quotes: [creationQuote("book-addition"), creationQuote("evidence-check")],
+    }),
+  };
+  const creations = {
+    enabled: true,
+    verifyMaterials: async (account, value) => {
+      assert.equal(account, owner);
+      materials.push(value);
+    },
+    binding: {
+      idFromName: (id) => id,
+      get: (id) => {
+        assert.equal(id, owner);
+        return {
+          fetch: async (request) => {
+            assert.equal(
+              request.url,
+              "https://topic-creations.internal/command",
+            );
+            const command = await request.json();
+            calls.push(command);
+            return Response.json(
+              command.action === "read"
+                ? {
+                    account: owner,
+                    creation: missing
+                      ? null
+                      : {
+                          id: input.requestId.toLowerCase(),
+                          revision,
+                          requestRaw: raw,
+                        },
+                  }
+                : {
+                    account: owner,
+                    creation: { id: input.requestId.toLowerCase() },
+                  },
+            );
+          },
+        };
+      },
+    },
+  };
+  const command = (
+    action,
+    data,
+    csrf = "valid-csrf",
+    path = "/command/topic-creations",
+  ) =>
+    new Request("https://account.internal" + path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "topic-creation-" + action,
+        principal: ownerA,
+        csrf,
+        data,
+      }),
+    });
+  const send = (action, data, csrf, path) =>
+    handleAccount(
+      core,
+      command(action, data, csrf, path),
+      null,
+      null,
+      null,
+      null,
+      creations,
+    );
+  for (const [action, data] of Object.entries(creationBodies))
+    assert.equal((await send(action, data)).status, 200);
+  assert.ok(calls.every((c) => c.owner === owner));
+  for (const c of calls.filter((c) =>
+    ["approve", "retry", "review-again"].includes(c.action),
+  ))
+    assert.deepEqual(c.currentQuotes, (await core.topicStatus()).quotes);
+  assert.equal(materials.length, 4);
+  assert.ok(materials.every((r) => r === raw));
+  const before = calls.length;
+  assert.equal(
+    (await send("read", creationBodies.read, "invalid")).status,
+    403,
+  );
+  assert.equal(calls.length, before);
+  exhausted = true;
+  assert.equal((await send("list", {})).status, 200);
+  assert.equal(checks.at(-1).countRate, false);
+  assert.equal((await send("refresh", creationBodies.refresh)).status, 429);
+  exhausted = false;
+  assert.equal((await send("list", {}, undefined, "/command")).status, 409);
+  revision = "f".repeat(64);
+  assert.equal((await send("approve", creationBodies.approve)).status, 409);
+  missing = true;
+  assert.equal((await send("approve", creationBodies.approve)).status, 404);
+});
+
+for (const [credentialsEnabled, flag] of [
+  [false, true],
+  [true, false],
+  [false, false],
+])
+  test(`作成の受付停止を個別に検証する: credentials=${credentialsEnabled}, flag=${flag}`, async () => {
+    const f = await creationSetup({ credentialsEnabled });
+    f.env.TOPIC_TEXTBOOK_CREATIONS_ENABLED = String(flag);
+    for (const action of ["approve", "retry", "resume", "review-again"]) {
+      const response = await f.handler(
+        f.request(
+          "creations/" + action,
+          JSON.stringify(creationBodies[action]),
+        ),
+        f.env,
+      );
+      assert.equal(response.status, 503);
+      assert.equal(
+        (await response.json()).status,
+        credentialsEnabled
+          ? "topic-creations-unconfigured"
+          : "credentials-unconfigured",
+      );
+    }
+    assert.equal(f.calls.length, 0);
+    assert.equal(
+      (
+        await f.handler(
+          f.request("creations/read", JSON.stringify(creationBodies.read)),
+          f.env,
+        )
+      ).status,
+      200,
+    );
+  });

@@ -29,12 +29,17 @@ const commandSchema = z
 const managementSchema = commandSchema.extend({ request: lifecycleRequest });
 
 export class SourceDocument extends DurableObject {
-  /** 公開経路から取得や管理操作へ進めず、保存済みの最新版だけを返す。 */
+  /** 取得や管理操作へ進めず、現在の公開許可で保存済みの指定版を返す。省略時は最新版。 */
   async publicRead(request) {
     const input = z
       .object({
         url: z.string().max(2048),
         scope: z.string().min(1).max(200),
+        versionId: z
+          .string()
+          .uuid()
+          .transform((id) => id.toLowerCase())
+          .optional(),
       })
       .strict()
       .parse(await readBody(request));
@@ -56,7 +61,7 @@ export class SourceDocument extends DurableObject {
         throw Error("document-unavailable");
       },
     });
-    const value = await catalog.read(publicReader);
+    const value = await catalog.read(publicReader, input.versionId);
     if (!(await authorize(publicReader))) throw Error("document-unavailable");
     return json(200, value);
   }

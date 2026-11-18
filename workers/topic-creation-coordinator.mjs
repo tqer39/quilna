@@ -4,10 +4,12 @@ import { TopicJobQueue } from "./topic-job-queue.mjs";
 import {
   parseTextbookRequest,
   parseSharedTextbook,
+  parseReviewedTextbookCandidate,
 } from "../src/shared-textbook-format.ts";
 import {
   topicQuoteSchema,
   topicGenerationFailureStatusSchema,
+  topicGenerationReplySchema,
 } from "../src/topic-generation-protocol.ts";
 import {
   createTopicTextbookEdition,
@@ -48,6 +50,7 @@ const recordSchema = z
     id: uuid,
     bookID: uuid,
     reviewId: uuid,
+    previousReviewIds: z.array(uuid).max(20).optional(),
     requestDigest: digest,
     requestParts: z.number().int().min(1).max(12),
     state: z.enum([
@@ -70,12 +73,15 @@ const recordSchema = z
       "operation-unconfirmed",
       "stage-rejected",
       "invalid-result",
+      "capacity",
     ]),
   })
   .strict()
   .refine(
     (r) =>
       r.id !== r.reviewId &&
+      new Set([r.id, r.reviewId, ...(r.previousReviewIds ?? [])]).size ===
+        2 + (r.previousReviewIds?.length ?? 0) &&
       r.updatedAt >= r.createdAt &&
       (r.state === "draft"
         ? r.quotes === null && r.approvedPublicText === null
@@ -104,7 +110,12 @@ export class TopicCreationCoordinator {
       nextWake: (tx) => this.nextWake(tx),
       // キー変更は有料処理後にも返り得るため、台帳から回収するまで保留する。
       terminalStatuses: topicGenerationFailureStatusSchema.options.filter(
-        (status) => !["not-found", "credential-changed"].includes(status),
+        (status) =>
+          ![
+            "not-found",
+            "credential-changed",
+            "materials-unavailable",
+          ].includes(status),
       ),
     });
   }
@@ -169,6 +180,8 @@ export class TopicCreationCoordinator {
     return {
       id: r.id,
       bookID: r.bookID,
+      revision: r.requestDigest,
+      reviewRequestId: r.reviewId,
       state: r.state,
       stage: r.stage,
       title: request.topic.name,
@@ -178,7 +191,36 @@ export class TopicCreationCoordinator {
       updatedAt: r.updatedAt,
       quotes: r.quotes,
       reason: r.reason,
+      operation: await this.operation(tx, r),
       book,
+    };
+  }
+  async operation(tx, r) {
+    const index = stored(indexSchema, await tx.get(indexKey));
+    const id = r.stage === "generation" ? r.id : r.reviewId;
+    if (!(await this.queue.index(tx, index.owner))?.ids.includes(id))
+      return null;
+    const record = await this.queue.availableRecord(tx, id);
+    if (!record) return { id, state: "unavailable" };
+    let saved;
+    try {
+      saved = await this.queue.view(tx, record, index.owner);
+    } catch (error) {
+      if (error.message !== "topic-job-invalid") throw error;
+      return { id, state: "unavailable" };
+    }
+    return {
+      id,
+      state: record.state,
+      reason: record.reason,
+      status: saved.result?.status ?? null,
+      outcome: saved.result?.outcome ?? null,
+      confirmedUnsent: record.confirmedUnsent === true,
+      reviewPassed:
+        saved.result?.status === "complete" &&
+        saved.result.draft.kind === "topic-textbook-review"
+          ? saved.result.draft.allChecksPassed
+          : null,
     };
   }
   async save(owner, requestRaw) {
@@ -238,10 +280,11 @@ export class TopicCreationCoordinator {
     if (!this.enabled) throw Error("topic-creations-unconfigured");
     ownerSchema.parse(owner);
     id = uuid.parse(id);
-    const { generation, review } = z
+    const { generation, review, expectedRevision } = z
       .object({
         confirm: z.literal(true),
         approvedPublicText: z.literal(true),
+        expectedRevision: digest.optional(),
         generation: topicQuoteSchema,
         review: topicQuoteSchema,
       })
@@ -256,6 +299,11 @@ export class TopicCreationCoordinator {
       const index = await this.index(tx, owner);
       if (!index?.ids.includes(id)) throw Error("topic-creation-missing");
       const r = await this.record(tx, id);
+      if (
+        expectedRevision !== undefined &&
+        r.requestDigest !== expectedRevision
+      )
+        throw Error("topic-creation-conflict");
       await this.request(tx, r);
       if (r.quotes !== null) {
         if ((await hash(r.quotes)) !== fingerprint)
@@ -290,6 +338,223 @@ export class TopicCreationCoordinator {
       await this.queue.schedule(tx, await this.queue.index(tx, owner));
       return this.view(tx, r);
     });
+  }
+  async retry(owner, id, approval, currentQuotes) {
+    if (!this.enabled) throw Error("topic-creations-unconfigured");
+    ownerSchema.parse(owner);
+    id = uuid.parse(id);
+    const { quote, expectedRevision } = z
+      .object({
+        confirm: z.literal(true),
+        approvedPublicText: z.literal(true),
+        expectedRevision: digest,
+        quote: topicQuoteSchema,
+      })
+      .strict()
+      .parse(approval);
+    const snapshot = await this.storage.transaction(async (tx) => {
+      const index = await this.index(tx, owner);
+      if (!index?.ids.includes(id)) throw Error("topic-creation-missing");
+      const r = await this.record(tx, id);
+      if (r.requestDigest !== expectedRevision)
+        throw Error("topic-creation-conflict");
+      if (!["held", "rejected"].includes(r.state))
+        throw Error("topic-creation-active");
+      return { r, ...(await this.request(tx, r)) };
+    });
+    const { r, raw } = snapshot,
+      oldQuote = r.quotes[r.stage];
+    if (
+      quote.modelId !== oldQuote.modelId ||
+      quote.provider !== oldQuote.provider ||
+      quote.model !== oldQuote.model ||
+      quote.purpose !== oldQuote.purpose
+    )
+      throw Error("topic-creation-conflict");
+    const fingerprint = await hash(quote),
+      previous = await hash(r.quotes);
+    const current = await Promise.all(
+      z.array(topicQuoteSchema).max(40).parse(currentQuotes).map(hash),
+    );
+    if (!current.includes(fingerprint)) throw Error("quote-changed");
+    const quotes = quotesSchema.parse({ ...r.quotes, [r.stage]: quote });
+    let draft;
+    if (r.stage === "review") {
+      const generated = await this.queue.read(owner, r.id);
+      if (
+        generated?.state !== "complete" ||
+        generated.result?.status !== "complete"
+      )
+        throw Error("topic-creation-invalid");
+      draft = await validateTopicDraft(
+        raw,
+        generated.result.draft,
+        r.quotes.generation,
+      );
+    }
+    const input = this.input({ ...r, quotes }, raw, draft);
+    await this.queue.retry(owner, input, {
+      onQueued: async (tx) => {
+        const index = await this.index(tx, owner),
+          latest = await this.record(tx, id);
+        if (
+          !index?.ids.includes(id) ||
+          latest.state !== r.state ||
+          latest.stage !== r.stage ||
+          latest.requestDigest !== expectedRevision ||
+          (await hash(latest.quotes)) !== previous
+        )
+          throw Error("topic-creation-conflict");
+        let count = 0;
+        for (const other of index.ids.filter((value) => value !== id)) {
+          try {
+            const record = await this.record(tx, other);
+            if (active(record) || record.state === "held") count++;
+          } catch (error) {
+            if (error.message !== "topic-creation-invalid") throw error;
+            count++;
+          }
+        }
+        if (count >= 20) throw Error("topic-creation-capacity");
+        Object.assign(latest, {
+          quotes,
+          state: latest.stage,
+          reason: "",
+          updatedAt: Math.max(latest.updatedAt, this.now()),
+        });
+        await tx.put(key(id), stored(recordSchema, latest));
+      },
+    });
+    return this.read(owner, id);
+  }
+  async reviewAgain(owner, id, approval, currentQuotes) {
+    if (!this.enabled) throw Error("topic-creations-unconfigured");
+    ownerSchema.parse(owner);
+    id = uuid.parse(id);
+    const { expectedRevision, reviewRequestId, quote } = z
+      .object({
+        expectedRevision: digest,
+        reviewRequestId: uuid,
+        quote: topicQuoteSchema,
+        confirm: z.literal(true),
+        approvedPublicText: z.literal(true),
+      })
+      .strict()
+      .parse(approval);
+    const snapshot = await this.storage.transaction(async (tx) => {
+      const index = await this.index(tx, owner);
+      if (!index?.ids.includes(id)) throw Error("topic-creation-missing");
+      const r = await this.record(tx, id);
+      if (r.requestDigest !== expectedRevision)
+        throw Error("topic-creation-conflict");
+      return { r, ...(await this.request(tx, r)) };
+    });
+    const { r, raw } = snapshot;
+    if (
+      r.reviewId === reviewRequestId &&
+      r.previousReviewIds?.length &&
+      (await hash(r.quotes?.review)) === (await hash(quote))
+    )
+      return this.read(owner, id);
+    if (r.state !== "rejected" || r.stage !== "review")
+      throw Error("topic-creation-active");
+    if ((r.previousReviewIds?.length ?? 0) >= 20)
+      throw Error("topic-creation-capacity");
+    if (
+      [r.id, r.reviewId, ...(r.previousReviewIds ?? [])].includes(
+        reviewRequestId,
+      ) ||
+      quote.purpose !== "evidence-check"
+    )
+      throw Error("topic-creation-conflict");
+    const current = await Promise.all(
+      z.array(topicQuoteSchema).max(40).parse(currentQuotes).map(hash),
+    );
+    if (!current.includes(await hash(quote))) throw Error("quote-changed");
+    const quotes = quotesSchema.parse({ ...r.quotes, review: quote });
+    const generated = await this.queue.read(owner, r.id);
+    if (
+      generated?.state !== "complete" ||
+      generated.result?.status !== "complete"
+    )
+      throw Error("topic-creation-invalid");
+    const draft = await validateTopicDraft(
+      raw,
+      generated.result.draft,
+      r.quotes.generation,
+    );
+    const proof = topicGenerationReplySchema.parse(
+      await this.queue.lookup(owner, this.input(r, raw, draft)),
+    );
+    if (proof.account !== owner) throw Error("topic-creation-owner");
+    const priorStage = await this.queue.read(owner, r.reviewId);
+    const rejectedBeforeDispatch =
+      proof.status === "not-found" &&
+      priorStage?.state === "rejected" &&
+      this.queue.terminalStatuses.has(priorStage.result?.status);
+    if (
+      proof.status === "complete" &&
+      proof.draft.kind === "topic-textbook-review" &&
+      !proof.draft.allChecksPassed
+    ) {
+      const result = await parseReviewedTextbookCandidate(
+        raw,
+        draft.json,
+        proof.draft.json,
+      );
+      if (
+        result.allChecksPassed ||
+        result.requestDigest !== proof.draft.requestDigest ||
+        result.draftDigest !== proof.draft.draftDigest
+      )
+        throw Error("topic-creation-invalid");
+    } else if (proof.status !== "rejected" && !rejectedBeforeDispatch)
+      throw Error("topic-job-retry-unavailable");
+    const previous = await hash(r.quotes);
+    await this.queue.enqueue(
+      owner,
+      this.input({ ...r, reviewId: reviewRequestId, quotes }, raw, draft),
+      {
+        onQueued: async (tx) => {
+          const latest = await this.record(tx, id);
+          if (
+            latest.state !== r.state ||
+            latest.reviewId !== r.reviewId ||
+            latest.requestDigest !== expectedRevision ||
+            (await hash(latest.quotes)) !== previous
+          )
+            throw Error("topic-creation-conflict");
+          const index = await this.index(tx, owner);
+          let pending = 0;
+          for (const other of index.ids.filter((value) => value !== id)) {
+            try {
+              const entry = await this.record(tx, other);
+              if (active(entry) || entry.state === "held") pending++;
+            } catch (error) {
+              if (error.message !== "topic-creation-invalid") throw error;
+              pending++;
+            }
+          }
+          if (pending >= 20) throw Error("topic-creation-capacity");
+          Object.assign(latest, {
+            reviewId: reviewRequestId,
+            previousReviewIds: [
+              ...(latest.previousReviewIds ?? []),
+              latest.reviewId,
+            ],
+            quotes,
+            state: "review",
+            reason: "",
+            updatedAt: Math.max(latest.updatedAt, this.now()),
+          });
+          await tx.put(key(id), stored(recordSchema, latest));
+        },
+      },
+    );
+    const saved = await this.read(owner, id);
+    if (saved.reviewRequestId !== reviewRequestId)
+      throw Error("topic-creation-conflict");
+    return saved;
   }
   async read(owner, id) {
     ownerSchema.parse(owner);
@@ -370,30 +635,73 @@ export class TopicCreationCoordinator {
       const index = await this.index(tx, owner);
       if (!index?.ids.includes(id)) throw Error("topic-creation-missing");
       const r = await this.record(tx, id);
-      if (!active(r)) throw Error("topic-creation-active");
+      if (r.state === "held" && r.reason === "capacity") {
+        r.state = r.stage;
+        r.reason = "";
+        r.updatedAt = Math.max(r.updatedAt, this.now());
+        await tx.put(key(id), stored(recordSchema, r));
+      } else if (!active(r)) throw Error("topic-creation-active");
       await this.queue.schedule(tx, await this.queue.index(tx, owner));
       return this.view(tx, r);
     });
   }
-  async remove(owner, id, confirm) {
+  async remove(owner, id, confirm, discardGeneratedResult = false) {
     z.literal(true).parse(confirm);
     ownerSchema.parse(owner);
     id = uuid.parse(id);
-    return this.storage.transaction(async (tx) => {
+    const snapshot = await this.storage.transaction(async (tx) => {
       const index = await this.index(tx, owner);
-      if (!index?.ids.includes(id)) return;
-      const r = await this.record(tx, id);
-      if (!["draft", "ready", "rejected"].includes(r.state))
-        throw Error("topic-creation-active");
-      for (const stageId of [r.id, r.reviewId])
-        await this.queue.removeInTransaction(tx, owner, stageId);
-      await this.queue.deleteParts(tx, id, "creation-request", r.requestParts);
-      await this.queue.deleteParts(tx, id, "creation-book", r.bookParts);
-      await tx.delete(key(id));
-      index.ids = index.ids.filter((value) => value !== id);
-      await tx.put(indexKey, index);
-      await this.queue.schedule(tx, await this.queue.index(tx, owner));
+      return index?.ids.includes(id) ? this.record(tx, id) : null;
     });
+    if (snapshot?.state === "held" && discardGeneratedResult === true) {
+      const stageId =
+        snapshot.stage === "generation" ? snapshot.id : snapshot.reviewId;
+      if (snapshot.reason === "capacity")
+        return this.storage.transaction(async (tx) => {
+          const r = await this.record(tx, id);
+          if (
+            (await hash(r)) !== (await hash(snapshot)) ||
+            !(await this.queue.unreserved(tx, owner, stageId))
+          )
+            throw Error("topic-creation-conflict");
+          // 予約が存在しないことを同時に確認し、送信済みの段階を取り下げない。
+          r.state = "rejected";
+          await tx.put(key(id), stored(recordSchema, r));
+          await this.removeInTransaction(tx, owner, id);
+        });
+      return this.queue.discardUnsent(owner, stageId, async (tx) => {
+        const r = await this.record(tx, id);
+        if (
+          r.state !== snapshot.state ||
+          r.stage !== snapshot.stage ||
+          r.requestDigest !== snapshot.requestDigest
+        )
+          throw Error("topic-creation-conflict");
+        r.state = "rejected";
+        await tx.put(key(id), stored(recordSchema, r));
+        await this.removeInTransaction(tx, owner, id);
+      });
+    }
+    return this.storage.transaction((tx) =>
+      this.removeInTransaction(tx, owner, id),
+    );
+  }
+  async removeInTransaction(tx, owner, id) {
+    const index = await this.index(tx, owner);
+    if (!index?.ids.includes(id)) return;
+    const r = await this.record(tx, id);
+    if (!["draft", "ready", "rejected"].includes(r.state))
+      throw Error("topic-creation-active");
+    for (const stageId of [r.id, r.reviewId, ...(r.previousReviewIds ?? [])])
+      await this.queue.removeInTransaction(tx, owner, stageId, {
+        schedule: false,
+      });
+    await this.queue.deleteParts(tx, id, "creation-request", r.requestParts);
+    await this.queue.deleteParts(tx, id, "creation-book", r.bookParts);
+    await tx.delete(key(id));
+    index.ids = index.ids.filter((value) => value !== id);
+    await tx.put(indexKey, index);
+    await this.queue.schedule(tx, await this.queue.index(tx, owner));
   }
   async nextWake(tx) {
     const raw = await tx.get(indexKey);
@@ -552,7 +860,11 @@ export class TopicCreationCoordinator {
     } catch (error) {
       // 壊れた一件を消さず、他の正常な依頼の進行を妨げない。
       if (
-        !["topic-creation-invalid", "topic-job-invalid"].includes(error.message)
+        ![
+          "topic-creation-invalid",
+          "topic-job-invalid",
+          "topic-job-capacity",
+        ].includes(error.message)
       )
         throw error;
       const snapshot = await this.storage
@@ -564,7 +876,10 @@ export class TopicCreationCoordinator {
       if (snapshot && active(snapshot))
         await this.update(owner, snapshot, async (_tx, current) => {
           current.state = "held";
-          current.reason = "invalid-result";
+          current.reason =
+            error.message === "topic-job-capacity"
+              ? "capacity"
+              : "invalid-result";
         });
     }
   }

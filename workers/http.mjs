@@ -5,7 +5,12 @@ import { topicTextbookContract } from "../server/topic-textbook-contract.mjs";
 import { publicDocuments, publicDocumentPaths } from "./public-documents.mjs";
 import { topicJobPayloads, topicJobDispatches } from "./topic-job-commands.mjs";
 import { topicPreparationInputSchema } from "../src/topic-preparation-protocol.ts";
-const principal = z
+import {
+  topicCreationPayloads,
+  topicCreationDispatches,
+} from "./topic-creation-commands.mjs";
+import { handleTopicCreationAccount } from "./topic-creation-account.mjs";
+export const principal = z
   .object({
     subject: z.string().min(1).max(300),
     sessionId: z.string().min(1).max(300),
@@ -220,26 +225,42 @@ export function createHandler({
           }),
         );
       }
-      if (url.pathname.startsWith("/api/topic-textbooks/jobs/")) {
-        const action = url.pathname.slice("/api/topic-textbooks/jobs/".length);
-        if (
-          request.method !== "POST" ||
-          !Object.hasOwn(topicJobPayloads, action)
-        )
+      if (
+        url.pathname.startsWith("/api/topic-textbooks/jobs/") ||
+        url.pathname.startsWith("/api/topic-textbooks/creations/")
+      ) {
+        const creation = url.pathname.startsWith(
+          "/api/topic-textbooks/creations/",
+        );
+        const prefix = creation
+          ? "/api/topic-textbooks/creations/"
+          : "/api/topic-textbooks/jobs/";
+        const action = url.pathname.slice(prefix.length);
+        const payloads = creation ? topicCreationPayloads : topicJobPayloads;
+        const dispatches = creation
+          ? topicCreationDispatches
+          : topicJobDispatches;
+        const binding = creation
+          ? env.TOPIC_TEXTBOOK_CREATIONS
+          : env.TOPIC_TEXTBOOK_JOBS;
+        const enabled = creation
+          ? env.TOPIC_TEXTBOOK_CREATIONS_ENABLED
+          : env.TOPIC_TEXTBOOK_JOBS_ENABLED;
+        if (request.method !== "POST" || !Object.hasOwn(payloads, action))
           return json(404, { status: "not-found" });
         if (request.headers.get("X-Library-Account") !== owner)
           return json(403, { status: "account-mismatch" });
-        if (topicJobDispatches.has(action) && !credentialsEnabled)
+        if (dispatches.has(action) && !credentialsEnabled)
           return json(503, {
             status: "credentials-unconfigured",
             realKeyInputEnabled: false,
           });
-        if (
-          !env.TOPIC_TEXTBOOK_JOBS ||
-          (topicJobDispatches.has(action) &&
-            env.TOPIC_TEXTBOOK_JOBS_ENABLED !== "true")
-        )
-          return json(503, { status: "topic-jobs-unconfigured" });
+        if (!binding || (dispatches.has(action) && enabled !== "true"))
+          return json(503, {
+            status: creation
+              ? "topic-creations-unconfigured"
+              : "topic-jobs-unconfigured",
+          });
         const csrf = request.headers.get("X-CSRF-Token");
         if (typeof csrf !== "string" || csrf.length > 200)
           return json(403, { status: "csrf-invalid" });
@@ -251,9 +272,10 @@ export function createHandler({
             status: "invalid-request",
           });
         }
-        const parsed = topicJobPayloads[action].safeParse(data);
+        const parsed = payloads[action].safeParse(data);
         if (!parsed.success) return json(400, { status: "invalid-request" });
         if (
+          !creation &&
           ["enqueue", "retry"].includes(action) &&
           (parsed.data.input.approvedMaxMilliYen === undefined ||
             !parsed.data.input.approvedQuoteDigest)
@@ -267,16 +289,21 @@ export function createHandler({
         )
           return json(401, { status: "unauthenticated" });
         const result = await stub.fetch(
-          new Request("https://account.internal/command/topic-jobs", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              action: "topic-job-" + action,
-              principal: verified.data,
-              csrf,
-              data: parsed.data,
-            }),
-          }),
+          new Request(
+            creation
+              ? "https://account.internal/command/topic-creations"
+              : "https://account.internal/command/topic-jobs",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                action: (creation ? "topic-creation-" : "topic-job-") + action,
+                principal: verified.data,
+                csrf,
+                data: parsed.data,
+              }),
+            },
+          ),
         );
         const after = principal.safeParse(await authenticate(request));
         if (
@@ -433,7 +460,10 @@ export async function handleAccount(
   documents,
   jobs,
   prepareTopic,
+  creations,
 ) {
+  if (new URL(request.url).pathname === "/command/topic-creations")
+    return handleTopicCreationAccount(core, request, creations);
   let topic = false,
     owner;
   try {
@@ -501,6 +531,11 @@ export async function handleAccount(
           : {}),
       },
     );
+    if (
+      typeof command.action === "string" &&
+      command.action.startsWith("topic-creation-")
+    )
+      throw Error("invalid-command");
     if (job) {
       if (
         !jobs?.binding ||
@@ -568,6 +603,17 @@ export async function handleAccount(
         value = { ...value, mode: "unconnected", quotes: [] };
       value = {
         ...value,
+        ...(creations
+          ? {
+              creations: {
+                available: !!creations.binding,
+                enabled:
+                  !!creations.binding &&
+                  !!creations.enabled &&
+                  command.proposalEnabled === true,
+              },
+            }
+          : {}),
         csrfToken: (await core.session(command.principal)).csrfToken,
       };
     } else if (command.action === "topic-prepare") {

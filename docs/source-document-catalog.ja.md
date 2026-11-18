@@ -24,6 +24,8 @@
 
 任意設定の公開リーダーは `GET /public/documents?url=<エンコードした正確な取得元URL>` です。`GET /api/public/documents?url=...` は同じ保存済み最新版をJSONで返し、両方とも `HEAD` に対応します。個人ライブラリが認証必須でも、この2経路はログインせず使えます。元サイトからの取得、文書の一覧、版履歴、別名の受け付け、個人状態の変更は行いません。不明・個人限定・未公開・未保存の記事はいずれも同じ利用不可状態を返します。
 
+内部の教材作成では、binding専用の`public-read`へ`versionId`を渡して、承認した保存版を確認できます。現在の公開許可と文書の保持/提供状態を同じように確認し、未保存の版を取得し直しません。匿名URLの経路は引き続き最新版だけを返します。
+
 `PUBLIC_DOCUMENTS_ENABLED=true`、既存の `DOCUMENTS_ENABLED=true`、`DOCUMENTS` と `DOCUMENT_ACCESS_DB` のbinding、既存の文書migrationに続く `0005_publications.sql` と `0006_publication_management.sql` が必要です。リポジトリの配備設定では引き続き無効です。migrationは空の `document_publications` テーブルを作り、既存の記事を公開しません。管理者は、正確な現行方針の世代に対する匿名配信の許可を別途確認し、期限と根拠を記録する必要があります。認証付き共有設定画面は、`0006_publication_management.sql` と後述する管理者設定がある場合に公開許可を編集できます。値の確認後、管理者は初期の許可登録に次のパラメーター付きSQLも使えます。
 
 ```sql

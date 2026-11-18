@@ -7,6 +7,11 @@ import { DocumentGateway } from "./document-gateway.mjs";
 import { topicGenerationInputSchema } from "../src/topic-generation-protocol.ts";
 import { topicJobAccess } from "./topic-job-access.mjs";
 import { prepareTopicEvidence } from "./topic-preparation.mjs";
+import {
+  verifyTopicMaterials,
+  authorizeTopicMaterials,
+} from "./topic-materials.mjs";
+export { TopicTextbookCreations } from "./topic-creation-object.mjs";
 export { TopicTextbookJobs } from "./topic-job-object.mjs";
 export { SourceDocument } from "./document-object.mjs";
 export class AccountVault extends DurableObject {
@@ -26,12 +31,38 @@ export class AccountVault extends DurableObject {
       binding: env.TOPIC_TEXTBOOK_JOBS,
       enabled: this.topicJobsEnabled,
     };
+    this.topicCreationsEnabled =
+      env.TOPIC_TEXTBOOK_CREATIONS_ENABLED === "true";
+    this.verifyCreationMaterials = async (owner, raw) => {
+      if (!(await this.canDispatchTopic(owner)))
+        throw Error("topic-creation-owner");
+      return verifyTopicMaterials(raw, env);
+    };
+    this.canDispatchCreation = async (owner, verifyMaterials) => {
+      try {
+        if (!(await this.canDispatchTopic(owner))) return false;
+        await verifyMaterials();
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    this.topicCreations = {
+      binding: env.TOPIC_TEXTBOOK_CREATIONS,
+      enabled: this.topicCreationsEnabled,
+      verifyMaterials: this.verifyCreationMaterials,
+    };
   }
   async fetch(request) {
-    if (new URL(request.url).pathname === "/command/queued-topic") {
+    const creation =
+      new URL(request.url).pathname === "/command/creation-topic";
+    if (creation || new URL(request.url).pathname === "/command/queued-topic") {
       if (
         request.method !== "POST" ||
-        request.url !== "https://account.internal/command/queued-topic"
+        request.url !==
+          (creation
+            ? "https://account.internal/command/creation-topic"
+            : "https://account.internal/command/queued-topic")
       )
         return json(404, { status: "not-found" });
       try {
@@ -44,8 +75,13 @@ export class AccountVault extends DurableObject {
           (await this.core.storage.get("owner")) !== command.owner
         )
           throw Error("topic-job-owner");
-        if (!this.topicJobsEnabled && !command.lookup)
-          return json(404, { status: "not-found" });
+        if (
+          !(creation ? this.topicCreationsEnabled : this.topicJobsEnabled) &&
+          !command.lookup
+        )
+          return creation
+            ? json(200, { status: "unconnected", account: command.owner })
+            : json(404, { status: "not-found" });
         const input = topicGenerationInputSchema.parse(command.input);
         if (
           input.approvedMaxMilliYen === undefined ||
@@ -53,14 +89,32 @@ export class AccountVault extends DurableObject {
         )
           throw Error("cost-unapproved");
         if (!command.lookup && !(await this.canDispatchTopic(command.owner)))
-          return json(403, {
-            status: "topic-job-forbidden",
+          return json(creation ? 200 : 403, {
+            status: creation ? "account-forbidden" : "topic-job-forbidden",
             account: command.owner,
           });
+        let verifyMaterials;
+        if (creation && !command.lookup) {
+          try {
+            verifyMaterials = await authorizeTopicMaterials(
+              input.requestRaw,
+              this.env,
+            );
+            await verifyMaterials();
+          } catch {
+            return json(200, {
+              status: "materials-unavailable",
+              account: command.owner,
+            });
+          }
+        }
         const result = await (command.lookup
           ? this.core.lookupTopic(command.owner, input)
           : this.core.proposeTopic(command.owner, input, {
-              authorize: () => this.canDispatchTopic(command.owner),
+              authorize: () =>
+                creation
+                  ? this.canDispatchCreation(command.owner, verifyMaterials)
+                  : this.canDispatchTopic(command.owner),
             }));
         return json(200, { ...result, account: command.owner });
       } catch {
@@ -74,6 +128,7 @@ export class AccountVault extends DurableObject {
       this.documents,
       this.topicJobs,
       (owner, input) => prepareTopicEvidence(owner, input, this.env),
+      this.topicCreations,
     );
   }
   async alarm() {

@@ -733,3 +733,446 @@ test("破損した生成結果がある保留の再照会は、進行中と表�
   assert.equal(f.storage.data.get(fragment), "{}");
   assert.equal(f.storage.data.has("alarm"), false);
 });
+
+for (const purpose of ["book-addition", "evidence-check"])
+  test(`資料確認の一時失敗は ${purpose} だけを明示的に再予約し、生成済みの段階を繰り返さない`, async () => {
+    const f = fixture();
+    let blocked = true;
+    const original = f.settings.run;
+    f.settings.run = async (account, input) =>
+      blocked && input.purpose === purpose
+        ? { status: "materials-unavailable", account }
+        : original(account, input);
+    const c = f.restart();
+    await c.save(owner, raw);
+    await c.approve(owner, id, approval, quotes);
+    await c.alarm();
+    if (purpose === "evidence-check") await c.alarm();
+    const before = await c.read(owner, id);
+    assert.equal(before.state, "held");
+    const quote = {
+      ...(purpose === "book-addition" ? generation : review),
+      maxMilliYen: 2000,
+      quoteDigest: "e".repeat(64),
+    };
+    await c.alarm();
+    assert.deepEqual(await c.read(owner, id), before);
+    blocked = false;
+    await c.retry(
+      owner,
+      id,
+      {
+        expectedRevision: before.revision,
+        quote,
+        confirm: true,
+        approvedPublicText: true,
+      },
+      [quote],
+    );
+    await c.alarm();
+    await c.alarm();
+    assert.equal((await c.read(owner, id)).state, "ready");
+    assert.equal(
+      f.calls.filter((input) => input.purpose === "book-addition").length,
+      1,
+    );
+    assert.equal(
+      f.calls.filter((input) => input.purpose === "evidence-check").length,
+      1,
+    );
+  });
+
+test("再予約と作成状態を同時確定し、作成状態の保存失敗で片方だけ予約しない", async () => {
+  const f = fixture({
+    run: async (account) => ({ status: "materials-unavailable", account }),
+  });
+  await approved(f);
+  await f.coordinator.alarm();
+  const before = await f.coordinator.read(owner, id);
+  const data = structuredClone(f.storage.data);
+  f.storage.fail = `topic-creations:record:${id}`;
+  await assert.rejects(
+    f.coordinator.retry(
+      owner,
+      id,
+      {
+        expectedRevision: before.revision,
+        quote: generation,
+        confirm: true,
+        approvedPublicText: true,
+      },
+      quotes,
+    ),
+    /保存/,
+  );
+  assert.deepEqual(f.storage.data, data);
+});
+
+test("台帳が未確認の再予約や、別の草案revisionへの費用承認を拒否する", async () => {
+  const f = fixture({
+    run: async (account) => ({ status: "materials-unavailable", account }),
+    lookup: async () => ({ status: "reserved", account: owner, draft: null }),
+  });
+  await approved(f);
+  await f.coordinator.alarm();
+  const before = await f.coordinator.read(owner, id);
+  await assert.rejects(
+    f.coordinator.retry(
+      owner,
+      id,
+      {
+        expectedRevision: before.revision,
+        quote: generation,
+        confirm: true,
+        approvedPublicText: true,
+      },
+      quotes,
+    ),
+    /retry-unavailable/,
+  );
+  assert.deepEqual(await f.coordinator.read(owner, id), before);
+  await assert.rejects(
+    f.coordinator.approve(
+      owner,
+      id,
+      { ...approval, expectedRevision: "0".repeat(64) },
+      quotes,
+    ),
+    /conflict/,
+  );
+});
+
+for (const stage of ["generation", "review"])
+  test(`未送信の ${stage} を台帳確認と破棄の明示確認で取り下げ、費用台帳を残す`, async () => {
+    const f = fixture();
+    const run = f.settings.run;
+    f.settings.run = async (account, input) =>
+      (stage === "generation" ? "book-addition" : "evidence-check") ===
+      input.purpose
+        ? { status: "materials-unavailable", account }
+        : run(account, input);
+    const c = f.restart();
+    await c.save(owner, raw);
+    await c.approve(owner, id, approval, quotes);
+    await c.alarm();
+    if (stage === "review") await c.alarm();
+    const ledger = structuredClone(f.ledger);
+    await c.refresh(owner, id);
+    await assert.rejects(c.remove(owner, id, true), /active/);
+    await c.remove(owner, id, true, true);
+    assert.equal(await c.read(owner, id), null);
+    assert.deepEqual(f.ledger, ledger);
+  });
+
+test("結果不明や台帳が処理中の控えは、破棄確認があっても取り下げない", async () => {
+  for (const status of ["unknown", "materials-unavailable"]) {
+    const f = fixture({
+      run: async (account) => ({ status, account }),
+      lookup: async () => ({ status: "reserved", account: owner, draft: null }),
+    });
+    await approved(f);
+    await f.coordinator.alarm();
+    const before = structuredClone(f.storage.data);
+    await assert.rejects(f.coordinator.remove(owner, id, true, true), /active/);
+    assert.deepEqual(f.storage.data, before);
+  }
+});
+
+test("取り下げの保存失敗では未送信の証拠と原文/候補を一緒に保持する", async () => {
+  const f = fixture({
+    run: async (account) => ({ status: "materials-unavailable", account }),
+  });
+  await approved(f);
+  await f.coordinator.alarm();
+  const before = structuredClone(f.storage.data);
+  f.storage.fail = `topic-creations:record:${id}`;
+  await assert.rejects(f.coordinator.remove(owner, id, true, true), /保存/);
+  assert.deepEqual(f.storage.data, before);
+});
+
+test("再予約後に未確認の送信へ進んだ場合は以前の未送信証拠を使って削除しない", async () => {
+  const f = fixture();
+  f.settings.run = async (account) => ({
+    status: "materials-unavailable",
+    account,
+  });
+  const c = f.restart();
+  await c.save(owner, raw);
+  await c.approve(owner, id, approval, quotes);
+  await c.alarm();
+  const saved = await c.read(owner, id);
+  await c.retry(
+    owner,
+    id,
+    {
+      expectedRevision: saved.revision,
+      quote: generation,
+      confirm: true,
+      approvedPublicText: true,
+    },
+    quotes,
+  );
+  const newer = f.restart({
+    run: async () => {
+      throw Error("送信の結果が不明");
+    },
+  });
+  await newer.alarm();
+  await assert.rejects(newer.remove(owner, id, true, true), /active/);
+});
+
+for (const kind of ["rejected", "negative-review"])
+  test(`確定した ${kind} 後に、生成を再利用して新しい検証だけを明示承認する`, async () => {
+    const f = fixture();
+    const run = f.settings.run;
+    let first = true;
+    f.settings.run = async (account, input) => {
+      if (input.purpose === "evidence-check" && first) {
+        first = false;
+        f.calls.push(input);
+        let reply = {
+          status: "rejected",
+          draft: null,
+          account,
+          outcome: "credential-unavailable",
+        };
+        if (kind === "negative-review") {
+          reply = result(input);
+          const review = JSON.parse(reply.draft.json);
+          review.sections[0].checks[0].passed = false;
+          reply.draft.json = JSON.stringify(review);
+          reply.draft.allChecksPassed = false;
+        }
+        f.ledger.set(input.requestId, reply);
+        return reply;
+      }
+      return run(account, input);
+    };
+    const c = f.restart();
+    await c.save(owner, raw);
+    await c.approve(owner, id, approval, quotes);
+    await c.alarm();
+    await c.alarm();
+    const before = await c.read(owner, id),
+      oldReview = before.reviewRequestId;
+    assert.equal(before.state, "rejected");
+    const command = {
+      expectedRevision: before.revision,
+      reviewRequestId: crypto.randomUUID(),
+      quote: review,
+      confirm: true,
+      approvedPublicText: true,
+    };
+    await c.reviewAgain(owner, id, command, quotes);
+    await c.alarm();
+    const ready = await c.read(owner, id);
+    assert.equal(ready.state, "ready");
+    assert.deepEqual(await c.reviewAgain(owner, id, command, []), ready);
+    assert.equal(
+      f.calls.filter((input) => input.purpose === "book-addition").length,
+      1,
+    );
+    assert.equal(
+      f.calls.filter((input) => input.purpose === "evidence-check").length,
+      2,
+    );
+    assert.equal(
+      f.storage.data.get(`topic-creations:record:${id}`).previousReviewIds[0],
+      oldReview,
+    );
+    const ledger = structuredClone(f.ledger);
+    await c.remove(owner, id, true);
+    assert.deepEqual(f.storage.data.get("topic-jobs:index").ids, []);
+    assert.deepEqual(f.ledger, ledger);
+  });
+
+test("新しい検証の承認でも、不明な台帳を再送せず、保存失敗で段階の片方だけを作らない", async () => {
+  const f = fixture();
+  const run = f.settings.run;
+  f.settings.run = async (account, input) => {
+    if (input.purpose !== "evidence-check") return run(account, input);
+    const reply = { status: "rejected", draft: null, account };
+    f.ledger.set(input.requestId, reply);
+    return reply;
+  };
+  const c = f.restart();
+  await c.save(owner, raw);
+  await c.approve(owner, id, approval, quotes);
+  await c.alarm();
+  await c.alarm();
+  const before = await c.read(owner, id),
+    record = f.storage.data.get(`topic-creations:record:${id}`);
+  const command = {
+    expectedRevision: before.revision,
+    reviewRequestId: crypto.randomUUID(),
+    quote: review,
+    confirm: true,
+    approvedPublicText: true,
+  };
+  const terminal = f.ledger.get(record.reviewId);
+  f.ledger.set(record.reviewId, {
+    status: "reserved",
+    draft: null,
+    account: owner,
+  });
+  await assert.rejects(
+    c.reviewAgain(owner, id, command, quotes),
+    /retry-unavailable/,
+  );
+  f.ledger.set(record.reviewId, terminal);
+  const stored = structuredClone(f.storage.data);
+  f.storage.fail = `topic-creations:record:${id}`;
+  await assert.rejects(c.reviewAgain(owner, id, command, quotes), /保存/);
+  assert.deepEqual(f.storage.data, stored);
+});
+
+test("段階の保存枠が満杯でも別の予約を進め、控え整理から生成済みの続きを再開できる", async () => {
+  const f = fixture();
+  async function withdrawCapacityHold() {
+    const copy = fixture();
+    copy.storage.data = structuredClone(f.storage.data);
+    await assert.rejects(copy.coordinator.remove(owner, id, true), /active/);
+    const before = structuredClone(copy.storage.data);
+    copy.storage.fail = `topic-creations:record:${id}`;
+    await assert.rejects(
+      copy.coordinator.remove(owner, id, true, true),
+      /保存/,
+    );
+    assert.deepEqual(copy.storage.data, before);
+    copy.storage.fail = false;
+    await copy.coordinator.remove(owner, id, true, true);
+    assert.equal(await copy.coordinator.read(owner, id), null);
+    assert.equal(copy.calls.length, 0);
+    assert.equal(copy.lookups.length, 0);
+    assert.equal((await copy.coordinator.queue.list(owner)).jobs.length, 20);
+    const saved = await f.coordinator.read(owner, id),
+      stageId = saved.stage === "generation" ? id : saved.reviewRequestId;
+    const damaged = fixture();
+    damaged.storage.data = structuredClone(f.storage.data);
+    damaged.storage.data.set(`topic-jobs:record:${stageId}`, { corrupt: true });
+    await assert.rejects(
+      damaged.coordinator.remove(owner, id, true, true),
+      /conflict/,
+    );
+    assert.ok(await damaged.coordinator.read(owner, id));
+  }
+  await approved(f);
+  const fakeIds = [];
+  for (let n = 0; n < 200; n++) {
+    const requestId = crypto.randomUUID();
+    fakeIds.push(requestId);
+    await f.coordinator.queue.enqueue(owner, {
+      requestId,
+      purpose: "book-addition",
+      modelId: "fixture",
+      requestRaw: "{}",
+      approvedPublicText: true,
+      approvedMaxMilliYen: 1000,
+      approvedQuoteDigest: "c".repeat(64),
+    });
+    if (n < 199) await f.coordinator.queue.alarm();
+  }
+  await f.coordinator.alarm();
+  assert.equal((await f.coordinator.read(owner, id)).reason, "capacity");
+  assert.equal(
+    (await f.coordinator.queue.read(owner, fakeIds.at(-1))).state,
+    "complete",
+  );
+  assert.equal(f.storage.data.has("alarm"), false);
+  await withdrawCapacityHold();
+  await f.coordinator.queue.remove(owner, fakeIds[0]);
+  await f.coordinator.resume(owner, id, true);
+  await f.coordinator.alarm();
+  assert.equal((await f.coordinator.read(owner, id)).stage, "review");
+  await f.coordinator.alarm();
+  assert.equal((await f.coordinator.read(owner, id)).reason, "capacity");
+  await withdrawCapacityHold();
+  await f.coordinator.queue.remove(owner, fakeIds[1]);
+  await f.coordinator.resume(owner, id, true);
+  await f.coordinator.alarm();
+  assert.equal((await f.coordinator.read(owner, id)).state, "ready");
+  assert.equal(f.calls.filter((input) => input.requestId === id).length, 1);
+});
+
+test("さらに新しい検証へ進んだ後の古いIDの再送は、新たな費用を発生させず現在状態へ案内する", async () => {
+  const f = fixture();
+  const run = f.settings.run;
+  let failed = 0;
+  f.settings.run = async (account, input) => {
+    if (input.purpose === "evidence-check" && failed++ < 2) {
+      f.calls.push(input);
+      const reply = { status: "rejected", draft: null, account };
+      f.ledger.set(input.requestId, reply);
+      return reply;
+    }
+    return run(account, input);
+  };
+  const c = f.restart();
+  await c.save(owner, raw);
+  await c.approve(owner, id, approval, quotes);
+  await c.alarm();
+  await c.alarm();
+  const saved = await c.read(owner, id);
+  const first = {
+    expectedRevision: saved.revision,
+    reviewRequestId: crypto.randomUUID(),
+    quote: review,
+    confirm: true,
+    approvedPublicText: true,
+  };
+  await c.reviewAgain(owner, id, first, quotes);
+  await c.alarm();
+  await c.reviewAgain(
+    owner,
+    id,
+    { ...first, reviewRequestId: crypto.randomUUID() },
+    quotes,
+  );
+  await c.alarm();
+  const ready = await c.read(owner, id);
+  assert.equal(ready.state, "ready");
+  const calls = f.calls.length;
+  await assert.rejects(c.reviewAgain(owner, id, first, quotes), /active/);
+  assert.equal(f.calls.length, calls);
+  assert.deepEqual(await c.read(owner, id), ready);
+});
+
+test("台帳へ入る前に旧モデルで拒否された検証は、新しい承認モデルで検証だけを依頼できる", async () => {
+  const f = fixture();
+  const run = f.settings.run;
+  f.settings.run = async (account, input) => {
+    if (input.purpose === "evidence-check" && input.modelId === review.modelId)
+      return { status: "unconnected", account };
+    const reply = await run(account, input);
+    if (input.purpose === "evidence-check")
+      reply.draft.invocation.model = "fixture-next";
+    f.ledger.set(input.requestId, structuredClone(reply));
+    return reply;
+  };
+  const c = f.restart();
+  await c.save(owner, raw);
+  await c.approve(owner, id, approval, quotes);
+  await c.alarm();
+  await c.alarm();
+  const before = await c.read(owner, id);
+  assert.equal(before.operation.status, "unconnected");
+  const next = { ...review, modelId: "next", model: "fixture-next" };
+  await c.reviewAgain(
+    owner,
+    id,
+    {
+      expectedRevision: before.revision,
+      reviewRequestId: crypto.randomUUID(),
+      quote: next,
+      confirm: true,
+      approvedPublicText: true,
+    },
+    [next],
+  );
+  await c.alarm();
+  assert.equal((await c.read(owner, id)).state, "ready");
+  assert.equal(
+    f.calls.filter((input) => input.purpose === "book-addition").length,
+    1,
+  );
+});

@@ -24,6 +24,8 @@ Fixed fixtures compare browser/server text, code ranges, title and language for 
 
 The optional public reader is `GET /public/documents?url=<encoded exact source URL>`; `GET /api/public/documents?url=...` returns the same stored latest version as JSON. Both support `HEAD`. These exact routes work without a login, even when the personal library requires authentication. They never acquire a source, enumerate documents, return version history, accept aliases, or change personal state. Unknown, private, unpublished and missing copies all return the same unavailable status.
 
+Internal textbook authoring may supply `versionId` to the binding-only `public-read` command to verify an approved retained edition. The same current publication permission and document lifecycle checks apply, and missing versions never trigger acquisition. Anonymous URL routes still return only the latest version.
+
 This requires `PUBLIC_DOCUMENTS_ENABLED=true`, the existing `DOCUMENTS_ENABLED=true`, `DOCUMENTS` and `DOCUMENT_ACCESS_DB` bindings, and migrations `0005_publications.sql` and `0006_publication_management.sql` after the existing document migrations. It remains disabled in the checked-in deployment configurations. The migration creates an empty `document_publications` table; it does not publish any existing copy. An operator must record an independently reviewed anonymous-delivery permission for the exact current policy generation, with an expiry and evidence. The authenticated policy editor can manage publications after migration `0006_publication_management.sql` and the administrator configuration described below. An operator can also seed an initial permission with this parameterized statement after reviewing those values:
 
 ```sql

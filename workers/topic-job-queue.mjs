@@ -51,9 +51,15 @@ const recordSchema = z
       "stored-input-unavailable",
       "access-unavailable",
     ]),
+    confirmedUnsent: z.boolean().optional(),
   })
   .strict()
   .refine((record) => record.updatedAt >= record.createdAt)
+  .refine(
+    (record) =>
+      !record.confirmedUnsent ||
+      (record.resultParts > 0 && ["held", "rejected"].includes(record.state)),
+  )
   .refine(
     (record) => (record.resultParts === 0) === (record.resultDigest === null),
   )
@@ -123,6 +129,12 @@ export class TopicJobQueue {
       if (!invalidData(error)) throw error;
       return null;
     }
+  }
+  async unreserved(tx, owner, id) {
+    return (
+      !(await this.index(tx, owner))?.ids.includes(id) &&
+      (await tx.get(key(id))) === undefined
+    );
   }
   async pending(tx, index) {
     let count = 0;
@@ -207,7 +219,7 @@ export class TopicJobQueue {
       result,
     };
   }
-  async enqueue(owner, value) {
+  async enqueue(owner, value, { onQueued } = {}) {
     if (!this.enabled) throw Error("topic-jobs-unconfigured");
     ownerSchema.parse(owner);
     const input = topicGenerationInputSchema.parse(value);
@@ -249,10 +261,12 @@ export class TopicJobQueue {
         resultParts: 0,
         resultDigest: null,
         reason: "",
+        confirmedUnsent: false,
       });
       index.ids.push(record.id);
       await tx.put(key(record.id), record);
       await tx.put(indexKey, indexSchema.parse(index));
+      if (onQueued) await onQueued(tx);
       await this.schedule(tx, index);
       return this.view(tx, record, owner);
     });
@@ -323,7 +337,7 @@ export class TopicJobQueue {
     if (ticket) await this.perform(ticket);
     return this.read(owner, id);
   }
-  async retry(owner, value) {
+  async retry(owner, value, { onQueued } = {}) {
     if (!this.enabled) throw Error("topic-jobs-unconfigured");
     ownerSchema.parse(owner);
     let input = topicGenerationInputSchema.parse(value);
@@ -391,8 +405,10 @@ export class TopicJobQueue {
         resultParts: 0,
         resultDigest: null,
         reason: "",
+        confirmedUnsent: false,
       });
       await tx.put(key(record.id), recordSchema.parse(record));
+      if (onQueued) await onQueued(tx);
       await this.schedule(tx, index);
       return this.view(tx, record, owner);
     });
@@ -404,7 +420,49 @@ export class TopicJobQueue {
       this.removeInTransaction(tx, owner, id),
     );
   }
-  async removeInTransaction(tx, owner, id) {
+  async discardUnsent(owner, id, onDiscard) {
+    ownerSchema.parse(owner);
+    id = idSchema.parse(id);
+    const previous = await this.storage.transaction(async (tx) => {
+      const index = await this.index(tx, owner);
+      if (!index?.ids.includes(id)) throw Error("topic-job-missing");
+      const record = await this.record(tx, id);
+      await this.view(tx, record, owner);
+      if (record.state !== "held" || record.confirmedUnsent !== true)
+        throw Error("topic-job-active");
+      const input = stored(
+        topicGenerationInputSchema,
+        await this.readParts(tx, id, "input", record.parts, 384000),
+      );
+      if (input.requestId !== id || (await hash(input)) !== record.digest)
+        throw Error("topic-job-invalid");
+      return { record, input };
+    });
+    const proof = stored(
+      topicGenerationReplySchema,
+      await this.lookup(owner, previous.input),
+    );
+    if (proof.account !== owner) throw Error("topic-job-owner");
+    if (
+      proof.status !== "not-found" &&
+      !(proof.status === "rejected" && proof.retryable === true)
+    )
+      throw Error("topic-job-active");
+    return this.storage.transaction(async (tx) => {
+      const record = await this.record(tx, id);
+      if (
+        record.state !== "held" ||
+        record.attempt !== previous.record.attempt ||
+        record.digest !== previous.record.digest ||
+        record.resultDigest !== previous.record.resultDigest
+      )
+        throw Error("topic-job-conflict");
+      record.state = "rejected";
+      await tx.put(key(id), recordSchema.parse(record));
+      await onDiscard(tx);
+    });
+  }
+  async removeInTransaction(tx, owner, id, { schedule = true } = {}) {
     ownerSchema.parse(owner);
     id = idSchema.parse(id);
     const index = await this.index(tx, owner);
@@ -422,7 +480,7 @@ export class TopicJobQueue {
     await tx.delete(key(id));
     index.ids = index.ids.filter((value) => value !== id);
     await tx.put(indexKey, index);
-    await this.schedule(tx, index);
+    if (schedule) await this.schedule(tx, index);
   }
   async cancel(owner, id) {
     ownerSchema.parse(owner);
@@ -562,6 +620,15 @@ export class TopicJobQueue {
           : ["complete", "rejected"].includes(record.state)
             ? ""
             : "operation-unconfirmed";
+      // not-foundの再照会でも事前拒否の証拠を保ち、新しい予約では必ずリセットする。
+      if (!ticket.recovering && result?.status === "materials-unavailable")
+        record.confirmedUnsent = true;
+      else if (
+        record.confirmedUnsent &&
+        result &&
+        result.status !== "not-found"
+      )
+        record.confirmedUnsent = false;
       record.updatedAt = Math.max(record.updatedAt, this.now());
       if (!keepRunning) record.checkAt = null;
       if (result) {
