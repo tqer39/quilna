@@ -8,7 +8,10 @@ import { bestTopicEvidence } from "./topic-evidence";
 import type { TopicEvidence } from "./topic-preparation-protocol";
 
 /** テーマから公開資料の候補を準備し、記事の抜粋や関連理由の入力を求めない。 */
-export function topicPreparationView(initialTopic = "") {
+export function topicPreparationView(
+  initialTopic = "",
+  prepared?: (topic: string, sources: TopicEvidence[]) => void,
+) {
   const root = el("details", undefined, "topic-preparation"),
     summary = el("summary", "テーマの資料を準備する"),
     notice = el("p"),
@@ -125,6 +128,19 @@ export function topicPreparationView(initialTopic = "") {
       );
       results.append(row);
     }
+    if (prepared && candidates.length)
+      results.append(
+        button("この資料で教科書を準備する", () => {
+          if (active) return;
+          try {
+            current();
+            prepared(topic, structuredClone(candidates));
+          } catch {
+            notice.textContent =
+              "ログインを確認してページを開き直してください。";
+          }
+        }),
+      );
     results.append(
       el(
         "p",

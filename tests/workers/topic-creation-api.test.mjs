@@ -233,6 +233,7 @@ for (const scenario of [
       assert.equal((await call("/__creation-stats", { owner })).responses, 0);
       const capability = await call("/api/topic-textbooks/status");
       assert.deepEqual(capability.creations, {
+        canAuthor: true,
         available: true,
         enabled: true,
       });

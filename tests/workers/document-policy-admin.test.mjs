@@ -10,8 +10,8 @@ import { createHandler } from "../../workers/http.mjs";
 
 const origin = "http://documents.test",
   url = "https://publisher.example.org/article";
-const alice = await hash("document-test:alice"),
-  bob = await hash("document-test:bob");
+const alice = await hash("better-auth:alice"),
+  bob = await hash("better-auth:bob");
 const aliasURL = url + "?ref=rss";
 const script = (
   await build({
@@ -413,7 +413,7 @@ test("session change while reading an admin request prevents dispatch", async ()
   const handler = createHandler({
     authenticate: async () =>
       ++authentications === 1
-        ? { subject: "document-test:alice", sessionId: "one" }
+        ? { subject: "better-auth:alice", sessionId: "one" }
         : null,
   });
   const response = await handler(

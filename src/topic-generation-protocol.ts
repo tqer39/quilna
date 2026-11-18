@@ -121,6 +121,7 @@ export const topicCapabilitiesSchema = object({
   csrfToken: z.string().min(20).max(100),
   quotes: z.array(topicQuoteSchema).max(40),
   creations: object({
+    canAuthor: z.boolean().optional(),
     available: z.boolean(),
     enabled: z.boolean(),
   }).optional(),

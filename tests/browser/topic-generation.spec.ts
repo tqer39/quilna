@@ -65,6 +65,7 @@ async function fixture(context: BrowserContext) {
         account,
         mode: state.connected ? "test-only" : "unconnected",
         csrfToken: "synthetic-csrf-token-for-tests",
+        creations: { available: true, enabled: false, canAuthor: true },
         quotes: state.connected
           ? [
               { ...quote, quoteDigest: state.generationQuoteDigest },

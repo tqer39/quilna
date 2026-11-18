@@ -62,6 +62,7 @@ async function fixture(context: BrowserContext) {
         account,
         mode: "unconnected",
         csrfToken: "synthetic-csrf-token-for-tests",
+        creations: { available: true, enabled: false, canAuthor: true },
         quotes: [],
         budget: {
           limitMilliYen: 500000,

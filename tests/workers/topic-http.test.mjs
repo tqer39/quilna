@@ -995,6 +995,7 @@ test("AccountがCSRF・流量を確認し、資料と保存版を照合してホ
     }),
   };
   const creations = {
+    canAuthor: async () => true,
     enabled: true,
     verifyMaterials: async (account, value) => {
       assert.equal(account, owner);
@@ -1122,3 +1123,147 @@ for (const [credentialsEnabled, flag] of [
       200,
     );
   });
+
+test("管理者以外は草案保存・承認・再予約・追加検証・再開を受け付けず、自分の控えの照会は残す", async () => {
+  const owner = await hash(ownerA.subject),
+    calls = [];
+  const creations = {
+    enabled: true,
+    canAuthor: async () => false,
+    binding: {
+      idFromName: (id) => id,
+      get: () => ({
+        fetch: async (request) => {
+          calls.push(await request.json());
+          return Response.json({ account: owner, creation: null });
+        },
+      }),
+    },
+  };
+  const core = { authorize: async () => owner };
+  for (const action of ["save", "approve", "retry", "review-again", "resume"]) {
+    const response = await handleAccount(
+      core,
+      new Request("https://account.internal/command/topic-creations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "topic-creation-" + action,
+          principal: ownerA,
+          csrf: "valid-csrf",
+          data: creationBodies[action],
+        }),
+      }),
+      null,
+      null,
+      null,
+      null,
+      creations,
+    );
+    assert.equal(response.status, 403, action);
+    assert.equal((await response.json()).status, "topic-author-forbidden");
+  }
+  assert.equal(calls.length, 0);
+  const response = await handleAccount(
+    core,
+    new Request("https://account.internal/command/topic-creations", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "topic-creation-read",
+        principal: ownerA,
+        csrf: "valid-csrf",
+        data: creationBodies.read,
+      }),
+    }),
+    null,
+    null,
+    null,
+    null,
+    creations,
+  );
+  assert.equal(response.status, 200);
+  assert.equal(calls.length, 1);
+});
+test("管理者でないセッションは従来の直接生成・資料準備・汎用ジョブの送信でも迂回できない", async () => {
+  const owner = await hash(ownerA.subject);
+  const core = {
+    authorize: async () => owner,
+    proposeTopic: async () => {
+      throw Error("呼び出してはいけない");
+    },
+  };
+  for (const action of [
+    "topic-propose",
+    "topic-prepare",
+    "topic-job-enqueue",
+    "topic-job-retry",
+    "topic-job-resume",
+  ]) {
+    const response = await handleAccount(
+      core,
+      new Request(
+        "https://account.internal" +
+          (action.startsWith("topic-job-")
+            ? "/command/topic-jobs"
+            : "/command/topic-textbooks"),
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action,
+            principal: ownerA,
+            csrf: "valid-csrf",
+            ...(action.startsWith("topic-job-")
+              ? {}
+              : { proposalEnabled: true }),
+            data: {},
+          }),
+        },
+      ),
+      null,
+      null,
+      { binding: {}, enabled: true },
+      () => {
+        throw Error("資料を照会してはいけない");
+      },
+      { canAuthor: async () => false },
+    );
+    assert.equal(response.status, 403, action);
+    assert.equal((await response.json()).status, "topic-author-forbidden");
+  }
+});
+test("管理者の確認ができないときは作成機能を無効と返し、読取用の接続は残す", async () => {
+  const owner = await hash(ownerA.subject);
+  const response = await handleAccount(
+    {
+      authorize: async () => owner,
+      topicStatus: async () => ({
+        account: owner,
+        mode: "test-only",
+        quotes: [],
+      }),
+      session: async () => ({ csrfToken: "synthetic-csrf-token-for-tests" }),
+    },
+    new Request("https://account.internal/command/topic-textbooks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "topic-status",
+        principal: ownerA,
+        proposalEnabled: true,
+      }),
+    }),
+    null,
+    null,
+    null,
+    null,
+    { binding: {}, enabled: true, canAuthor: async () => false },
+  );
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).creations, {
+    available: true,
+    enabled: false,
+    canAuthor: false,
+  });
+});

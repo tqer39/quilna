@@ -35,7 +35,7 @@ export class AccountVault extends DurableObject {
       env.TOPIC_TEXTBOOK_CREATIONS_ENABLED === "true";
     this.verifyCreationMaterials = async (owner, raw) => {
       if (!(await this.canDispatchTopic(owner)))
-        throw Error("topic-creation-owner");
+        throw Error("topic-author-forbidden");
       return verifyTopicMaterials(raw, env);
     };
     this.canDispatchCreation = async (owner, verifyMaterials) => {
@@ -48,6 +48,7 @@ export class AccountVault extends DurableObject {
       }
     };
     this.topicCreations = {
+      canAuthor: this.canDispatchTopic,
       binding: env.TOPIC_TEXTBOOK_CREATIONS,
       enabled: this.topicCreationsEnabled,
       verifyMaterials: this.verifyCreationMaterials,

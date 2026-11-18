@@ -1655,3 +1655,35 @@ header {
   padding-inline-start: 0.8rem;
   margin-block: 0.7rem;
 }
+
+.topic-creation {
+  border-block: 1px solid var(--viewer-line, #d5ddd7);
+  padding-block: 1.5rem;
+  margin-block: 1.5rem;
+  color: var(--viewer-text, #182d29);
+  overflow-wrap: anywhere;
+}
+.topic-creation h2 { font-size: 1.5rem; margin-block: 0 0.75rem; }
+.topic-creation h3 { font-size: 1.2rem; margin-block: 1rem 0.5rem; }
+.topic-creation > p, .topic-creation section > p { max-width: 44rem; }
+.topic-creation form { display: grid; gap: 0.75rem; max-width: 42rem; }
+.topic-creation textarea, .topic-creation select {
+  min-width: 0; width: 100%; max-width: 100%; font: inherit;
+  padding: 0.75rem; box-sizing: border-box;
+  background: var(--viewer-surface, #fff); color: inherit;
+  border: 1px solid var(--viewer-line, #d5ddd7); border-radius: 6px;
+}
+.topic-creation button, .topic-creation summary { min-height: 44px; max-width: 100%; white-space: normal; }
+.topic-creation summary { cursor: pointer; padding-block: 0.65rem; }
+.topic-creation button:focus-visible, .topic-creation summary:focus-visible,
+.topic-creation input:focus-visible, .topic-creation textarea:focus-visible,
+.topic-creation select:focus-visible { outline: 3px solid var(--viewer-accent, #21685b); outline-offset: 3px; }
+.topic-creation input[type="checkbox"] { width: 1.25rem; height: 1.25rem; vertical-align: middle; margin-inline-end: 0.6rem; }
+.topic-creation label:has(input[type="checkbox"]) { padding-block: 0.7rem; line-height: 1.8; }
+.topic-creation-actions { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-block: 1rem; }
+.topic-creation-cost { font-size: 1.15rem; font-weight: 650; }
+.topic-creation-confirm { flex-basis: 100%; padding: 1rem; border-inline-start: 3px solid var(--viewer-accent, #21685b); background: var(--viewer-surface, #fff); }
+.topic-creation-confirm button { margin-inline-end: 0.75rem; }
+.topic-creation ol { padding: 0; list-style: none; }
+.topic-creation ol > li { border-block-start: 1px solid var(--viewer-line, #d5ddd7); padding-block: 1rem; }
+.topic-creation blockquote { white-space: pre-wrap; margin-inline: 0.75rem; }

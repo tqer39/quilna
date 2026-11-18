@@ -1643,3 +1643,26 @@
 .rss-location-bar[data-screen="article"] .rss-reading-progress {
   margin: 0;
 }
+
+:root[data-reader-design] .shared-textbook-page {
+  color: var(--viewer-text);
+  font-family: system-ui, -apple-system, "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;
+  line-height: 1.75;
+}
+:root[data-reader-design] .shared-textbook-page header {
+  background: var(--viewer-surface);
+  border-color: var(--viewer-line);
+}
+:root[data-reader-design] .shared-textbook-page h1 {
+  font-family: inherit;
+  font-size: 1.8rem;
+}
+:root[data-reader-design] .shared-textbook-page button,
+:root[data-reader-design] .shared-textbook-page input {
+  color: var(--viewer-text);
+  background: var(--viewer-surface);
+  border-color: var(--viewer-line);
+}
+:root[data-reader-design] .shared-textbook-page a { color: var(--viewer-accent); }
+:root[data-reader-design] .shared-textbook-page main { font-family: var(--viewer-reading-font); }
+:root[data-reader-design] .shared-textbook-actions { background: var(--viewer-bg); }

@@ -43,7 +43,10 @@ async function fixture(
       ACCOUNTS: { className: "AccountVault", useSQLite: true },
       DOCUMENTS: { className: "SourceDocument", useSQLite: true },
     },
-    d1Databases: { DOCUMENT_ACCESS_DB: "document-access" },
+    d1Databases: {
+      DOCUMENT_ACCESS_DB: "document-access",
+      AUTH_DB: "document-auth",
+    },
     ratelimits:
       publicEnabled && publicRateLimit !== null
         ? {
@@ -57,6 +60,7 @@ async function fixture(
       APP_ORIGIN: origin,
       DOCUMENTS_ENABLED: String(enabled),
       PUBLIC_DOCUMENTS_ENABLED: String(publicEnabled),
+      GOOGLE_ALLOWED_EMAIL: "alice@example.test",
     },
     outboundService: async (request) => {
       calls++;
@@ -73,6 +77,19 @@ async function fixture(
     },
   };
   let mf = new Miniflare(convertV4MiniflareOptions(options));
+  const auth = await mf.getD1Database("AUTH_DB");
+  await auth.exec(
+    (await readFile("migrations/auth/0001_better_auth.sql", "utf8")).replaceAll(
+      "\n",
+      " ",
+    ),
+  );
+  await auth
+    .prepare(
+      'INSERT INTO "user" (id,name,email,"emailVerified","createdAt","updatedAt") VALUES (?,?,?,?,?,?)',
+    )
+    .bind("alice", "Admin", "alice@example.test", 1, 0, 0)
+    .run();
   t.after(async () => {
     await mf.dispose();
     await rm(dir, { recursive: true, force: true });
@@ -141,7 +158,7 @@ async function fixture(
         .prepare(
           "INSERT INTO document_members(policy_id,owner_hash) VALUES(?,?)",
         )
-        .bind(policyId, await hash(`document-test:${user}`))
+        .bind(policyId, await hash(`better-auth:${user}`))
         .run();
   }
   return {
@@ -161,7 +178,7 @@ async function fixture(
             "X-Test-Principal": "alice",
             "Content-Type": "application/json",
             "X-CSRF-Token": csrf,
-            "X-Library-Account": account ?? (await hash("document-test:alice")),
+            "X-Library-Account": account ?? (await hash("better-auth:alice")),
             ...headers,
           },
           body: JSON.stringify(body),
@@ -576,7 +593,7 @@ test(
     const db = await f.db();
     await db
       .prepare("INSERT INTO document_members VALUES(?,?)")
-      .bind(policyId, await hash("document-test:bob"))
+      .bind(policyId, await hash("better-auth:bob"))
       .run();
     const b = await f.call("acquire", { user: "bob", body });
     assert.deepEqual(b.value.version, a.value.version);
@@ -633,7 +650,7 @@ test(
     const db = await f.db();
     await db
       .prepare("DELETE FROM document_members WHERE owner_hash=?")
-      .bind(await hash("document-test:alice"))
+      .bind(await hash("better-auth:alice"))
       .run();
     release();
     const denied = await request;

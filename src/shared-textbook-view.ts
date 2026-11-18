@@ -1,6 +1,9 @@
 import { topicGenerationView } from "./topic-generation-view";
 import { topicJobView } from "./topic-job-view";
-import { topicPreparationView } from "./topic-preparation-view";
+import { topicCreationView } from "./topic-creation-view";
+import { applyReaderDesign } from "./reader-design";
+import "./reader-design.css";
+import "./reader-experience.css";
 import { textbookNoticeView } from "./textbook-notice-view";
 import { hasAccountLibrary } from "./library-context";
 import { button, el } from "./ui";
@@ -163,6 +166,7 @@ function download(book: SharedTextbook) {
 
 /** Connect local file review, an independent imported library and recipient-only answers. */
 export async function sharedTextbookView(root: HTMLElement) {
+  applyReaderDesign();
   const term =
     new URL(location.href).searchParams.get("term")?.slice(0, 500).trim() ?? "";
   document.title = "教材 | Quilna";
@@ -211,14 +215,32 @@ export async function sharedTextbookView(root: HTMLElement) {
     input,
     preview,
   );
-  library.append(
-    list,
-    listWarning,
-    topicPreparationView(term),
+  const legacy = el("section");
+  legacy.hidden = true;
+  legacy.append(
+    el("h3", "以前の試作と処理記録"),
+    el(
+      "p",
+      "以前の試作で保存した依頼や、段階ごとの記録はこちらから確認できます。新しい教科書は上の「教科書を作る」から準備してください。",
+    ),
     topicJobView(),
     topicGenerationView(async (id) => {
       await showList(id);
     }),
+  );
+  library.append(
+    list,
+    listWarning,
+    topicCreationView(
+      term,
+      async (id) => {
+        await showList(id);
+      },
+      (allowed) => {
+        legacy.hidden = !allowed;
+      },
+    ),
+    legacy,
     importTools,
     notice,
   );

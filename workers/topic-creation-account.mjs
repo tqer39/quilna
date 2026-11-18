@@ -33,6 +33,11 @@ export async function handleTopicCreationAccount(core, request, creations) {
       countRate: !["read", "list"].includes(action),
     });
     if (
+      (action === "save" || topicCreationDispatches.has(action)) &&
+      !(await creations?.canAuthor?.(owner))
+    )
+      throw Error("topic-author-forbidden");
+    if (
       !creations?.binding ||
       (topicCreationDispatches.has(action) && !creations.enabled)
     )
@@ -94,6 +99,7 @@ export async function handleTopicCreationAccount(core, request, creations) {
       "csrf-invalid": 403,
       "owner-mismatch": 403,
       "topic-creation-owner": 403,
+      "topic-author-forbidden": 403,
       "rate-limit": 429,
       "topic-creation-conflict": 409,
       "topic-creation-missing": 404,

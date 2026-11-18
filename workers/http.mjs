@@ -536,6 +536,13 @@ export async function handleAccount(
       command.action.startsWith("topic-creation-")
     )
       throw Error("invalid-command");
+    if (
+      creations &&
+      (["topic-propose", "topic-prepare"].includes(command.action) ||
+        (job && topicJobDispatches.has(jobAction))) &&
+      !(await creations.canAuthor?.(owner))
+    )
+      return json(403, { status: "topic-author-forbidden", account: owner });
     if (job) {
       if (
         !jobs?.binding ||
@@ -599,6 +606,7 @@ export async function handleAccount(
       value = await core.propose(owner, command.data);
     else if (command.action === "topic-status") {
       value = await core.topicStatus(owner);
+      const canAuthor = !!(await creations?.canAuthor?.(owner));
       if (command.proposalEnabled !== true)
         value = { ...value, mode: "unconnected", quotes: [] };
       value = {
@@ -606,10 +614,12 @@ export async function handleAccount(
         ...(creations
           ? {
               creations: {
+                canAuthor,
                 available: !!creations.binding,
                 enabled:
                   !!creations.binding &&
                   !!creations.enabled &&
+                  canAuthor &&
                   command.proposalEnabled === true,
               },
             }
@@ -646,7 +656,10 @@ export async function handleAccount(
         !command.data?.approvedQuoteDigest
       )
         return json(400, { status: "cost-unapproved", account: owner });
-      value = await core.proposeTopic(owner, command.data);
+      value = await core.proposeTopic(owner, command.data, {
+        authorize: () =>
+          creations ? creations.canAuthor(owner) : Promise.resolve(true),
+      });
     } else if (command.action === "topic-lookup")
       value = await core.lookupTopic(owner, command.data);
     else
