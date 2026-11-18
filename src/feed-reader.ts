@@ -4,6 +4,12 @@ import {
   librarySignedOut,
 } from "./library-context";
 import { ReaderLocation } from "./reader-location";
+import { QuickDictionary } from "./quick-dictionary";
+import { HeadlinePlayer } from "./headline-player";
+import {
+  captureReaderSelection,
+  restoreReaderSelection,
+} from "./reader-selection";
 import {
   readReaderRoute,
   readerRouteURL,
@@ -89,6 +95,7 @@ import { AuthClient } from "./auth-client";
 import { button, el } from "./ui";
 import { readerDesignSettings } from "./reader-design";
 import "./reader-design.css";
+import "./reader-experience.css";
 import { parseFeed, type Feed, type FeedArticle } from "./feed-parser";
 import { discoverFeeds, sourceURL, type FeedCandidate } from "./feed-discovery";
 import {
@@ -212,6 +219,7 @@ export async function feedReader(root: HTMLElement) {
   let speechRate = 1;
   let readerIdentity: string | null = null;
   const speech = new ArticleSpeech(() => render());
+  const headlinePlayer = new HeadlinePlayer();
   const documentHistory = new SourceDocumentView(
     async () => {
       const article = articles.find((a) => a.id === selected);
@@ -228,6 +236,7 @@ export async function feedReader(root: HTMLElement) {
     translationStatus = "";
     translatedView = false;
     speech.stop(false);
+    headlinePlayer.stop();
   }
   window.addEventListener("pagehide", cancelReading);
   window.addEventListener("pagehide", () => tagBatchController?.abort());
@@ -248,6 +257,12 @@ export async function feedReader(root: HTMLElement) {
   const brand = el("a", "Quilna", "brand");
   brand.href = "/?view=feeds";
   const actions = el("div", undefined, "rss-header-actions");
+  const dictionary = new QuickDictionary();
+  const dictionaryOpen = button("辞書", () => dictionary.open());
+  dictionaryOpen.setAttribute("aria-label", "ことばの辞書を開く");
+  dictionaryOpen.addEventListener("pointerdown", () =>
+    dictionary.captureSelection(),
+  );
   const lesson = el("a", "デモ教材を開く", "rss-text-link");
   lesson.href = "/?view=lesson#read";
   const settings = el("dialog", undefined, "rss-settings");
@@ -510,7 +525,7 @@ export async function feedReader(root: HTMLElement) {
   settingsBody.append(papers);
   const textbooksLink = el("a", "教材", "rss-text-link");
   textbooksLink.href = "/?view=textbooks";
-  actions.append(skipToArticles, textbooksLink, settingsOpen);
+  actions.append(skipToArticles, dictionaryOpen, textbooksLink, settingsOpen);
   rootHeader.append(brand, actions);
   const locationNavigation = new ReaderLocation({
     list: (next) => {
@@ -578,7 +593,7 @@ export async function feedReader(root: HTMLElement) {
   listHeading.tabIndex = -1;
   const listLede = el(
     "p",
-    "記事のタイトルを押すと本文を読めます。あとで読みたい記事は保存しておきましょう。",
+    "見出しから選んで、気になる記事はあとで読むへ。わからない言葉は辞書で、じっくり学ぶなら教科書で。",
     "rss-lede",
   );
   const highlights = new ArticleHighlightView(
@@ -670,6 +685,11 @@ export async function feedReader(root: HTMLElement) {
   returnToList.id = "rss-return-to-list";
   readerNavigation.append(returnToList, showOutline, focusToggle);
   const listView = new ArticleListView({
+    save: (id) => {
+      const position = articlePositions.get(id);
+      const article = position === undefined ? undefined : articles[position];
+      if (article) void change(article, "saved", !article.saved);
+    },
     open: (id) => {
       const position = articlePositions.get(id);
       if (position !== undefined) {
@@ -744,6 +764,7 @@ export async function feedReader(root: HTMLElement) {
     errors,
     settings,
     importDialog,
+    dictionary.root,
   );
   importDialog.addEventListener("close", () => {
     if (importDialog.open) return;
@@ -2249,6 +2270,9 @@ export async function feedReader(root: HTMLElement) {
       : "公開日時なし";
   function render() {
     if (composing) return;
+    const articleSelection = captureReaderSelection(
+      main.querySelector(".rss-source-text"),
+    );
     renderCloud();
     const selectedPosition = selected
       ? articlePositions.get(selected)
@@ -2814,6 +2838,11 @@ export async function feedReader(root: HTMLElement) {
           ),
         );
       const sourceText = el("div", undefined, "rss-source-text");
+      sourceText.dataset.selectionContext = JSON.stringify([
+        article.id,
+        displayTranslation ? "translation" : "original",
+        displayTranslation ? displayTranslation.targetLanguage : "",
+      ]);
       body.append(sourceText);
       if (hasText) {
         const readingView = {
@@ -2911,6 +2940,7 @@ export async function feedReader(root: HTMLElement) {
         main.append(
           listHeading,
           listLede,
+          headlinePlayer.root,
           searchLabel,
           searchField,
           tagFilterLabel,
@@ -2970,7 +3000,9 @@ export async function feedReader(root: HTMLElement) {
         pageSize,
       });
       if (!preparing && !connecting) pageNumber = result.page;
+      headlinePlayer.update(result.items);
       listView.update({
+        saving: changing,
         items: result.items,
         metadata: (item) =>
           `${feeds.find((f) => f.url === item.feedUrl)?.title ?? "取り込んだ記事"} · ${date(item.published)}${item.saved ? " · 保存済み" : ""}${item.read ? " · 既読" : " · 未読"}${hasArticleUpdate(item) ? " · 本文の更新あり" : item.bodyUpdate?.error ? " · 更新確認に失敗" : ""}`,
@@ -3032,6 +3064,10 @@ export async function feedReader(root: HTMLElement) {
       .querySelectorAll<HTMLAnchorElement>("a[data-reader-target]")
       .forEach(updateReadingLink);
     revealPendingAnchor();
+    restoreReaderSelection(
+      articleSelection,
+      main.querySelector(".rss-source-text"),
+    );
   }
   channel?.addEventListener("message", (event) => {
     const id =

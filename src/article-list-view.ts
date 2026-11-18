@@ -1,7 +1,7 @@
 import { siteIcon } from "./link-preview";
 import { readerIcon } from "./reader-icons";
 import { articleReadingTime } from "./reading-time";
-import { tagSummary } from "./article-tags";
+import { effectiveTags, tagSummary } from "./article-tags";
 import { isLinkOnly } from "./article-content";
 import type { FeedArticle } from "./feed-parser";
 import { button, el } from "./ui";
@@ -51,6 +51,7 @@ export class ArticleListView {
   constructor(
     private readonly actions: {
       open: (id: string) => void;
+      save: (id: string) => void;
       classify: () => void;
       cancel: () => void;
       retry: () => void;
@@ -82,7 +83,10 @@ export class ArticleListView {
       durationText: el("span"),
       title: el("button", undefined, "rss-article-title"),
       excerpt: el("p", undefined, "rss-excerpt"),
-      tags: el("p", undefined, "rss-tag-summary"),
+      tags: el("details", undefined, "rss-tag-summary"),
+      tagLabel: el("summary"),
+      tagDetails: el("p"),
+      save: el("button", "あとで読む", "rss-quick-save"),
     };
     row.duration.append(readerIcon("clock"), row.durationText);
     row.meta.append(
@@ -92,9 +96,15 @@ export class ArticleListView {
       row.duration,
     );
     row.title.type = "button";
+    row.save.type = "button";
+    row.tags.append(row.tagLabel, row.tagDetails);
+    row.save.addEventListener("click", () => {
+      if (row.save.getAttribute("aria-disabled") !== "true")
+        this.actions.save(id);
+    });
     // Resolve the current record in the owner on click, not a captured snapshot.
     row.title.addEventListener("click", () => this.actions.open(id));
-    row.node.append(row.meta, row.title, row.excerpt, row.tags);
+    row.node.append(row.title, row.meta, row.excerpt, row.tags, row.save);
     return row;
   }
 
@@ -134,10 +144,11 @@ export class ArticleListView {
     previousDisabled: boolean;
     nextDisabled: boolean;
     empty: string;
+    saving: ReadonlySet<string>;
   }) {
     const focused = document.activeElement;
     const previousIndex = Array.from(this.rows.values()).findIndex(
-      (row) => row.title === focused,
+      (row) => !!focused && row.node.contains(focused),
     );
     const rows = new Map<string, ReturnType<ArticleListView["createRow"]>>();
     for (const article of state.items) {
@@ -157,7 +168,26 @@ export class ArticleListView {
           (isLinkOnly(article.body) ? "本文なし・リンク情報のみ" : article.body)
         ).slice(0, 160),
       );
-      text(row.tags, tagSummary(article));
+      const tags = effectiveTags(article);
+      text(
+        row.tagLabel,
+        tags.length
+          ? `タグ：${tags.slice(0, 3).join("・")}${tags.length > 3 ? ` ほか${tags.length - 3}件` : ""}`
+          : "タグを確認",
+      );
+      text(row.tagDetails, tagSummary(article));
+      text(row.save, article.saved ? "保存済み" : "あとで読む");
+      row.save.setAttribute("aria-pressed", String(article.saved));
+      row.save.setAttribute(
+        "aria-label",
+        `${article.saved ? "あとで読むから外す" : "あとで読むに保存"}：${article.content?.title || article.title}`,
+      );
+      // 書き込み中もフォーカスを保ち、同じ操作の重複だけを防ぐ。
+      row.save.setAttribute(
+        "aria-disabled",
+        String(state.saving.has(article.id)),
+      );
+      row.save.setAttribute("aria-busy", String(state.saving.has(article.id)));
       rows.set(article.id, row);
     }
     children(

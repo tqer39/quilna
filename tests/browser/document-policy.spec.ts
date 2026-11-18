@@ -4,7 +4,11 @@ import {
   changeLifecycle,
 } from "../../src/document-lifecycle.mjs";
 import { test, expect, type Page } from "@playwright/test";
-import type { DocumentPolicy } from "../../src/document-policy-client";
+import type {
+  DocumentPolicy,
+  PublicationRecord,
+  PublicationHistory,
+} from "../../src/document-policy-client";
 const account = "a".repeat(64),
   other = "b".repeat(64),
   url = "https://publisher.example.org/article";
@@ -46,6 +50,10 @@ async function fixture(page: Page, initial: DocumentPolicy | null = null) {
     history: initial ? [structuredClone(initial)] : ([] as DocumentPolicy[]),
     enabled: true,
     account,
+    publicationsEnabled: false,
+    publication: null as PublicationRecord | null,
+    publicationHistory: [] as PublicationHistory[],
+    publicationSaves: 0,
     mode: "ok",
     hold: null as Promise<void> | null,
     saves: 0,
@@ -62,7 +70,11 @@ async function fixture(page: Page, initial: DocumentPolicy | null = null) {
     if (action === "status") {
       state.statuses++;
       return r.fulfill({
-        json: { account: state.account, enabled: state.enabled },
+        json: {
+          account: state.account,
+          enabled: state.enabled,
+          publicationsEnabled: state.publicationsEnabled,
+        },
       });
     }
     expect(r.request().headers()["x-document-account"]).toBe(account);
@@ -70,6 +82,55 @@ async function fixture(page: Page, initial: DocumentPolicy | null = null) {
       "synthetic-csrf-token-for-policy",
     );
     const body = r.request().postDataJSON();
+    if (action.startsWith("publication-")) {
+      const p = state.policy!;
+      const current = () => ({
+        id: p.id,
+        policyRevision: p.policyRevision,
+        managementRevision: p.managementRevision,
+        policyEnabled: p.enabled,
+        policyExpires: p.expires,
+        publication: state.publication,
+      });
+      expect(body.id).toBe(p.id);
+      if (action === "publication-save") {
+        state.publicationSaves++;
+        if (state.mode === "conflict")
+          return r.fulfill({
+            status: 409,
+            json: { account, status: "document-conflict" },
+          });
+        expect(body.expectedPolicyRevision).toBe(p.policyRevision);
+        expect(body.expectedManagementRevision).toBe(p.managementRevision);
+        expect(body.expectedRevision).toBe(state.publication?.revision ?? 0);
+        state.publication = {
+          policyRevision: p.policyRevision,
+          enabled: body.enabled,
+          expires: body.expires,
+          evidence: body.evidence,
+          revision: body.expectedRevision + 1,
+          actor: account,
+          updated: Date.now(),
+        };
+        const { updated, ...record } = state.publication;
+        state.publicationHistory.unshift({
+          ...record,
+          recorded: updated,
+          kind: body.expectedRevision ? "update" : "create",
+        });
+        if (state.mode === "lost") return r.abort("failed");
+        if (state.mode === "logout") state.account = other;
+      }
+      return r.fulfill({
+        json: {
+          account,
+          state: current(),
+          ...(action === "publication-history"
+            ? { entries: state.publicationHistory, before: null }
+            : {}),
+        },
+      });
+    }
     if (
       ["document-preview", "document-change", "document-reconcile"].includes(
         action,
@@ -258,6 +319,203 @@ async function preview(root: ReturnType<Page["locator"]>) {
     .click();
   await expect(root.locator(".rss-policy-review")).toBeVisible();
 }
+test("一般公開は範囲と根拠を確認して保存し、履歴を見るだけでは設定を変えない", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 320, height: 844 });
+  const { state, root } = await fixture(page, saved());
+  state.publicationsEnabled = true;
+  await edit(root);
+  const publication = root.locator('details[aria-label="一般公開の許可"]');
+  await publication.locator("summary").click();
+  expect(state.publicationSaves).toBe(0);
+  await publication
+    .getByRole("button", { name: "公開設定を確認", exact: true })
+    .click();
+  await expect(publication).toContainText("一般公開の許可は登録されていません");
+  const enabled = publication.getByLabel(
+    "この出典の記事を誰でも読めるようにする",
+    { exact: true },
+  );
+  await enabled.check();
+  await publication
+    .getByLabel("一般公開してよい根拠", { exact: true })
+    .fill("Synthetic evidence allowing anonymous fixture delivery");
+  await publication
+    .getByRole("button", { name: "公開の変更内容を確認", exact: true })
+    .click();
+  await expect(publication).toContainText("確認も必要です");
+  await publication
+    .getByLabel("この出典の原文を一般公開できることを確認しました", {
+      exact: true,
+    })
+    .check();
+  await publication
+    .getByRole("button", { name: "公開の変更内容を確認", exact: true })
+    .click();
+  await expect(publication).toContainText("ログインしていない人も読める");
+  expect(state.publicationSaves).toBe(0);
+  const save = publication.getByRole("button", {
+    name: "この公開設定を保存",
+    exact: true,
+  });
+  await save.focus();
+  await save.press("Enter");
+  await expect(publication).toContainText("公開設定を保存しました");
+  expect(state.publicationSaves).toBe(1);
+  await expect(
+    publication.getByRole("button", { name: "公開設定を確認", exact: true }),
+  ).toBeFocused();
+  await expect(
+    publication.getByRole("link", { name: "公開ページを開く" }),
+  ).toHaveAttribute(
+    "href",
+    new URL("/public/documents?url=" + encodeURIComponent(url), page.url())
+      .href,
+  );
+  await enabled.uncheck();
+  await publication
+    .getByRole("button", { name: "公開の変更内容を確認", exact: true })
+    .click();
+  await publication
+    .getByRole("button", { name: "この公開設定を保存", exact: true })
+    .click();
+  await expect(publication).toContainText("現在の公開許可は無効です");
+  expect(state.publicationSaves).toBe(2);
+  await publication
+    .getByRole("button", { name: "一般公開の履歴を確認" })
+    .click();
+  await expect(publication).toContainText("一般公開の変更履歴");
+  expect(state.publicationSaves).toBe(2);
+  await expect(enabled).not.toBeChecked();
+  expect(await publication.evaluate((e) => e.scrollWidth > innerWidth)).toBe(
+    false,
+  );
+});
+
+test("一般公開の保存応答が失われても再送せず、再照会後に下書きを明示的に更新する", async ({
+  page,
+}) => {
+  const { state, root } = await fixture(page, saved());
+  state.publicationsEnabled = true;
+  await edit(root);
+  const publication = root.locator('details[aria-label="一般公開の許可"]');
+  await publication.locator("summary").click();
+  await publication
+    .getByRole("button", { name: "公開設定を確認", exact: true })
+    .click();
+  await publication
+    .getByLabel("この出典の記事を誰でも読めるようにする", { exact: true })
+    .check();
+  const reason = publication.getByLabel("一般公開してよい根拠", {
+    exact: true,
+  });
+  const text = "Synthetic approval retained across uncertain response";
+  await reason.fill(text);
+  await publication
+    .getByLabel("この出典の原文を一般公開できることを確認しました", {
+      exact: true,
+    })
+    .check();
+  await publication
+    .getByRole("button", { name: "公開の変更内容を確認", exact: true })
+    .click();
+  state.mode = "lost";
+  await publication
+    .getByRole("button", { name: "この公開設定を保存", exact: true })
+    .click();
+  await expect(publication).toContainText("自動では再送しません");
+  expect(state.publicationSaves).toBe(1);
+  await expect(reason).toHaveValue(text);
+  await expect(publication).toHaveAttribute("data-publication-pending", "true");
+  await root
+    .getByLabel("本文を共有できる根拠", { exact: true })
+    .fill("Synthetic changed source permission");
+  await preview(root);
+  await root
+    .getByRole("button", { name: "この内容を保存", exact: true })
+    .click();
+  await expect(root.getByRole("status")).toContainText(
+    "公開設定の保存結果を先に確認",
+  );
+  await expect(reason).toHaveValue(text);
+  expect(state.saves).toBe(0);
+  state.mode = "ok";
+  await publication
+    .getByRole("button", { name: "公開設定を確認", exact: true })
+    .click();
+  await expect(publication).toContainText("入力中の内容は保持しています");
+  await expect(reason).toHaveValue(text);
+  await expect(publication).toHaveAttribute(
+    "data-publication-pending",
+    "false",
+  );
+  await publication
+    .getByRole("button", { name: "この公開設定で編集し直す" })
+    .click();
+  await expect(publication).toHaveAttribute("data-publication-dirty", "false");
+  expect(state.publicationSaves).toBe(1);
+  expect(state.publication!.enabled).toBe(true);
+});
+
+test("共有条件の新しい世代は公開を引き継がず、保存中のログイン変更では下書きを隠す", async ({
+  page,
+}) => {
+  const policy = { ...saved(), policyRevision: 2, managementRevision: 2 };
+  const { state, root } = await fixture(page, policy);
+  state.publicationsEnabled = true;
+  state.publication = {
+    policyRevision: 1,
+    enabled: true,
+    expires: policy.expires,
+    evidence: "Synthetic old-generation publication",
+    revision: 1,
+    actor: null,
+    updated: 0,
+  };
+  await edit(root);
+  const publication = root.locator('details[aria-label="一般公開の許可"]');
+  await publication.locator("summary").click();
+  await publication
+    .getByRole("button", { name: "公開設定を確認", exact: true })
+    .click();
+  await expect(publication).toContainText("現在の公開許可は無効です");
+  const enabled = publication.getByLabel(
+    "この出典の記事を誰でも読めるようにする",
+    { exact: true },
+  );
+  await expect(enabled).not.toBeChecked();
+  await enabled.check();
+  await publication
+    .getByLabel("この出典の原文を一般公開できることを確認しました", {
+      exact: true,
+    })
+    .check();
+  await publication
+    .getByRole("button", { name: "公開の変更内容を確認", exact: true })
+    .click();
+  state.mode = "logout";
+  await publication
+    .getByRole("button", { name: "この公開設定を保存", exact: true })
+    .click();
+  await expect(root.getByRole("status")).toContainText(
+    "管理者のログインを確認できません",
+  );
+  await expect(
+    root.getByLabel("出典の記事URL", { exact: true }),
+  ).not.toBeVisible();
+  expect(state.publicationSaves).toBe(1);
+  state.account = account;
+  state.mode = "ok";
+  await connect(root);
+  await expect(publication).toHaveAttribute("data-publication-pending", "true");
+  await publication
+    .getByRole("button", { name: "公開設定を確認", exact: true })
+    .click();
+  await expect(publication).toContainText("入力中の内容は保持しています");
+  expect(state.publicationSaves).toBe(1);
+});
+
 for (const design of ["studio", "editorial", "focus"]) {
   test(`${design} creates a reviewed permission and alias at narrow width without uploading personal records`, async ({
     page,

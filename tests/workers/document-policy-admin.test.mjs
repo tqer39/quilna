@@ -30,7 +30,10 @@ const script = (
  * migration. Return authenticated commands, DB access, fetch counts and restart;
  * the test after hook disposes the Worker and removes its temporary storage.
  */
-async function fixture(t, { enabled = true, beforeMigration, outbound } = {}) {
+async function fixture(
+  t,
+  { enabled = true, publicEnabled = true, beforeMigration, outbound } = {},
+) {
   const dir = await mkdtemp(join(tmpdir(), "quilna-policy-"));
   let fetches = 0;
   const options = convertV4MiniflareOptions({
@@ -47,6 +50,7 @@ async function fixture(t, { enabled = true, beforeMigration, outbound } = {}) {
     bindings: {
       APP_ORIGIN: origin,
       DOCUMENTS_ENABLED: "true",
+      PUBLIC_DOCUMENTS_ENABLED: String(publicEnabled),
       DOCUMENT_ADMIN_ENABLED: String(enabled),
       DOCUMENT_ADMIN_OWNER_HASH: alice,
     },
@@ -75,6 +79,8 @@ async function fixture(t, { enabled = true, beforeMigration, outbound } = {}) {
     "0002_source_aliases.sql",
     "0003_policy_management.sql",
     "0004_policy_history.sql",
+    "0005_publications.sql",
+    "0006_publication_management.sql",
   ]) {
     if (name === "0003_policy_management.sql" && beforeMigration)
       await beforeMigration(await db());
@@ -124,6 +130,11 @@ async function fixture(t, { enabled = true, beforeMigration, outbound } = {}) {
     call,
     db,
     fetches: () => fetches,
+    publicRead: (headers = {}) =>
+      mf.dispatchFetch(
+        origin + "/api/public/documents?url=" + encodeURIComponent(url),
+        { headers },
+      ),
     restart: async () => {
       await mf.dispose();
       mf = new Miniflare(options);
@@ -657,6 +668,177 @@ test("first edit of a legacy policy retains an honestly labelled baseline; histo
   );
 });
 
+test("公開許可の管理は認証・世代・競合・期限を確認し、操作履歴と同時に保存する", async (t) => {
+  const f = await fixture(t),
+    p = await create(f);
+  const unavailable = await fixture(t, { publicEnabled: false });
+  assert.equal(
+    (await unavailable.call("admin-status")).value.publicationsEnabled,
+    false,
+  );
+  assert.equal(
+    (await unavailable.call("admin-publication-read", { id: p.id })).status,
+    503,
+  );
+  const read = await f.call("admin-publication-read", { id: p.id });
+  assert.equal(read.status, 200);
+  assert.equal(read.value.state.publication, null);
+  const command = {
+    id: p.id,
+    expectedPolicyRevision: p.policyRevision,
+    expectedManagementRevision: p.managementRevision,
+    expectedRevision: 0,
+    enabled: true,
+    expires: p.expires - 60000,
+    evidence: "Synthetic permission for anonymous fixture delivery",
+  };
+  assert.equal(
+    (await f.call("admin-publication-save", command, { user: "bob" })).status,
+    404,
+  );
+  assert.equal(
+    (await f.call("admin-publication-save", command, { csrf: "bad" })).status,
+    403,
+  );
+  assert.equal(
+    (
+      await f.call("admin-publication-save", {
+        ...command,
+        expires: p.expires + 1,
+      })
+    ).status,
+    409,
+  );
+  assert.equal(
+    (await f.call("admin-publication-save", { ...command, evidence: " " }))
+      .status,
+    400,
+  );
+  assert.equal(
+    (await f.call("admin-publication-save", { ...command, actor: bob })).status,
+    400,
+  );
+  const edits = await Promise.all([
+    f.call("admin-publication-save", command),
+    f.call("admin-publication-save", command),
+  ]);
+  assert.deepEqual(edits.map((r) => r.status).sort(), [200, 409]);
+  const state = edits.find((r) => r.status === 200).value.state;
+  assert.equal(state.publication.revision, 1);
+  assert.equal(state.publication.actor, alice);
+  await f.call("acquire", { url, audience: "shared" });
+  assert.equal((await f.publicRead()).status, 200);
+  const db = await f.db();
+  await db.exec(
+    "CREATE TRIGGER fail_publication_audit BEFORE INSERT ON document_publication_history WHEN NEW.revision=2 BEGIN SELECT RAISE(ABORT,'synthetic-full'); END;",
+  );
+  assert.equal(
+    (
+      await f.call("admin-publication-save", {
+        ...command,
+        expectedRevision: 1,
+        enabled: false,
+      })
+    ).status,
+    502,
+  );
+  assert.equal((await f.publicRead()).status, 200);
+  assert.equal(
+    (await f.call("admin-publication-read", { id: p.id })).value.state
+      .publication.revision,
+    1,
+  );
+  await db.exec("DROP TRIGGER fail_publication_audit");
+  assert.equal(
+    (
+      await f.call("admin-publication-save", {
+        ...command,
+        expectedRevision: 1,
+        enabled: false,
+      })
+    ).status,
+    200,
+  );
+  assert.equal((await f.publicRead()).status, 404);
+  const history = await f.call("admin-publication-history", { id: p.id });
+  assert.deepEqual(
+    history.value.entries.map((e) => [e.revision, e.enabled, e.actor]),
+    [
+      [2, false, alice],
+      [1, true, alice],
+    ],
+  );
+  await assert.rejects(
+    db.exec("DELETE FROM document_publication_history"),
+    /publication-history-immutable/,
+  );
+  await f.restart();
+  assert.equal(
+    (await f.call("admin-publication-read", { id: p.id })).value.state
+      .publication.enabled,
+    false,
+  );
+  const changed = await f.call(
+    "admin-update",
+    update(p, {
+      evidence: "A changed source-delivery generation",
+      aliases: [],
+    }),
+  );
+  assert.equal(changed.status, 200);
+  assert.equal(
+    (
+      await f.call("admin-publication-save", {
+        ...command,
+        expectedRevision: 2,
+      })
+    ).status,
+    409,
+  );
+  assert.equal((await f.publicRead()).status, 404);
+});
+
+test("旧公開許可を初めて編集すると変更者不明の基準を残し、履歴の確認は公開を変えない", async (t) => {
+  const f = await fixture(t),
+    p = await create(f),
+    db = await f.db();
+  await db
+    .prepare(
+      "INSERT INTO document_publications(policy_id,policy_revision,enabled,expires,evidence) VALUES(?,?,1,?,?)",
+    )
+    .bind(
+      p.id,
+      p.policyRevision,
+      Date.now() + 3600000,
+      "Synthetic legacy permission",
+    )
+    .run();
+  const saved = await f.call("admin-publication-save", {
+    id: p.id,
+    expectedPolicyRevision: p.policyRevision,
+    expectedManagementRevision: p.managementRevision,
+    expectedRevision: 1,
+    enabled: false,
+    expires: Date.now() + 3600000,
+    evidence: "Synthetic withdrawal of legacy permission",
+  });
+  assert.equal(saved.status, 200, JSON.stringify(saved.value));
+  const history = await f.call("admin-publication-history", { id: p.id });
+  assert.deepEqual(
+    history.value.entries.map((e) => [e.revision, e.kind, e.actor]),
+    [
+      [2, "update", alice],
+      [1, "baseline", null],
+    ],
+  );
+  assert.equal(history.value.entries[1].enabled, true);
+  assert.equal(
+    (await f.call("admin-publication-read", { id: p.id })).value.state
+      .publication.enabled,
+    false,
+  );
+});
+
 const lifecycleCommand = (action, expectedRevision, extra = {}) => ({
   action,
   expectedRevision,
@@ -675,14 +857,32 @@ test("authenticated lifecycle routes withdraw, restore and permanently purge ret
   };
   const original = await f.call("acquire", { url, audience: "shared" });
   assert.equal(original.status, 200);
+  await (
+    await f.db()
+  )
+    .prepare(
+      "INSERT INTO document_publications(policy_id,policy_revision,enabled,expires,evidence) VALUES(?,?,1,?,?)",
+    )
+    .bind(
+      p.id,
+      p.policyRevision,
+      Date.now() + 3600000,
+      "Synthetic anonymous fixture permission",
+    )
+    .run();
+  const publicResponse = await f.publicRead();
+  assert.equal(publicResponse.status, 200);
+  const publicHeaders = { "If-None-Match": publicResponse.headers.get("ETag") };
   const preview = await f.call("admin-document-preview", { target });
   assert.equal(preview.status, 200, JSON.stringify(preview.value));
   assert.equal(preview.value.versionCount, 1);
   const change = (command) =>
     f.call("admin-document-change", { target, command });
   assert.equal((await change(lifecycleCommand("withdraw", 0))).status, 200);
+  assert.equal((await f.publicRead(publicHeaders)).status, 404);
   assert.equal((await f.call("read", { url, audience: "shared" })).status, 404);
   assert.equal((await change(lifecycleCommand("restore", 1))).status, 200);
+  assert.equal((await f.publicRead(publicHeaders)).status, 304);
   assert.equal((await f.call("read", { url, audience: "shared" })).status, 200);
   assert.equal((await change(lifecycleCommand("withdraw", 2))).status, 200);
   const purge = lifecycleCommand("purge", 3, {
@@ -692,6 +892,7 @@ test("authenticated lifecycle routes withdraw, restore and permanently purge ret
   assert.equal(deleted.status, 200, JSON.stringify(deleted.value));
   assert.equal(deleted.value.current.status, "deleted");
   assert.equal(deleted.value.current.bytes, 0);
+  assert.equal((await f.publicRead(publicHeaders)).status, 404);
   await f.restart();
   const retry = await change(purge);
   assert.equal(retry.status, 200);

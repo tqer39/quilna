@@ -15,6 +15,7 @@ import { betterAuth } from "better-auth";
 import { verifyProviderIdToken } from "better-auth/oauth2";
 import { z } from "zod";
 import { createHandler, json, readBody } from "./http.mjs";
+import { publicDocumentPaths, publicDocuments } from "./public-documents.mjs";
 import { hash } from "./crypto.mjs";
 import {
   AuthGuard,
@@ -420,6 +421,7 @@ export function createAuthBridge(
 /** Gate private/library assets and request account bootstrap only for authenticated HTML. */
 export async function productionFetch(request, env) {
   const path = new URL(request.url).pathname;
+  if (publicDocumentPaths.has(path)) return publicDocuments(request, env);
   if (
     (env.PRIVATE_DEV === "true" || env.LIBRARY_ISOLATION_ENABLED === "true") &&
     !path.startsWith("/api/")

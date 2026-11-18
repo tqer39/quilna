@@ -21,7 +21,10 @@ const script = (
     logLevel: "silent",
   })
 ).outputFiles[0].text;
-async function fixture(t, { enabled = true, outbound } = {}) {
+async function fixture(
+  t,
+  { enabled = true, publicEnabled = false, outbound } = {},
+) {
   const dir = await mkdtemp(join(tmpdir(), "quilna-documents-"));
   let calls = 0;
   const options = {
@@ -35,7 +38,11 @@ async function fixture(t, { enabled = true, outbound } = {}) {
       DOCUMENTS: { className: "SourceDocument", useSQLite: true },
     },
     d1Databases: { DOCUMENT_ACCESS_DB: "document-access" },
-    bindings: { APP_ORIGIN: origin, DOCUMENTS_ENABLED: String(enabled) },
+    bindings: {
+      APP_ORIGIN: origin,
+      DOCUMENTS_ENABLED: String(enabled),
+      PUBLIC_DOCUMENTS_ENABLED: String(publicEnabled),
+    },
     outboundService: async (request) => {
       calls++;
       assert.equal(request.url, url);
@@ -56,7 +63,11 @@ async function fixture(t, { enabled = true, outbound } = {}) {
     await rm(dir, { recursive: true, force: true });
   });
   const db = () => mf.getD1Database("DOCUMENT_ACCESS_DB");
-  for (const file of ["0001_access.sql", "0002_source_aliases.sql"])
+  for (const file of [
+    "0001_access.sql",
+    "0002_source_aliases.sql",
+    "0005_publications.sql",
+  ])
     await (
       await db()
     ).exec(
@@ -115,6 +126,10 @@ async function fixture(t, { enabled = true, outbound } = {}) {
     call,
     db,
     grant,
+    publicRead: (
+      path = "/api/public/documents?url=" + encodeURIComponent(url),
+      options,
+    ) => mf.dispatchFetch(origin + path, options),
     alias: async (
       address = url + "?utm_source=approved",
       expires = Date.now() + 3600000,
@@ -141,6 +156,198 @@ async function fixture(t, { enabled = true, outbound } = {}) {
     },
   };
 }
+
+async function publish(
+  f,
+  { revision = 1, expires = Date.now() + 3600000 } = {},
+) {
+  await (
+    await f.db()
+  )
+    .prepare(
+      "INSERT INTO document_publications(policy_id,policy_revision,enabled,expires,evidence) VALUES(?,?,1,?,?)",
+    )
+    .bind(
+      policyId,
+      revision,
+      expires,
+      "Synthetic permission for anonymous fixture delivery only",
+    )
+    .run();
+}
+
+test(
+  "一般公開は独立した許可と取得済み共有版を要し、匿名の再検証で同じ版を再利用する",
+  { timeout: 20000 },
+  async (t) => {
+    const f = await fixture(t, { publicEnabled: true });
+    await f.grant(["alice"]);
+    await f.call("acquire", { body: { url, audience: "private" } });
+    assert.equal((await f.publicRead()).status, 404);
+    await publish(f);
+    // 個人版があっても、公開先の共有版を作成したことにはならない。
+    assert.equal((await f.publicRead()).status, 404);
+    assert.equal(f.calls(), 1);
+    const acquired = await f.call("acquire", {
+      body: { url, audience: "shared" },
+    });
+    assert.equal(acquired.status, 200);
+    const response = await f.publicRead();
+    assert.equal(response.status, 200);
+    assert.equal(
+      response.headers.get("Cache-Control"),
+      "public, no-cache, must-revalidate",
+    );
+    const value = await response.json();
+    assert.equal(value.versionId, acquired.value.version.id);
+    assert.equal(value.documentId, acquired.value.version.documentId);
+    assert.equal(value.sourceURL, url);
+    assert.equal(value.account, undefined);
+    assert.equal(value.scope, undefined);
+    const etag = response.headers.get("ETag");
+    const extra = await f.publicRead(undefined, {
+      headers: { "X-Test-Withdraw-Public": "additional-fields" },
+    });
+    assert.equal(extra.status, 200);
+    assert.equal(extra.headers.get("ETag"), etag);
+    assert.deepEqual(await extra.json(), value);
+    const revalidated = await f.publicRead(undefined, {
+      headers: {
+        "If-None-Match": `W/${etag}`,
+        Cookie: "another-user=untrusted",
+      },
+    });
+    assert.equal(revalidated.status, 304);
+    assert.equal(await revalidated.text(), "");
+    await f.restart();
+    const restarted = await f.publicRead();
+    assert.equal((await restarted.json()).versionId, value.versionId);
+    assert.equal(f.calls(), 2);
+    // 閲覧は購読や会員資格を作らず、取得元への通信も増やさない。
+    assert.equal(
+      (await f.call("read", { user: "bob", body: { url, audience: "shared" } }))
+        .status,
+      404,
+    );
+    // 本文を読んだ後の取消でも、304や本文を配信しない。
+    const revoked = await f.publicRead(undefined, {
+      headers: {
+        "If-None-Match": etag,
+        "X-Test-Withdraw-Public": "after-read",
+      },
+    });
+    assert.equal(revoked.status, 404);
+    assert.equal(revoked.headers.get("ETag"), null);
+    assert.deepEqual(await revoked.json(), { status: "document-unavailable" });
+  },
+);
+
+test(
+  "公開の取消・期限・世代変更はETag一致時にも確認し、別名や任意操作では公開しない",
+  { timeout: 20000 },
+  async (t) => {
+    const f = await fixture(t, { publicEnabled: true });
+    await f.grant();
+    await publish(f);
+    await f.call("acquire", { body: { url, audience: "shared" } });
+    const etag = (await f.publicRead()).headers.get("ETag");
+    const conditional = () =>
+      f.publicRead(undefined, { headers: { "If-None-Match": etag } });
+    const db = await f.db();
+    for (const [change, restore] of [
+      [
+        "UPDATE document_publications SET enabled=0",
+        "UPDATE document_publications SET enabled=1",
+      ],
+      [
+        "UPDATE document_policies SET enabled=0",
+        "UPDATE document_policies SET enabled=1",
+      ],
+      [
+        "UPDATE document_publications SET expires=1",
+        `UPDATE document_publications SET expires=${Date.now() + 3600000}`,
+      ],
+      [
+        "UPDATE document_policies SET expires=1",
+        `UPDATE document_policies SET expires=${Date.now() + 3600000}`,
+      ],
+      [
+        "UPDATE document_publications SET policy_revision=2",
+        "UPDATE document_publications SET policy_revision=1",
+      ],
+    ]) {
+      await db.exec(change);
+      const denied = await conditional();
+      assert.equal(denied.status, 404);
+      assert.equal(denied.headers.get("Cache-Control"), "no-store");
+      assert.equal(denied.headers.get("ETag"), null);
+      await db.exec(restore);
+      assert.equal((await conditional()).status, 304);
+    }
+    const alias = await f.alias();
+    assert.equal(
+      (
+        await f.publicRead(
+          "/api/public/documents?url=" + encodeURIComponent(alias),
+        )
+      ).status,
+      404,
+    );
+    for (const suffix of [
+      "&url=" + encodeURIComponent(url),
+      "&action=acquire",
+      "&versionId=anything",
+      "&scope=private:any",
+    ])
+      assert.equal(
+        (
+          await f.publicRead(
+            "/api/public/documents?url=" + encodeURIComponent(url) + suffix,
+          )
+        ).status,
+        400,
+      );
+    assert.equal(
+      (await f.publicRead(undefined, { method: "POST" })).status,
+      404,
+    );
+    assert.equal(f.calls(), 1);
+  },
+);
+
+test(
+  "公開機能は既定で無効で、読書画面は入力と本文をHTMLとして実行しない",
+  { timeout: 20000 },
+  async (t) => {
+    const disabled = await fixture(t);
+    assert.equal((await disabled.publicRead()).status, 404);
+    const f = await fixture(t, { publicEnabled: true });
+    await f.grant();
+    await publish(f);
+    await f.call("acquire", { body: { url, audience: "shared" } });
+    const page = await f.publicRead(
+      "/public/documents?url=" + encodeURIComponent(url),
+    );
+    assert.equal(page.status, 200);
+    assert.match(
+      page.headers.get("Content-Security-Policy"),
+      /default-src 'none'/,
+    );
+    assert.equal(page.headers.get("Cache-Control"), "no-store");
+    assert.match(await page.text(), /Public original with sufficient evidence/);
+    const attack = await f.publicRead(
+      "/public/documents?url=" +
+          encodeURIComponent('"><script>alert(1)</script>'),
+    );
+    assert.equal(attack.status, 404);
+    const text = await attack.text();
+    assert.ok(!text.includes("<script>"));
+    assert.ok(text.includes("&lt;script&gt;"));
+    const head = await f.publicRead(undefined, { method: "HEAD" });
+    assert.equal(head.status, 200);
+    assert.equal(await head.text(), "");
+  },
+);
 
 test(
   "authenticated document routes preserve private separation, require origin/CSRF/account and reject owner/scope/content injection",

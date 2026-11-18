@@ -2,6 +2,7 @@ import { z } from "zod";
 import { hash, bytes } from "./crypto.mjs";
 import { libraryStatus } from "./library-status.mjs";
 import { topicTextbookContract } from "../server/topic-textbook-contract.mjs";
+import { publicDocuments, publicDocumentPaths } from "./public-documents.mjs";
 const principal = z
   .object({
     subject: z.string().min(1).max(300),
@@ -55,6 +56,8 @@ export function createHandler({
 } = {}) {
   return async (request, env) => {
     const url = new URL(request.url);
+    if (publicDocumentPaths.has(url.pathname))
+      return publicDocuments(request, env);
     if (url.pathname === "/api/library/status")
       return libraryStatus(request, env, authenticate);
     if (!url.pathname.startsWith("/api/"))
@@ -100,6 +103,9 @@ export function createHandler({
               "admin-revision",
               "admin-create",
               "admin-update",
+              "admin-publication-read",
+              "admin-publication-save",
+              "admin-publication-history",
               "admin-document-preview",
               "admin-document-change",
               "admin-document-reconcile",

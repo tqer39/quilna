@@ -10,6 +10,10 @@ import {
 import { documentIdentity } from "../src/source-document.ts";
 import { json, readBody } from "./http.mjs";
 import {
+  publicDocumentAccess,
+  publicReader,
+} from "./public-document-access.mjs";
+import {
   documentLifecycleAccess,
   lifecycleRequest,
 } from "./document-lifecycle-access.mjs";
@@ -25,6 +29,37 @@ const commandSchema = z
 const managementSchema = commandSchema.extend({ request: lifecycleRequest });
 
 export class SourceDocument extends DurableObject {
+  /** 公開経路から取得や管理操作へ進めず、保存済みの最新版だけを返す。 */
+  async publicRead(request) {
+    const input = z
+      .object({
+        url: z.string().max(2048),
+        scope: z.string().min(1).max(200),
+      })
+      .strict()
+      .parse(await readBody(request));
+    const initial = await publicDocumentAccess(this.env, input.url);
+    if (initial.scope !== input.scope) throw Error("document-unavailable");
+    const id = await documentIdentity(initial.scope, initial.url);
+    if (this.ctx.id.toString() !== this.env.DOCUMENTS.idFromName(id).toString())
+      throw Error("document-unavailable");
+    const authorize = async (principal) => {
+      if (principal !== publicReader) return false;
+      const access = await publicDocumentAccess(this.env, input.url);
+      return access.scope === initial.scope && access.url === initial.url;
+    };
+    const catalog = new DocumentCatalog(this.ctx.storage, {
+      scope: initial.scope,
+      sourceURL: initial.url,
+      authorize,
+      load: async () => {
+        throw Error("document-unavailable");
+      },
+    });
+    const value = await catalog.read(publicReader);
+    if (!(await authorize(publicReader))) throw Error("document-unavailable");
+    return json(200, value);
+  }
   /** Execute the stored retention decision only in its exact document object. */
   async alarm() {
     const retained = await this.ctx.storage.get("document:catalog:v1");
@@ -104,11 +139,14 @@ export class SourceDocument extends DurableObject {
         ![
           "https://document.internal/command",
           "https://document.internal/lifecycle",
+          "https://document.internal/public-read",
         ].includes(request.url)
       )
         throw Error("document-unavailable");
       if (request.url === "https://document.internal/lifecycle")
         return await this.lifecycle(request);
+      if (request.url === "https://document.internal/public-read")
+        return await this.publicRead(request);
       const {
         owner,
         scope,

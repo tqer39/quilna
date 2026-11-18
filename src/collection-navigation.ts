@@ -158,7 +158,6 @@ export class CollectionNavigation {
     this.importParts = [form, this.presets];
     this.restoreImport();
     root.append(
-      el("p", "COLLECT → READ → LEARN", "eyebrow"),
       el("h2", "情報収集"),
       menus,
       this.importSlot,

@@ -42,6 +42,27 @@ export type PolicyInput = Pick<
   DocumentPolicy,
   "url" | "enabled" | "expires" | "evidence" | "members" | "aliases"
 >;
+export type PublicationRecord = {
+  policyRevision: number;
+  enabled: boolean;
+  expires: number;
+  evidence: string;
+  revision: number;
+  actor: string | null;
+  updated: number;
+};
+export type PublicationState = {
+  id: string;
+  policyRevision: number;
+  managementRevision: number;
+  policyEnabled: boolean;
+  policyExpires: number;
+  publication: PublicationRecord | null;
+};
+export type PublicationHistory = Omit<PublicationRecord, "updated"> & {
+  recorded: number;
+  kind: "baseline" | "create" | "update";
+};
 export class PolicyError extends Error {
   constructor(
     message: string,
@@ -177,6 +198,7 @@ export function validatePolicyInput(input: PolicyInput, revision: number) {
 
 export class DocumentPolicyClient {
   account: string | null = null;
+  publicationsEnabled = false;
   constructor(private readonly send: typeof fetch = (i, o) => fetch(i, o)) {}
   private async request(
     path: string,
@@ -276,6 +298,12 @@ export class DocumentPolicyClient {
         true,
       );
     this.account = result.account;
+    if (
+      result.publicationsEnabled !== undefined &&
+      typeof result.publicationsEnabled !== "boolean"
+    )
+      throw invalid();
+    this.publicationsEnabled = result.publicationsEnabled === true;
     return this.account;
   }
   private async command(action: string, body: unknown, signal: AbortSignal) {
@@ -315,6 +343,141 @@ export class DocumentPolicyClient {
       if (error instanceof PolicyError) throw error;
       throw invalid();
     }
+  }
+  private publicationState(value: unknown, id: string): PublicationState {
+    if (
+      !object(value) ||
+      value.id !== id ||
+      !integer(value.policyRevision) ||
+      !integer(value.managementRevision) ||
+      typeof value.policyEnabled !== "boolean" ||
+      !integer(value.policyExpires) ||
+      value.policyExpires > 8.64e15
+    )
+      throw invalid();
+    const p = value.publication;
+    if (
+      p !== null &&
+      (!object(p) ||
+        !integer(p.policyRevision) ||
+        typeof p.enabled !== "boolean" ||
+        !integer(p.expires) ||
+        p.expires > 8.64e15 ||
+        !evidence(p.evidence) ||
+        !integer(p.revision) ||
+        !Number.isSafeInteger(p.updated) ||
+        (p.updated as number) < 0 ||
+        (p.updated as number) > 8.64e15 ||
+        (p.actor === null
+          ? p.updated !== 0
+          : !policyAccount(p.actor) || (p.updated as number) <= 0))
+    )
+      throw invalid();
+    return value as PublicationState;
+  }
+  async readPublication(id: string, signal: AbortSignal) {
+    const result = await this.command("publication-read", { id }, signal);
+    return this.publicationState(result.state, id);
+  }
+  async savePublication(
+    policy: DocumentPolicy,
+    current: PublicationState,
+    input: Pick<PublicationRecord, "enabled" | "expires" | "evidence">,
+    signal: AbortSignal,
+  ) {
+    if (
+      current.id !== policy.id ||
+      current.policyRevision !== policy.policyRevision ||
+      current.managementRevision !== policy.managementRevision
+    )
+      throw new PolicyError(
+        "共有条件が変わっています。最新の共有設定を確認してください。",
+      );
+    if (
+      !evidence(input.evidence) ||
+      !integer(input.expires) ||
+      input.expires > 8.64e15 ||
+      (input.enabled &&
+        (!current.policyEnabled ||
+          input.expires <= Date.now() ||
+          input.expires > current.policyExpires))
+    )
+      throw new PolicyError(
+        "公開の根拠と期限を確認してください。公開の期限は有効な共有期限以内にしてください。",
+      );
+    const expected = current.publication?.revision ?? 0;
+    const result = await this.command(
+      "publication-save",
+      {
+        id: policy.id,
+        expectedPolicyRevision: policy.policyRevision,
+        expectedManagementRevision: policy.managementRevision,
+        expectedRevision: expected,
+        ...input,
+      },
+      signal,
+    );
+    const next = this.publicationState(result.state, policy.id);
+    if (
+      next.policyRevision !== policy.policyRevision ||
+      next.managementRevision !== policy.managementRevision ||
+      !next.publication ||
+      next.publication.revision !== expected + 1 ||
+      next.publication.policyRevision !== policy.policyRevision ||
+      next.publication.enabled !== input.enabled ||
+      next.publication.expires !== input.expires ||
+      next.publication.evidence !== input.evidence ||
+      next.publication.actor !== this.account
+    )
+      throw invalid();
+    return next;
+  }
+  async publicationHistory(
+    id: string,
+    before: number | null,
+    signal: AbortSignal,
+  ) {
+    const result = await this.command(
+      "publication-history",
+      { id, ...(before ? { before } : {}) },
+      signal,
+    );
+    this.publicationState(result.state, id);
+    if (
+      !Array.isArray(result.entries) ||
+      result.entries.length > 20 ||
+      !result.entries.every(
+        (e: unknown) =>
+          object(e) &&
+          integer(e.revision) &&
+          integer(e.policyRevision) &&
+          typeof e.enabled === "boolean" &&
+          integer(e.expires) &&
+          e.expires <= 8.64e15 &&
+          evidence(e.evidence) &&
+          integer(e.recorded) &&
+          e.recorded <= 8.64e15 &&
+          (e.kind === "baseline"
+            ? e.actor === null
+            : (e.kind === "create" || e.kind === "update") &&
+              policyAccount(e.actor)),
+      ) ||
+      result.entries.some(
+        (e, i, all) =>
+          e.revision >=
+          (i ? all[i - 1].revision : (before ?? Number.MAX_SAFE_INTEGER)),
+      ) ||
+      !(
+        result.before === null ||
+        (integer(result.before) &&
+          result.before === result.entries.at(-1)?.revision)
+      )
+    )
+      throw invalid();
+    return {
+      entries: result.entries as PublicationHistory[],
+      before: result.before as number | null,
+    };
   }
   async changeDocument(
     context: LifecycleContext,
