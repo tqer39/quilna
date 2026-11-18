@@ -90,6 +90,48 @@ async function seed(page: Page, design = "studio") {
     .click();
 }
 
+test("本文より上のタイトルの高さが変わっても、同じ原文の読書位置を維持する", async ({
+  page,
+}) => {
+  await seed(page);
+  const source = page.locator(".rss-source-text");
+  await source
+    .locator("h2")
+    .last()
+    .evaluate((e) => e.scrollIntoView({ block: "start" }));
+  const before = await source.boundingBox(),
+    title = page.locator("#rss-current-title"),
+    oldTitle = await title.boundingBox();
+  const replacement =
+    "保存済みの記事の題名が長くなっても、読んでいる本文の位置を保ちます。".repeat(
+      8,
+    );
+  await page.evaluate(async (title) => {
+    const path = "/src/feed-store.ts",
+      api = await import(path),
+      db = await api.openFeedLibrary();
+    const article = await api.readArticle(db, "map");
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction("articles", "readwrite");
+      tx.objectStore("articles").put({
+        ...article,
+        content: { ...article.content, title },
+      });
+      tx.oncomplete = () => resolve();
+      tx.onerror = tx.onabort = () => reject(tx.error);
+    });
+    db.close();
+    const channel = new BroadcastChannel("tsumiki.rss.v1");
+    channel.postMessage({ articleId: "map" });
+    channel.close();
+  }, replacement);
+  await expect(title).toHaveText(replacement);
+  expect((await title.boundingBox())!.height).toBeGreaterThan(oldTitle!.height);
+  await expect
+    .poll(async () => Math.abs((await source.boundingBox())!.y - before!.y))
+    .toBeLessThanOrEqual(2);
+});
+
 for (const design of ["studio", "editorial", "focus"])
   test(`${design}: source heading hierarchy, current position and keyboard jumps fit the viewport`, async ({
     page,

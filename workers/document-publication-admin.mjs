@@ -16,6 +16,7 @@ const evidence = z
 const id = z.string().uuid();
 const fields = {
   policyRevision: revision,
+  sourceGeneration: revision,
   enabled: z.boolean(),
   expires: timestamp,
   evidence,
@@ -42,6 +43,7 @@ const commands = {
       id,
       expectedPolicyRevision: revision,
       expectedManagementRevision: revision,
+      expectedGeneration: revision,
       expectedRevision: z
         .number()
         .int()
@@ -53,12 +55,12 @@ const commands = {
     })
     .strict(),
 };
-const columns = `p.id,p.revision AS policyRevision,p.management_revision AS managementRevision,
+const columns = `p.id,p.revision AS policyRevision,p.management_revision AS managementRevision,p.publication_revision AS publicationGeneration,
   p.enabled AS policyEnabled,p.expires AS policyExpires,
-  u.policy_revision,u.enabled,u.expires,u.evidence,u.revision,u.actor,u.updated`;
+  u.policy_revision,u.source_revision,u.enabled,u.expires,u.evidence,u.revision,u.actor,u.updated`;
 const select = `SELECT ${columns} FROM document_policies p
   LEFT JOIN document_publications u ON u.policy_id=p.id`;
-const snapshot = `json_object('policyRevision',policy_revision,'enabled',json(CASE WHEN enabled=1 THEN 'true' ELSE 'false' END),'expires',expires,'evidence',evidence)`;
+const snapshot = `json_object('policyRevision',policy_revision,'sourceGeneration',source_revision,'enabled',json(CASE WHEN enabled=1 THEN 'true' ELSE 'false' END),'expires',expires,'evidence',evidence)`;
 
 export class DocumentPublicationAdmin {
   constructor(env, now = Date.now) {
@@ -71,6 +73,7 @@ export class DocumentPublicationAdmin {
         id,
         policyRevision: revision,
         managementRevision: revision,
+        publicationGeneration: revision,
         policyEnabled: z.union([z.literal(0), z.literal(1)]),
         policyExpires: timestamp,
       })
@@ -80,6 +83,7 @@ export class DocumentPublicationAdmin {
       if (![0, 1].includes(row.enabled)) throw Error("document-invalid");
       publication = record.parse({
         policyRevision: row.policy_revision,
+        sourceGeneration: row.source_revision,
         enabled: row.enabled === 1,
         expires: row.expires,
         evidence: row.evidence,
@@ -112,11 +116,12 @@ export class DocumentPublicationAdmin {
         if (input.enabled && input.expires <= at)
           throw Error("document-request");
         const matching = `SELECT p.id FROM document_policies p WHERE p.id=? AND p.revision=?
-          AND p.management_revision=? AND (?=0 OR (p.enabled=1 AND p.expires>=?))`;
+          AND p.management_revision=? AND p.publication_revision=? AND (?=0 OR (p.enabled=1 AND p.expires>=?))`;
         const matchArgs = [
           input.id,
           input.expectedPolicyRevision,
           input.expectedManagementRevision,
+          input.expectedGeneration,
           Number(input.enabled),
           input.expires,
         ];
@@ -131,11 +136,11 @@ export class DocumentPublicationAdmin {
             input.expectedRevision,
           ),
           sql(
-            `INSERT INTO document_publications(policy_id,policy_revision,enabled,expires,evidence,revision,operation,actor,updated)
-            SELECT p.id,p.revision,?,?,?,?,?,?,? FROM document_policies p
+            `INSERT INTO document_publications(policy_id,policy_revision,source_revision,enabled,expires,evidence,revision,operation,actor,updated)
+            SELECT p.id,p.revision,p.publication_revision,?,?,?,?,?,?,? FROM document_policies p
             WHERE p.id IN (${matching})
               AND COALESCE((SELECT revision FROM document_publications WHERE policy_id=p.id),0)=?
-            ON CONFLICT(policy_id) DO UPDATE SET policy_revision=excluded.policy_revision,enabled=excluded.enabled,
+            ON CONFLICT(policy_id) DO UPDATE SET policy_revision=excluded.policy_revision,source_revision=excluded.source_revision,enabled=excluded.enabled,
               expires=excluded.expires,evidence=excluded.evidence,revision=excluded.revision,
               operation=excluded.operation,actor=excluded.actor,updated=excluded.updated
             WHERE document_publications.revision=?`,

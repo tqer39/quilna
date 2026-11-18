@@ -71,6 +71,34 @@ async function seed(page: Page, voices: "local" | "remote" = "local") {
   await expect(page.locator(".rss-article-list li")).toHaveCount(3);
 }
 
+test("中断したポインター操作の選択を、後のキーボード辞書操作へ持ち越さない", async ({
+  page,
+}) => {
+  await seed(page);
+  await page.getByRole("button", { name: titles[0], exact: true }).click();
+  const open = page.getByRole("button", { name: "ことばの辞書を開く" });
+  await open.focus();
+  const select = async (start: number) =>
+    page.evaluate((start) => {
+      const node = document.querySelector(".rss-source-text p")!.firstChild!;
+      const range = document.createRange();
+      range.setStart(node, start);
+      range.setEnd(node, 3);
+      const selection = getSelection()!;
+      selection.removeAllRanges();
+      selection.addRange(range);
+    }, start);
+  await select(0);
+  await open.dispatchEvent("pointerdown", {
+    pointerId: 1,
+    pointerType: "mouse",
+  });
+  await select(1);
+  await open.press("Enter");
+  const dialog = page.getByRole("dialog", { name: "ことばの辞書" });
+  await expect(dialog.getByLabel("調べたい言葉")).toHaveValue("同期");
+});
+
 test("一覧から未読のまま保存でき、再読込後にも残り、保存一覧で解除すると次の行へ戻る", async ({
   page,
 }) => {

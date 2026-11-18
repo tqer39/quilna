@@ -258,7 +258,11 @@ export async function feedReader(root: HTMLElement) {
   brand.href = "/?view=feeds";
   const actions = el("div", undefined, "rss-header-actions");
   const dictionary = new QuickDictionary();
-  const dictionaryOpen = button("辞書", () => dictionary.open());
+  const dictionaryOpen = el("button", "辞書");
+  dictionaryOpen.type = "button";
+  dictionaryOpen.addEventListener("click", (event) =>
+    dictionary.open(event.detail > 0),
+  );
   dictionaryOpen.setAttribute("aria-label", "ことばの辞書を開く");
   dictionaryOpen.addEventListener("pointerdown", () =>
     dictionary.captureSelection(),
@@ -2270,6 +2274,15 @@ export async function feedReader(root: HTMLElement) {
       : "公開日時なし";
   function render() {
     if (composing) return;
+    const previousSource = main.querySelector<HTMLElement>(".rss-source-text");
+    const readingPosition =
+      readerIdentity === selected && previousSource?.dataset.selectionContext
+        ? {
+            context: previousSource.dataset.selectionContext,
+            x: scrollX,
+            top: previousSource.getBoundingClientRect().top,
+          }
+        : null;
     const articleSelection = captureReaderSelection(
       main.querySelector(".rss-source-text"),
     );
@@ -3063,11 +3076,18 @@ export async function feedReader(root: HTMLElement) {
     root
       .querySelectorAll<HTMLAnchorElement>("a[data-reader-target]")
       .forEach(updateReadingLink);
+    const nextSource = main.querySelector<HTMLElement>(".rss-source-text");
+    // 本文の入れ替え中にページが縮んでも、同じ読書文脈の位置を失わない。
+    if (
+      readingPosition &&
+      readingPosition.context === nextSource?.dataset.selectionContext
+    )
+      window.scrollTo(
+        readingPosition.x,
+        scrollY + nextSource.getBoundingClientRect().top - readingPosition.top,
+      );
     revealPendingAnchor();
-    restoreReaderSelection(
-      articleSelection,
-      main.querySelector(".rss-source-text"),
-    );
+    restoreReaderSelection(articleSelection, nextSource);
   }
   channel?.addEventListener("message", (event) => {
     const id =

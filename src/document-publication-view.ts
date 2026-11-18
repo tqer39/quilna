@@ -1,6 +1,7 @@
 import { button, el } from "./ui";
 import {
   DocumentPolicyClient,
+  PolicyError,
   type DocumentPolicy,
   type PublicationState,
   type PublicationRecord,
@@ -69,6 +70,7 @@ export function documentPublicationView(
       !!p &&
       p.enabled &&
       p.policyRevision === state.policyRevision &&
+      p.sourceGeneration === state.publicationGeneration &&
       state.policyEnabled &&
       Math.min(p.expires, state.policyExpires) > Date.now();
     summary.replaceChildren(
@@ -128,7 +130,8 @@ export function documentPublicationView(
     baseline = state;
     enabled.checked =
       !!state.publication?.enabled &&
-      state.publication.policyRevision === state.policyRevision;
+      state.publication.policyRevision === state.policyRevision &&
+      state.publication.sourceGeneration === state.publicationGeneration;
     expires.value = localDate(
       state.publication?.expires ?? state.policyExpires,
     );
@@ -148,7 +151,11 @@ export function documentPublicationView(
         const state = await client.readPublication(policy.id, signal);
         show(state);
         root.dataset.publicationPending = "false";
-        if (!baseline) apply(state);
+        if (
+          !baseline ||
+          (root.dataset.publicationDirty !== "true" && !uncertain && !reviewing)
+        )
+          apply(state);
         else
           recovery.replaceChildren(
             el(
@@ -230,12 +237,14 @@ export function documentPublicationView(
               notice.textContent =
                 "公開設定を保存しました。個人の読書記録は変更していません。";
             } catch (error) {
-              uncertain = true;
+              uncertain = !(error instanceof PolicyError && error.unchanged);
+              root.dataset.publicationPending = String(uncertain);
               reviewing = false;
               review.replaceChildren();
               block();
-              notice.textContent =
-                "保存結果を確認できません。自動では再送しません。公開設定を確認し、必要なら保存済みの内容から編集し直してください。";
+              notice.textContent = uncertain
+                ? "保存結果を確認できません。自動では再送しません。公開設定を確認し、必要なら保存済みの内容から編集し直してください。"
+                : "公開設定は保存していません。入力と最新の設定を確認してから、改めて保存してください。";
               throw error;
             }
           }).then(() => {
@@ -273,7 +282,7 @@ export function documentPublicationView(
         ),
         el(
           "p",
-          `共有条件の世代：${entry.policyRevision} / 期限：${new Date(entry.expires).toLocaleString()}`,
+          `共有条件の世代：${entry.policyRevision} / 公開条件の世代：${entry.sourceGeneration} / 期限：${new Date(entry.expires).toLocaleString()}`,
         ),
         el("p", entry.evidence),
       );

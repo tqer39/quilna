@@ -687,6 +687,7 @@ test("公開許可の管理は認証・世代・競合・期限を確認し、�
     id: p.id,
     expectedPolicyRevision: p.policyRevision,
     expectedManagementRevision: p.managementRevision,
+    expectedGeneration: 1,
     expectedRevision: 0,
     enabled: true,
     expires: p.expires - 60000,
@@ -778,6 +779,16 @@ test("公開許可の管理は認証・世代・競合・期限を確認し、�
       .publication.enabled,
     false,
   );
+  assert.equal(
+    (
+      await f.call("admin-publication-save", {
+        ...command,
+        expectedRevision: 2,
+      })
+    ).status,
+    200,
+  );
+  assert.equal((await f.publicRead()).status, 200);
   const changed = await f.call(
     "admin-update",
     update(p, {
@@ -790,10 +801,143 @@ test("公開許可の管理は認証・世代・競合・期限を確認し、�
     (
       await f.call("admin-publication-save", {
         ...command,
-        expectedRevision: 2,
+        expectedRevision: 3,
       })
     ).status,
     409,
+  );
+  assert.equal(
+    (await f.call("acquire", { url, audience: "shared" })).status,
+    200,
+  );
+  assert.equal(
+    (await f.call("admin-publication-read", { id: p.id })).value.state
+      .publication.enabled,
+    true,
+  );
+  assert.equal((await f.publicRead()).status, 404);
+});
+
+test("共有の停止・再開や期限の短縮後も、以前の公開許可を自動で復活させない", async (t) => {
+  const f = await fixture(t),
+    p = await create(f);
+  const original = await f.call("acquire", { url, audience: "shared" });
+  const publish = async (parent, previous) => {
+    const state = (await f.call("admin-publication-read", { id: p.id })).value
+      .state;
+    const result = await f.call("admin-publication-save", {
+      id: p.id,
+      expectedPolicyRevision: parent.policyRevision,
+      expectedManagementRevision: parent.managementRevision,
+      expectedGeneration: state.publicationGeneration,
+      expectedRevision: previous,
+      enabled: true,
+      expires: parent.expires - 1000,
+      evidence: "Synthetic reviewed anonymous source permission",
+    });
+    assert.equal(result.status, 200, JSON.stringify(result.value));
+  };
+  await publish(p, 0);
+  assert.equal((await f.publicRead()).status, 200);
+  const off = (await f.call("admin-update", update(p, { enabled: false })))
+    .value.policy;
+  assert.equal((await f.publicRead()).status, 404);
+  const on = (await f.call("admin-update", update(off, { enabled: true })))
+    .value.policy;
+  assert.equal(on.policyRevision, p.policyRevision);
+  assert.equal((await f.publicRead()).status, 404);
+  await publish(on, 1);
+  assert.equal(
+    (await (await f.publicRead()).json()).versionId,
+    original.value.version.id,
+  );
+  const shorter = (
+    await f.call(
+      "admin-update",
+      update(on, { expires: on.expires - 60000, aliases: [] }),
+    )
+  ).value.policy;
+  const extended = (
+    await f.call("admin-update", update(shorter, { expires: on.expires }))
+  ).value.policy;
+  assert.equal((await f.publicRead()).status, 404);
+  await publish(extended, 2);
+  assert.equal((await f.publicRead()).status, 200);
+  const activeExtension = (
+    await f.call(
+      "admin-update",
+      update(extended, { expires: extended.expires + 60000 }),
+    )
+  ).value.policy;
+  assert.equal((await f.publicRead()).status, 404);
+  await publish(activeExtension, 3);
+  assert.equal((await f.publicRead()).status, 200);
+  assert.equal(f.fetches(), 1);
+});
+
+test("公開履歴45件を20件ずつ重複・欠落なく読み、履歴閲覧では許可を変更しない", async (t) => {
+  const f = await fixture(t),
+    p = await create(f),
+    db = await f.db(),
+    at = Date.now();
+  const saved = await f.call("admin-publication-save", {
+    id: p.id,
+    expectedPolicyRevision: p.policyRevision,
+    expectedManagementRevision: p.managementRevision,
+    expectedGeneration: 1,
+    expectedRevision: 0,
+    enabled: false,
+    expires: p.expires,
+    evidence: "Synthetic paginated permission history",
+  });
+  assert.equal(saved.status, 200);
+  await db.batch(
+    Array.from({ length: 44 }, (_, i) =>
+      db
+        .prepare(
+          "INSERT INTO document_publication_history VALUES(?,?,?,?,'update',?)",
+        )
+        .bind(
+          p.id,
+          i + 2,
+          alice,
+          at - 44 + i,
+          JSON.stringify({
+            policyRevision: 1,
+            sourceGeneration: 1,
+            enabled: false,
+            expires: p.expires,
+            evidence: "Synthetic paginated permission history",
+          }),
+        ),
+    ),
+  );
+  await db
+    .prepare("UPDATE document_publications SET revision=45 WHERE policy_id=?")
+    .bind(p.id)
+    .run();
+  const ids = [],
+    counts = [];
+  let before;
+  do {
+    const result = await f.call("admin-publication-history", {
+      id: p.id,
+      ...(before ? { before } : {}),
+    });
+    assert.equal(result.status, 200);
+    counts.push(result.value.entries.length);
+    ids.push(...result.value.entries.map((e) => e.revision));
+    before = result.value.before;
+  } while (before);
+  assert.deepEqual(counts, [20, 20, 5]);
+  assert.deepEqual(
+    ids,
+    Array.from({ length: 45 }, (_, i) => 45 - i),
+  );
+  assert.equal(
+    (await f.call("admin-publication-read", { id: p.id })).value.state
+      .publication.revision,
+    45,
   );
   assert.equal((await f.publicRead()).status, 404);
 });
@@ -817,6 +961,7 @@ test("旧公開許可を初めて編集すると変更者不明の基準を残�
     id: p.id,
     expectedPolicyRevision: p.policyRevision,
     expectedManagementRevision: p.managementRevision,
+    expectedGeneration: 1,
     expectedRevision: 1,
     enabled: false,
     expires: Date.now() + 3600000,

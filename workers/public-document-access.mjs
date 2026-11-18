@@ -37,7 +37,7 @@ export async function publicDocumentAccess(env, source, now = Date.now) {
       FROM document_policies p
       JOIN document_publications u ON u.policy_id = p.id
       WHERE p.source_url = ? AND p.enabled = 1 AND u.enabled = 1
-        AND u.policy_revision = p.revision`,
+        AND u.policy_revision = p.revision AND u.source_revision = p.publication_revision`,
     )
     .bind(url)
     .first();

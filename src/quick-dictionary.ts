@@ -192,7 +192,7 @@ export class QuickDictionary {
     });
   }
 
-  open() {
+  open(usePointerCapture = false) {
     if (this.root.open) return;
     this.returnTo =
       document.activeElement instanceof HTMLElement
@@ -200,7 +200,8 @@ export class QuickDictionary {
         : null;
     this.scroll = { x: window.scrollX, y: window.scrollY };
     this.location = location.href;
-    if (!this.selection) this.captureSelection();
+    // 中断されたポインター操作の選択を、後のキーボード操作へ持ち越さない。
+    if (!usePointerCapture || !this.selection) this.captureSelection();
     this.input.value = this.selection
       ? this.selection.text
           .slice(this.selection.start, this.selection.end)

@@ -51,6 +51,7 @@ async function fixture(page: Page, initial: DocumentPolicy | null = null) {
     enabled: true,
     account,
     publicationsEnabled: false,
+    publicationGeneration: 1,
     publication: null as PublicationRecord | null,
     publicationHistory: [] as PublicationHistory[],
     publicationSaves: 0,
@@ -58,6 +59,8 @@ async function fixture(page: Page, initial: DocumentPolicy | null = null) {
     hold: null as Promise<void> | null,
     saves: 0,
     statuses: 0,
+    rejectStatus: 0,
+    postcheckStatus: 429,
     updates: [] as Record<string, unknown>[],
     requests: [] as string[],
   };
@@ -69,6 +72,14 @@ async function fixture(page: Page, initial: DocumentPolicy | null = null) {
     state.requests.push(action);
     if (action === "status") {
       state.statuses++;
+      if (state.rejectStatus) {
+        const status = state.rejectStatus;
+        state.rejectStatus = 0;
+        return r.fulfill({
+          status,
+          json: { account, status: "synthetic-status-rejection" },
+        });
+      }
       return r.fulfill({
         json: {
           account: state.account,
@@ -88,6 +99,7 @@ async function fixture(page: Page, initial: DocumentPolicy | null = null) {
         id: p.id,
         policyRevision: p.policyRevision,
         managementRevision: p.managementRevision,
+        publicationGeneration: state.publicationGeneration,
         policyEnabled: p.enabled,
         policyExpires: p.expires,
         publication: state.publication,
@@ -105,6 +117,7 @@ async function fixture(page: Page, initial: DocumentPolicy | null = null) {
         expect(body.expectedRevision).toBe(state.publication?.revision ?? 0);
         state.publication = {
           policyRevision: p.policyRevision,
+          sourceGeneration: state.publicationGeneration,
           enabled: body.enabled,
           expires: body.expires,
           evidence: body.evidence,
@@ -120,13 +133,21 @@ async function fixture(page: Page, initial: DocumentPolicy | null = null) {
         });
         if (state.mode === "lost") return r.abort("failed");
         if (state.mode === "logout") state.account = other;
+        if (state.mode === "postcheck-rejected")
+          state.rejectStatus = state.postcheckStatus;
       }
+      const rows = state.publicationHistory
+        .filter((e) => !body.before || e.revision < body.before)
+        .slice(0, 21);
       return r.fulfill({
         json: {
           account,
           state: current(),
           ...(action === "publication-history"
-            ? { entries: state.publicationHistory, before: null }
+            ? {
+                entries: rows.slice(0, 20),
+                before: rows.length > 20 ? rows[19].revision : null,
+              }
             : {}),
         },
       });
@@ -466,6 +487,7 @@ test("共有条件の新しい世代は公開を引き継がず、保存中の�
   state.publicationsEnabled = true;
   state.publication = {
     policyRevision: 1,
+    sourceGeneration: 1,
     enabled: true,
     expires: policy.expires,
     evidence: "Synthetic old-generation publication",
@@ -515,6 +537,185 @@ test("共有条件の新しい世代は公開を引き継がず、保存中の�
   await expect(publication).toContainText("入力中の内容は保持しています");
   expect(state.publicationSaves).toBe(1);
 });
+
+test("公開設定の未編集時の再照会は編集の基準も更新し、保存拒否は結果不明と区別する", async ({
+  page,
+}) => {
+  const { state, root } = await fixture(page, saved());
+  state.publicationsEnabled = true;
+  await edit(root);
+  const publication = root.locator('details[aria-label="一般公開の許可"]');
+  await publication.locator("summary").click();
+  const load = publication.getByRole("button", {
+    name: "公開設定を確認",
+    exact: true,
+  });
+  await load.click();
+  state.publication = {
+    policyRevision: 1,
+    sourceGeneration: 1,
+    enabled: false,
+    expires: state.policy!.expires,
+    evidence: "Synthetic latest permission changed in another tab",
+    revision: 2,
+    actor: account,
+    updated: Date.now(),
+  };
+  await load.click();
+  const reason = publication.getByLabel("一般公開してよい根拠", {
+    exact: true,
+  });
+  await expect(reason).toHaveValue(state.publication.evidence);
+  await expect(
+    publication.getByRole("button", { name: "この公開設定で編集し直す" }),
+  ).toHaveCount(0);
+  await reason.fill("Synthetic edited permission to remain private");
+  await publication
+    .getByRole("button", { name: "公開の変更内容を確認", exact: true })
+    .click();
+  state.mode = "conflict";
+  await publication
+    .getByRole("button", { name: "この公開設定を保存", exact: true })
+    .click();
+  await expect(publication).toContainText("公開設定は保存していません");
+  await expect(publication).toHaveAttribute(
+    "data-publication-pending",
+    "false",
+  );
+  await expect(publication.locator("fieldset")).toHaveJSProperty(
+    "inert",
+    false,
+  );
+  await expect(reason).toHaveValue(
+    "Synthetic edited permission to remain private",
+  );
+});
+
+test("確認中に公開期限を過ぎた保存は送信せず、入力を編集できるままにする", async ({
+  page,
+}) => {
+  const { state, root } = await fixture(page, saved());
+  state.publicationsEnabled = true;
+  await edit(root);
+  const publication = root.locator('details[aria-label="一般公開の許可"]');
+  await publication.locator("summary").click();
+  await publication
+    .getByRole("button", { name: "公開設定を確認", exact: true })
+    .click();
+  await publication
+    .getByLabel("この出典の記事を誰でも読めるようにする", { exact: true })
+    .check();
+  await publication
+    .getByLabel("一般公開してよい根拠", { exact: true })
+    .fill("Synthetic permission expiring after confirmation");
+  await publication
+    .getByLabel("この出典の原文を一般公開できることを確認しました", {
+      exact: true,
+    })
+    .check();
+  await publication
+    .getByRole("button", { name: "公開の変更内容を確認", exact: true })
+    .click();
+  await page.evaluate((at) => {
+    Date.now = () => at;
+  }, state.policy!.expires + 1);
+  await publication
+    .getByRole("button", { name: "この公開設定を保存", exact: true })
+    .click();
+  await expect(publication).toContainText("公開設定は保存していません");
+  await expect(publication).toHaveAttribute(
+    "data-publication-pending",
+    "false",
+  );
+  expect(state.publicationSaves).toBe(0);
+  await expect(publication.locator("fieldset")).toHaveJSProperty(
+    "inert",
+    false,
+  );
+});
+
+test("一般公開の履歴45件を画面でも20件ずつたどり、許可を保存しない", async ({
+  page,
+}) => {
+  const { state, root } = await fixture(page, saved());
+  state.publicationsEnabled = true;
+  state.publicationHistory = Array.from({ length: 45 }, (_, i) => ({
+    policyRevision: 1,
+    sourceGeneration: 1,
+    enabled: false,
+    expires: state.policy!.expires,
+    evidence: "Synthetic paginated anonymous permission history",
+    revision: 45 - i,
+    actor: account,
+    recorded: Date.now() - i,
+    kind: i === 44 ? "create" : "update",
+  }));
+  await edit(root);
+  const publication = root.locator('details[aria-label="一般公開の許可"]');
+  await publication.locator("summary").click();
+  await publication
+    .getByRole("button", { name: "一般公開の履歴を確認" })
+    .click();
+  const history = publication
+    .getByRole("heading", { name: "一般公開の変更履歴", exact: true })
+    .locator("..");
+  await expect(history.getByText(/^変更 #/)).toHaveCount(20);
+  await expect(history).toContainText("変更 #45 /");
+  await history.getByRole("button", { name: "さらに前の公開履歴20件" }).click();
+  await expect(history.getByText(/^変更 #/)).toHaveCount(20);
+  await expect(history).toContainText("変更 #25 /");
+  await history.getByRole("button", { name: "さらに前の公開履歴20件" }).click();
+  await expect(history.getByText(/^変更 #/)).toHaveCount(5);
+  await expect(history).toContainText("変更 #1 /");
+  await expect(
+    history.getByRole("button", { name: "さらに前の公開履歴20件" }),
+  ).toHaveCount(0);
+  expect(state.publicationSaves).toBe(0);
+});
+
+for (const rejection of [404, 429])
+  test(`保存後の接続確認が${rejection}でも未保存と断定しない`, async ({
+    page,
+  }) => {
+    const { state, root } = await fixture(page, saved());
+    state.publicationsEnabled = true;
+    state.postcheckStatus = rejection;
+    await edit(root);
+    const publication = root.locator('details[aria-label="一般公開の許可"]');
+    await publication.locator("summary").click();
+    await publication
+      .getByRole("button", { name: "公開設定を確認", exact: true })
+      .click();
+    await publication
+      .getByLabel("この出典の記事を誰でも読めるようにする", { exact: true })
+      .check();
+    await publication
+      .getByLabel("一般公開してよい根拠", { exact: true })
+      .fill("Synthetic permission committed before status lookup rejection");
+    await publication
+      .getByLabel("この出典の原文を一般公開できることを確認しました", {
+        exact: true,
+      })
+      .check();
+    await publication
+      .getByRole("button", { name: "公開の変更内容を確認", exact: true })
+      .click();
+    state.mode = "postcheck-rejected";
+    await publication
+      .getByRole("button", { name: "この公開設定を保存", exact: true })
+      .click();
+    await expect(publication).toContainText("保存結果を確認できません");
+    await expect(publication).toHaveAttribute(
+      "data-publication-pending",
+      "true",
+    );
+    expect(state.publication!.enabled).toBe(true);
+    expect(state.publicationSaves).toBe(1);
+    await expect(publication.locator("fieldset")).toHaveJSProperty(
+      "inert",
+      true,
+    );
+  });
 
 for (const design of ["studio", "editorial", "focus"]) {
   test(`${design} creates a reviewed permission and alias at narrow width without uploading personal records`, async ({

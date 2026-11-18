@@ -66,7 +66,14 @@ async function fixture(
   for (const file of [
     "0001_access.sql",
     "0002_source_aliases.sql",
-    "0005_publications.sql",
+    ...(publicEnabled
+      ? [
+          "0003_policy_management.sql",
+          "0004_policy_history.sql",
+          "0005_publications.sql",
+          "0006_publication_management.sql",
+        ]
+      : []),
   ])
     await (
       await db()
@@ -282,6 +289,10 @@ test(
       assert.equal(denied.headers.get("Cache-Control"), "no-store");
       assert.equal(denied.headers.get("ETag"), null);
       await db.exec(restore);
+      // 配信再開には現在の公開条件を明示的に承認し直す。
+      await db.exec(
+        "UPDATE document_publications SET source_revision=(SELECT publication_revision FROM document_policies WHERE id=policy_id)",
+      );
       assert.equal((await conditional()).status, 304);
     }
     const alias = await f.alias();
@@ -337,7 +348,7 @@ test(
     assert.match(await page.text(), /Public original with sufficient evidence/);
     const attack = await f.publicRead(
       "/public/documents?url=" +
-          encodeURIComponent('"><script>alert(1)</script>'),
+        encodeURIComponent('"><script>alert(1)</script>'),
     );
     assert.equal(attack.status, 404);
     const text = await attack.text();
@@ -637,7 +648,9 @@ test(
     );
     await db.prepare("UPDATE document_aliases SET policy_revision=2").run();
     await db
-      .prepare("INSERT INTO document_policies VALUES(?,?,1,1,?,?)")
+      .prepare(
+        "INSERT INTO document_policies(id,source_url,revision,enabled,expires,evidence) VALUES(?,?,1,1,?,?)",
+      )
       .bind(
         "88888888-8888-4888-8888-888888888888",
         alias,
