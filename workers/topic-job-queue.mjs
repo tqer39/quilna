@@ -45,7 +45,12 @@ const recordSchema = z
       .string()
       .regex(/^[a-f0-9]{64}$/)
       .nullable(),
-    reason: z.enum(["", "operation-unconfirmed", "stored-input-unavailable"]),
+    reason: z.enum([
+      "",
+      "operation-unconfirmed",
+      "stored-input-unavailable",
+      "access-unavailable",
+    ]),
   })
   .strict()
   .refine((record) => record.updatedAt >= record.createdAt)
@@ -520,12 +525,15 @@ export class TopicJobQueue {
         ? "running"
         : result?.status === "complete"
           ? "complete"
-          : result?.status === "rejected"
+          : ["rejected", "account-forbidden"].includes(result?.status)
             ? "rejected"
             : "held";
-      record.reason = ["complete", "rejected"].includes(record.state)
-        ? ""
-        : "operation-unconfirmed";
+      record.reason =
+        result?.status === "account-forbidden"
+          ? "access-unavailable"
+          : ["complete", "rejected"].includes(record.state)
+            ? ""
+            : "operation-unconfirmed";
       record.updatedAt = Math.max(record.updatedAt, this.now());
       if (!keepRunning) record.checkAt = null;
       if (result) {

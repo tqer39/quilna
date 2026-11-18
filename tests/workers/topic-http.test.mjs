@@ -25,6 +25,296 @@ const input = {
   approvedMaxMilliYen: 1000,
   approvedQuoteDigest: "a".repeat(64),
 };
+
+async function jobsSetup(options) {
+  const f = await setup(options);
+  f.env.TOPIC_TEXTBOOK_JOBS = {};
+  f.env.TOPIC_TEXTBOOK_JOBS_ENABLED = "true";
+  return f;
+}
+
+test("教材ジョブは検証した所有者・CSRFを内部経路へ渡し、要求に所有者を混ぜさせない", async () => {
+  const cases = {
+    enqueue: { input },
+    retry: { input, confirm: true },
+    read: { id: input.requestId },
+    refresh: { id: input.requestId },
+    list: {},
+    remove: { id: input.requestId, confirm: true },
+    cancel: { id: input.requestId, confirm: true },
+    resume: { id: input.requestId, confirm: true },
+  };
+  for (const [action, body] of Object.entries(cases)) {
+    const f = await jobsSetup();
+    assert.equal(
+      (
+        await f.handler(
+          f.request("jobs/" + action, JSON.stringify(body)),
+          f.env,
+        )
+      ).status,
+      200,
+    );
+    assert.equal(f.calls.length, 1);
+    assert.equal(f.calls[0].url, "https://account.internal/command/topic-jobs");
+    assert.equal(f.calls[0].id, f.account);
+    assert.deepEqual(f.calls[0].command, {
+      action: "topic-job-" + action,
+      principal: ownerA,
+      csrf: "synthetic-csrf",
+      data: body.input
+        ? {
+            ...body,
+            input: {
+              ...body.input,
+              requestId: body.input.requestId.toLowerCase(),
+            },
+          }
+        : body,
+    });
+    const forged = { ...body, owner: "b".repeat(64) };
+    assert.equal(
+      (
+        await f.handler(
+          f.request("jobs/" + action, JSON.stringify(forged)),
+          f.env,
+        )
+      ).status,
+      400,
+    );
+    assert.equal(f.calls.length, 1);
+  }
+});
+
+test("新しい背景送信の受付を止めても、保存済み結果の確認と取消は認証付きで続けられる", async () => {
+  const f = await jobsSetup({ credentialsEnabled: false });
+  for (const [action, body] of Object.entries({
+    enqueue: { input },
+    retry: { input, confirm: true },
+    resume: { id: input.requestId, confirm: true },
+  }))
+    assert.equal(
+      (
+        await f.handler(
+          f.request("jobs/" + action, JSON.stringify(body)),
+          f.env,
+        )
+      ).status,
+      503,
+    );
+  assert.equal(f.calls.length, 0);
+  f.env.TOPIC_TEXTBOOK_JOBS_ENABLED = "false";
+  for (const [action, body] of Object.entries({
+    list: {},
+    read: { id: input.requestId },
+    refresh: { id: input.requestId },
+    cancel: { id: input.requestId, confirm: true },
+    remove: { id: input.requestId, confirm: true },
+  }))
+    assert.equal(
+      (
+        await f.handler(
+          f.request("jobs/" + action, JSON.stringify(body)),
+          f.env,
+        )
+      ).status,
+      200,
+    );
+  assert.equal(f.calls.length, 5);
+});
+
+test("ジョブ受付は未構成・費用未承認・CSRF欠落・異なるアカウントを配送前に拒否する", async () => {
+  const f = await jobsSetup();
+  for (const name of ["X-Library-Account", "X-CSRF-Token"]) {
+    const request = f.request("jobs/list", "{}");
+    request.headers.delete(name);
+    assert.equal((await f.handler(request, f.env)).status, 403);
+  }
+  const foreign = f.request("jobs/list", "{}");
+  foreign.headers.set("X-Library-Account", "b".repeat(64));
+  assert.equal((await f.handler(foreign, f.env)).status, 403);
+  const command = { ...input };
+  delete command.approvedQuoteDigest;
+  assert.equal(
+    (
+      await f.handler(
+        f.request("jobs/enqueue", JSON.stringify({ input: command })),
+        f.env,
+      )
+    ).status,
+    400,
+  );
+  f.env.TOPIC_TEXTBOOK_JOBS_ENABLED = "false";
+  assert.equal(
+    (
+      await f.handler(
+        f.request("jobs/enqueue", JSON.stringify({ input })),
+        f.env,
+      )
+    ).status,
+    503,
+  );
+  delete f.env.TOPIC_TEXTBOOK_JOBS;
+  assert.equal(
+    (await f.handler(f.request("jobs/list", "{}"), f.env)).status,
+    503,
+  );
+  assert.equal(f.calls.length, 0);
+});
+
+for (const changed of ["owner", "session"])
+  test(`ジョブの処理待ち中の${changed}変更では古い所有者の結果を渡さない`, async () => {
+    let identity = ownerA;
+    const f = await jobsSetup({
+      authenticate: async () => identity,
+      fetch: async () => {
+        identity =
+          changed === "owner"
+            ? { ...ownerA, subject: "another-owner" }
+            : { ...ownerA, sessionId: "next-session" };
+        return Response.json({ job: { privateResult: "old-account-only" } });
+      },
+    });
+    const response = await f.handler(
+      f.request("jobs/read", JSON.stringify({ id: input.requestId })),
+      f.env,
+    );
+    assert.equal(response.status, 401);
+    assert.deepEqual(await response.json(), { status: "unauthenticated" });
+    assert.equal(f.calls.length, 1);
+  });
+
+test("ジョブ本文の受信中にセッションが変わると内部処理を始めない", async () => {
+  let identity = ownerA,
+    entered,
+    release,
+    controller;
+  const reading = new Promise((resolve) => {
+    entered = resolve;
+  });
+  const gate = new Promise((resolve) => {
+    release = resolve;
+  });
+  const stream = new ReadableStream(
+    {
+      pull(value) {
+        controller = value;
+        entered();
+        return gate;
+      },
+    },
+    { highWaterMark: 0 },
+  );
+  const f = await jobsSetup({ authenticate: async () => identity });
+  const pending = f.handler(
+    f.request("jobs/list", stream, { duplex: "half" }),
+    f.env,
+  );
+  await reading;
+  identity = { ...ownerA, sessionId: "replaced-session" };
+  controller.enqueue(new TextEncoder().encode("{}"));
+  controller.close();
+  release();
+  assert.equal((await pending).status, 401);
+  assert.equal(f.calls.length, 0);
+});
+
+test("Accountのジョブ経路は読み取り枠を保ち、変更・再照会の制限と無効化を迂回させない", async () => {
+  const account = await hash(ownerA.subject),
+    calls = [];
+  let exhausted = true,
+    authorizations = 0;
+  const core = {
+    authorize: async (_principal, _csrf, mutating, options) => {
+      authorizations++;
+      assert.equal(mutating, true);
+      if (exhausted && options.countRate) throw Error("rate-limit");
+      return account;
+    },
+  };
+  const jobs = {
+    enabled: true,
+    binding: {
+      idFromName: (value) => {
+        assert.equal(value, account);
+        return value;
+      },
+      get: () => ({
+        fetch: async (request) => {
+          calls.push(await request.json());
+          return Response.json({ account });
+        },
+      }),
+    },
+  };
+  const command = (action, data, path = "/command/topic-jobs") =>
+    new Request("https://account.internal" + path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "topic-job-" + action,
+        principal: ownerA,
+        csrf: "synthetic-csrf",
+        data,
+      }),
+    });
+  for (const [action, data] of [
+    ["list", {}],
+    ["read", { id: input.requestId }],
+  ])
+    assert.equal(
+      (await handleAccount(core, command(action, data), null, null, jobs))
+        .status,
+      200,
+    );
+  assert.equal(
+    (
+      await handleAccount(
+        core,
+        command("refresh", { id: input.requestId }),
+        null,
+        null,
+        jobs,
+      )
+    ).status,
+    429,
+  );
+  assert.equal(calls.length, 2);
+  const before = authorizations;
+  assert.equal(
+    (
+      await handleAccount(
+        core,
+        command("list", {}, "/command"),
+        null,
+        null,
+        jobs,
+      )
+    ).status,
+    409,
+  );
+  assert.equal(authorizations, before);
+  exhausted = false;
+  jobs.enabled = false;
+  assert.equal(
+    (
+      await handleAccount(
+        core,
+        command("resume", { id: input.requestId, confirm: true }),
+        null,
+        null,
+        jobs,
+      )
+    ).status,
+    503,
+  );
+  assert.equal(
+    (await handleAccount(core, command("list", {}), null, null, jobs)).status,
+    200,
+  );
+  assert.equal(calls.length, 3);
+  assert.ok(calls.every((value) => value.owner === account));
+});
 async function setup({
   authenticate = async () => ownerA,
   fetch = async () => Response.json({ status: "not-found" }),

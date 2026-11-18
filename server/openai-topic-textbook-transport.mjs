@@ -23,6 +23,15 @@ const optionsSchema = z
     signal: z.custom((v) => v instanceof globalThis.AbortSignal),
   })
   .strict();
+const unavailableCredential = (error) => ({
+  json: "",
+  usage: { inputTokens: 0, outputTokens: 0 },
+  outcome: ["credential-changed", "credential-cancelled"].includes(
+    error?.message,
+  )
+    ? "cancelled"
+    : "credential-unavailable",
+});
 
 /** 通常起動へは組み込まず、明示的に渡された送信境界・モデル・資格情報だけを使う。 */
 export function openaiTopicTextbookTransport({
@@ -53,22 +62,17 @@ export function openaiTopicTextbookTransport({
         ? await topicGenerationInput(requestRaw)
         : await topicReviewInput(requestRaw, draftRaw);
     let headers;
-    if (typeof secret === "function") {
-      try {
-        headers = secretHeaders(await secret(), "openai");
-      } catch (error) {
-        // 遅延した資格情報の解決より前には計数も生成も送っていない。
-        return {
-          json: "",
-          usage: { inputTokens: 0, outputTokens: 0 },
-          outcome: ["credential-changed", "credential-cancelled"].includes(
-            error?.message,
-          )
-            ? "cancelled"
-            : "credential-unavailable",
-        };
-      }
-    } else headers = secretHeaders(secret, "openai");
+    const requestHeaders = async () =>
+      secretHeaders(
+        typeof secret === "function" ? await secret() : secret,
+        "openai",
+      );
+    try {
+      headers = await requestHeaders();
+    } catch (error) {
+      if (typeof secret !== "function") throw error;
+      return unavailableCredential(error);
+    }
     if (options.signal.aborted)
       return {
         json: "",
@@ -113,6 +117,13 @@ export function openaiTopicTextbookTransport({
         usage: { inputTokens: 0, outputTokens: 0 },
         outcome: "input-limit",
       };
+    // 計数を待つ間の権限・キーの失効を、生成の送信前にも確認する。
+    try {
+      headers = await requestHeaders();
+    } catch (error) {
+      if (typeof secret !== "function") throw error;
+      return unavailableCredential(error);
+    }
     const response = await postJson(
       send,
       "https://api.openai.com/v1/responses",

@@ -479,6 +479,109 @@ test("テーマ生成と検証を同じ所有者の永続予算へ記録し再�
   assert.equal(f.storage.data.get("budget").records.length, 2);
   assert.ok((await f.core.budget(f.owner)).spentMilliYen > 0);
 });
+
+test("背景送信の直前に利用資格を確認できなければキーを渡さず、未送信の台帳を残す", async () => {
+  const f = await topicFixtureCore(),
+    input = topicRequest();
+  let checks = 0;
+  const result = await f.core.proposeTopic(f.owner, input, {
+    authorize: async () => {
+      checks++;
+      return false;
+    },
+  });
+  assert.equal(result.status, "rejected");
+  assert.equal(f.calls(), 0);
+  assert.equal(checks, 1);
+  assert.equal((await f.core.lookupTopic(f.owner, input)).retryable, true);
+  const budget = await f.core.budget(f.owner);
+  assert.equal(budget.spentMilliYen, 0);
+  assert.equal(budget.heldMilliYen, 0);
+});
+
+test("権限確認が期限後に完了しても背景送信を始めない", async () => {
+  const f = await topicFixtureCore({ extra: { timeoutMs: 1000 } });
+  let entered, release;
+  const checking = new Promise((resolve) => {
+    entered = resolve;
+  });
+  const decision = new Promise((resolve) => {
+    release = resolve;
+  });
+  const pending = f.core.proposeTopic(f.owner, topicRequest(), {
+    authorize: async () => {
+      entered();
+      return decision;
+    },
+  });
+  await checking;
+  assert.equal((await pending).status, "rejected");
+  release(true);
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.equal(f.calls(), 0);
+});
+
+test("計数後の権限失効では生成せず、計数済みの操作を全く未送信とは記録しない", async () => {
+  const f = await topicFixtureCore(),
+    input = topicRequest();
+  let allowed = true;
+  const calls = [];
+  f.core.topicGeneration.makeAdapter = (_provider, secret) =>
+    topicTextbookBudgetAdapter(
+      openaiTopicTextbookTransport({
+        model: registry[0].model,
+        reasoningEffort: "none",
+        mockOnly: true,
+        secret,
+        send: async (url) => {
+          calls.push(url);
+          allowed = false;
+          return Response.json({ input_tokens: 1000 });
+        },
+      }),
+    );
+  const result = await f.core.proposeTopic(f.owner, input, {
+    authorize: async () => allowed,
+  });
+  assert.equal(result.status, "rejected");
+  assert.equal(result.outcome, "credential-unavailable");
+  assert.deepEqual(calls, ["https://api.openai.com/v1/responses/input_tokens"]);
+  assert.equal((await f.core.lookupTopic(f.owner, input)).retryable, undefined);
+  assert.equal((await f.core.budget(f.owner)).spentMilliYen, 0);
+});
+
+for (const action of ["delete", "replace"])
+  test(`背景の権限確認待ちの${action}で古いキーを渡さない`, async () => {
+    const f = await topicFixtureCore({ extra: { timeoutMs: 1000 } }),
+      input = topicRequest();
+    let entered, release;
+    const checking = new Promise((resolve) => {
+      entered = resolve;
+    });
+    const decision = new Promise((resolve) => {
+      release = resolve;
+    });
+    const pending = f.core.proposeTopic(f.owner, input, {
+      authorize: async () => {
+        entered();
+        return decision;
+      },
+    });
+    await checking;
+    await f.core.mutate(
+      f.owner,
+      "openai",
+      action,
+      action === "replace"
+        ? mutation(1)
+        : { requestId: randomUUID(), expectedRevision: 1 },
+    );
+    release(true);
+    assert.equal((await pending).status, "credential-changed");
+    assert.equal(f.calls(), 0);
+    assert.equal((await f.core.budget(f.owner)).spentMilliYen, 0);
+    assert.equal((await f.core.lookupTopic(f.owner, input)).retryable, true);
+  });
 test("テーマの再送は現行の料金が古くても保存結果を返す", async () => {
   const f = await topicFixtureCore(),
     input = topicRequest();

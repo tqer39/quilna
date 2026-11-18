@@ -5,6 +5,7 @@ import { productionFetch } from "./better-auth.mjs";
 import { FeedCollector } from "./feed-collector.mjs";
 import { DocumentGateway } from "./document-gateway.mjs";
 import { topicGenerationInputSchema } from "../src/topic-generation-protocol.ts";
+import { topicJobAccess } from "./topic-job-access.mjs";
 export { TopicTextbookJobs } from "./topic-job-object.mjs";
 export { SourceDocument } from "./document-object.mjs";
 export class AccountVault extends DurableObject {
@@ -19,6 +20,11 @@ export class AccountVault extends DurableObject {
     });
     this.documents = new DocumentGateway(ctx.storage, env);
     this.topicJobsEnabled = env.TOPIC_TEXTBOOK_JOBS_ENABLED === "true";
+    this.canDispatchTopic = (owner) => topicJobAccess(owner, env);
+    this.topicJobs = {
+      binding: env.TOPIC_TEXTBOOK_JOBS,
+      enabled: this.topicJobsEnabled,
+    };
   }
   async fetch(request) {
     if (new URL(request.url).pathname === "/command/queued-topic") {
@@ -45,15 +51,28 @@ export class AccountVault extends DurableObject {
           !input.approvedQuoteDigest
         )
           throw Error("cost-unapproved");
+        if (!command.lookup && !(await this.canDispatchTopic(command.owner)))
+          return json(403, {
+            status: "topic-job-forbidden",
+            account: command.owner,
+          });
         const result = await (command.lookup
           ? this.core.lookupTopic(command.owner, input)
-          : this.core.proposeTopic(command.owner, input));
+          : this.core.proposeTopic(command.owner, input, {
+              authorize: () => this.canDispatchTopic(command.owner),
+            }));
         return json(200, { ...result, account: command.owner });
       } catch {
         return json(503, { status: "topic-job-unavailable" });
       }
     }
-    return handleAccount(this.core, request, this.collector, this.documents);
+    return handleAccount(
+      this.core,
+      request,
+      this.collector,
+      this.documents,
+      this.topicJobs,
+    );
   }
   async alarm() {
     await this.collector.alarm();

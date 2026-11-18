@@ -2,58 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import { z } from "zod";
 import { TopicJobQueue } from "./topic-job-queue.mjs";
 import { readBody, json } from "./http.mjs";
-
-const owner = z.string().regex(/^[a-f0-9]{64}$/);
-const commandSchema = z.discriminatedUnion("action", [
-  z
-    .object({
-      action: z.literal("cancel"),
-      owner,
-      id: z.string().uuid(),
-      confirm: z.literal(true),
-    })
-    .strict(),
-  z
-    .object({
-      action: z.literal("resume"),
-      owner,
-      id: z.string().uuid(),
-      confirm: z.literal(true),
-    })
-    .strict(),
-  z
-    .object({ action: z.literal("enqueue"), owner, input: z.unknown() })
-    .strict(),
-  z
-    .object({
-      action: z.literal("retry"),
-      owner,
-      input: z.unknown(),
-      confirm: z.literal(true),
-    })
-    .strict(),
-  z
-    .object({
-      action: z.literal("remove"),
-      owner,
-      id: z.string().uuid(),
-      confirm: z.literal(true),
-    })
-    .strict(),
-  z
-    .object({ action: z.literal("read"), owner, id: z.string().uuid() })
-    .strict(),
-  z
-    .object({ action: z.literal("refresh"), owner, id: z.string().uuid() })
-    .strict(),
-  z
-    .object({
-      action: z.literal("list"),
-      owner,
-      after: z.string().uuid().optional(),
-    })
-    .strict(),
-]);
+import { topicJobCommandSchema } from "./topic-job-commands.mjs";
 
 /** 内部binding専用。RSSのalarmと別のオブジェクトへ教材の予約を保持する。 */
 export class TopicTextbookJobs extends DurableObject {
@@ -72,6 +21,16 @@ export class TopicTextbookJobs extends DurableObject {
           body: JSON.stringify({ owner: account, input, lookup }),
         }),
       );
+      if (response.status === 403) {
+        const refusal = await readBody(response, 8192);
+        if (
+          refusal.status === "topic-job-forbidden" &&
+          refusal.account === account &&
+          Object.keys(refusal).length === 2
+        )
+          return { status: "account-forbidden", account };
+        throw Error("topic-job-unconfirmed");
+      }
       if (response.status !== 200) {
         await response.body?.cancel();
         throw Error("topic-job-unconfirmed");
@@ -91,7 +50,9 @@ export class TopicTextbookJobs extends DurableObject {
     )
       return json(404, { status: "not-found" });
     try {
-      const command = commandSchema.parse(await readBody(request, 400000));
+      const command = topicJobCommandSchema.parse(
+        await readBody(request, 400000),
+      );
       if (
         !this.namespace ||
         this.objectId.toString() !==

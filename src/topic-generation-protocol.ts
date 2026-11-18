@@ -56,6 +56,7 @@ export const topicTextbookEnvelopeSchema = z.discriminatedUnion("kind", [
 export type TopicTextbookEnvelope = z.infer<typeof topicTextbookEnvelopeSchema>;
 const account = z.string().regex(/^[a-f0-9]{64}$/);
 const failureStatus = z.enum([
+  "account-forbidden",
   "unconnected",
   "model-unapproved",
   "cost-unconfigured",

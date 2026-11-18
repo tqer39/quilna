@@ -24,13 +24,14 @@ test(
       })
     ).outputFiles[0].text;
     const origin = "http://app.test",
-      owner = await hash("local-only:test-a");
+      owner = await hash("better-auth:topic-fixture-user");
     let outbound = 0;
     const options = {
       modules: true,
       script,
       compatibilityDate: "2026-10-11",
       resourcePersistencePath: dir,
+      d1Databases: { AUTH_DB: "topic-job-auth" },
       durableObjects: {
         ACCOUNTS: { className: "AccountVault", useSQLite: true },
         TOPIC_TEXTBOOK_JOBS: {
@@ -40,6 +41,7 @@ test(
       },
       bindings: {
         APP_ORIGIN: origin,
+        GOOGLE_ALLOWED_EMAIL: "topic@example.test",
         TEST_INSTANCE_ID: "before-restart",
         TOPIC_TEXTBOOK_JOBS_ENABLED: "true",
         BYOK_ENCRYPTION_KEYRING: JSON.stringify({
@@ -57,6 +59,18 @@ test(
       await mf.dispose();
       await rm(dir, { recursive: true, force: true });
     });
+    const db = await mf.getD1Database("AUTH_DB");
+    await db.exec(
+      (
+        await readFile("migrations/auth/0001_better_auth.sql", "utf8")
+      ).replaceAll("\n", " "),
+    );
+    await db
+      .prepare(
+        'INSERT INTO "user" (id,name,email,"emailVerified","createdAt","updatedAt") VALUES (?,?,?,?,?,?)',
+      )
+      .bind("topic-fixture-user", "Fixture", "topic@example.test", 1, 0, 0)
+      .run();
     const request = async (path, body, csrf) =>
       mf.dispatchFetch(origin + path, {
         method: body ? "POST" : "GET",
@@ -76,6 +90,11 @@ test(
       return value;
     };
     const csrf = (await call("/api/session")).csrfToken;
+    assert.equal(
+      (await request("/api/topic-textbooks/jobs/list", {}, "invalid-csrf"))
+        .status,
+      403,
+    );
     await call(
       "/api/credentials/openai",
       {
@@ -148,9 +167,13 @@ test(
     assert.equal(wrongObject.status, 403);
     assert.equal(
       (await request("/api/topic-textbooks/jobs/enqueue", input, csrf)).status,
-      404,
+      400,
     );
-    const queued = await call("/__jobs", { action: "enqueue", owner, input });
+    const queued = await call(
+      "/api/topic-textbooks/jobs/enqueue",
+      { input },
+      csrf,
+    );
     assert.equal(queued.job.state, "queued");
     assert.equal(
       (
@@ -218,11 +241,15 @@ test(
       "after-restart",
     );
     assert.equal(
-      (await call("/__jobs", { action: "list", owner })).jobs.length,
+      (await call("/api/topic-textbooks/jobs/list", {}, csrf)).jobs.length,
       1,
     );
     assert.deepEqual(
-      await call("/__jobs", { action: "refresh", owner, id: input.requestId }),
+      await call(
+        "/api/topic-textbooks/jobs/refresh",
+        { id: input.requestId },
+        csrf,
+      ),
       completed,
     );
     assert.equal(
@@ -304,6 +331,85 @@ test(
         .status,
       413,
     );
+    const revokedRaw = JSON.parse(requestRaw);
+    revokedRaw.id = crypto.randomUUID();
+    const revokedInput = {
+      ...input,
+      requestId: revokedRaw.id,
+      requestRaw: JSON.stringify(revokedRaw),
+    };
+    await call("/__dispatch-gate", { owner, hold: true });
+    try {
+      await call(
+        "/api/topic-textbooks/jobs/enqueue",
+        { input: revokedInput },
+        csrf,
+      );
+      const checkingDeadline = Date.now() + 10000;
+      let checking = false;
+      do {
+        checking = (await call("/__topic-calls", { owner })).checking;
+        if (checking) break;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      } while (Date.now() < checkingDeadline);
+      assert.equal(checking, true);
+      await (
+        await mf.getD1Database("AUTH_DB")
+      )
+        .prepare('UPDATE "user" SET "emailVerified"=0 WHERE id=?')
+        .bind("topic-fixture-user")
+        .run();
+    } finally {
+      await call("/__dispatch-gate", { owner, hold: false });
+    }
+    const deadline = Date.now() + 10000;
+    let revoked;
+    do {
+      revoked = await call(
+        "/api/topic-textbooks/jobs/read",
+        { id: revokedInput.requestId },
+        csrf,
+      );
+      if (revoked.job.state === "rejected") break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    } while (Date.now() < deadline);
+    assert.equal(revoked.job.state, "rejected", JSON.stringify(revoked));
+    assert.equal(revoked.job.reason, "access-unavailable");
+    assert.equal(revoked.job.result.status, "account-forbidden");
+    assert.deepEqual(
+      await call(
+        "/api/topic-textbooks/jobs/refresh",
+        { id: revokedInput.requestId },
+        csrf,
+      ),
+      revoked,
+    );
+    assert.equal((await call("/__topic-calls", { owner })).calls, 1);
+    assert.deepEqual(await call("/api/budget"), budget);
+    await (
+      await mf.getD1Database("AUTH_DB")
+    )
+      .prepare('UPDATE "user" SET "emailVerified"=1 WHERE id=?')
+      .bind("topic-fixture-user")
+      .run();
+    await call(
+      "/api/topic-textbooks/jobs/retry",
+      { input: revokedInput, confirm: true },
+      csrf,
+    );
+    const retryDeadline = Date.now() + 10000;
+    let retried;
+    do {
+      retried = await call(
+        "/api/topic-textbooks/jobs/read",
+        { id: revokedInput.requestId },
+        csrf,
+      );
+      if (retried.job.state === "complete") break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    } while (Date.now() < retryDeadline);
+    assert.equal(retried.job.state, "complete", JSON.stringify(retried));
+    assert.equal((await call("/__topic-calls", { owner })).calls, 2);
     options.bindings.TOPIC_TEXTBOOK_JOBS_ENABLED = "false";
     await mf.dispose();
     mf = new Miniflare(convertV4MiniflareOptions(options));
@@ -328,7 +434,7 @@ test(
       await call("/__jobs", { action: "read", owner, id: input.requestId }),
       completed,
     );
-    assert.equal((await call("/__topic-calls", { owner })).calls, 1);
+    assert.equal((await call("/__topic-calls", { owner })).calls, 2);
     assert.equal(outbound, 0);
   },
 );

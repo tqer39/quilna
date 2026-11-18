@@ -304,9 +304,15 @@ export class AccountVaultCore {
     const request = requestSchema.parse(input);
     return this.proposeUsing(owner, request, this.generation);
   }
-  async proposeTopic(owner, input) {
+  async proposeTopic(owner, input, { authorize = null } = {}) {
     const request = topicTextbookContract.requestSchema.parse(input);
-    return this.proposeUsing(owner, request, this.topicGeneration, true);
+    return this.proposeUsing(
+      owner,
+      request,
+      this.topicGeneration,
+      true,
+      authorize,
+    );
   }
   async topicStatus(owner) {
     const budget = await this.budget(owner);
@@ -387,7 +393,13 @@ export class AccountVaultCore {
       };
     });
   }
-  async proposeUsing(owner, request, configuration, topic = false) {
+  async proposeUsing(
+    owner,
+    request,
+    configuration,
+    topic = false,
+    authorize = null,
+  ) {
     if (!configuration) return { status: "unconnected" };
     const model = configuration.registry.find(
       (m) =>
@@ -437,6 +449,9 @@ export class AccountVaultCore {
         credential.revision,
         this.keyring,
       );
+      if (operationSignal.aborted) throw Error("credential-cancelled");
+      if (authorize && !(await authorize()))
+        throw Error("credential-unavailable");
       if (operationSignal.aborted) throw Error("credential-cancelled");
       const confirmed = await this.status(owner, provider);
       if (operationSignal.aborted) throw Error("credential-cancelled");

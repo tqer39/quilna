@@ -3,6 +3,7 @@ import { hash, bytes } from "./crypto.mjs";
 import { libraryStatus } from "./library-status.mjs";
 import { topicTextbookContract } from "../server/topic-textbook-contract.mjs";
 import { publicDocuments, publicDocumentPaths } from "./public-documents.mjs";
+import { topicJobPayloads, topicJobDispatches } from "./topic-job-commands.mjs";
 const principal = z
   .object({
     subject: z.string().min(1).max(300),
@@ -218,6 +219,75 @@ export function createHandler({
           }),
         );
       }
+      if (url.pathname.startsWith("/api/topic-textbooks/jobs/")) {
+        const action = url.pathname.slice("/api/topic-textbooks/jobs/".length);
+        if (
+          request.method !== "POST" ||
+          !Object.hasOwn(topicJobPayloads, action)
+        )
+          return json(404, { status: "not-found" });
+        if (request.headers.get("X-Library-Account") !== owner)
+          return json(403, { status: "account-mismatch" });
+        if (topicJobDispatches.has(action) && !credentialsEnabled)
+          return json(503, {
+            status: "credentials-unconfigured",
+            realKeyInputEnabled: false,
+          });
+        if (
+          !env.TOPIC_TEXTBOOK_JOBS ||
+          (topicJobDispatches.has(action) &&
+            env.TOPIC_TEXTBOOK_JOBS_ENABLED !== "true")
+        )
+          return json(503, { status: "topic-jobs-unconfigured" });
+        const csrf = request.headers.get("X-CSRF-Token");
+        if (typeof csrf !== "string" || csrf.length > 200)
+          return json(403, { status: "csrf-invalid" });
+        let data;
+        try {
+          data = await readBody(request, topicTextbookContract.bodyBytes);
+        } catch (error) {
+          return json(error.message === "body-limit" ? 413 : 400, {
+            status: "invalid-request",
+          });
+        }
+        const parsed = topicJobPayloads[action].safeParse(data);
+        if (!parsed.success) return json(400, { status: "invalid-request" });
+        if (
+          ["enqueue", "retry"].includes(action) &&
+          (parsed.data.input.approvedMaxMilliYen === undefined ||
+            !parsed.data.input.approvedQuoteDigest)
+        )
+          return json(400, { status: "cost-unapproved" });
+        const before = principal.safeParse(await authenticate(request));
+        if (
+          !before.success ||
+          before.data.subject !== verified.data.subject ||
+          before.data.sessionId !== verified.data.sessionId
+        )
+          return json(401, { status: "unauthenticated" });
+        const result = await stub.fetch(
+          new Request("https://account.internal/command/topic-jobs", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              action: "topic-job-" + action,
+              principal: verified.data,
+              csrf,
+              data: parsed.data,
+            }),
+          }),
+        );
+        const after = principal.safeParse(await authenticate(request));
+        if (
+          !after.success ||
+          after.data.subject !== verified.data.subject ||
+          after.data.sessionId !== verified.data.sessionId
+        ) {
+          await result.body?.cancel();
+          return json(401, { status: "unauthenticated" });
+        }
+        return result;
+      }
       if (url.pathname.startsWith("/api/topic-textbooks/")) {
         const action = {
           "/api/topic-textbooks/status": "topic-status",
@@ -346,18 +416,38 @@ export function createHandler({
     }
   };
 }
-export async function handleAccount(core, request, collector, documents) {
+export async function handleAccount(core, request, collector, documents, jobs) {
   let topic = false,
     owner;
   try {
-    topic = new URL(request.url).pathname === "/command/topic-textbooks";
+    const job = new URL(request.url).pathname === "/command/topic-jobs";
+    if (
+      job &&
+      (request.method !== "POST" ||
+        request.url !== "https://account.internal/command/topic-jobs")
+    )
+      return json(404, { status: "not-found" });
+    topic = job || new URL(request.url).pathname === "/command/topic-textbooks";
     const command = await readBody(
       request,
       topic ? topicTextbookContract.bodyBytes + 4096 : 32768,
     );
+    const jobAction =
+      job &&
+      typeof command.action === "string" &&
+      command.action.startsWith("topic-job-")
+        ? command.action.slice("topic-job-".length)
+        : null;
     if (
-      topic !==
-      ["topic-propose", "topic-lookup", "topic-status"].includes(command.action)
+      (!job &&
+        typeof command.action === "string" &&
+        command.action.startsWith("topic-job-")) ||
+      (job
+        ? !Object.hasOwn(topicJobPayloads, jobAction)
+        : topic !==
+          ["topic-propose", "topic-lookup", "topic-status"].includes(
+            command.action,
+          ))
     )
       throw Error("invalid-command");
     // Internal binding only. No browser-selected owner or credential handles.
@@ -376,8 +466,28 @@ export async function handleAccount(core, request, collector, documents) {
         "document-status",
         "document-admin-status",
       ].includes(command.action),
-      { countRate: command.action !== "topic-lookup" },
+      {
+        countRate:
+          command.action !== "topic-lookup" &&
+          !(job && ["read", "list"].includes(jobAction)),
+      },
     );
+    if (job) {
+      if (
+        !jobs?.binding ||
+        (topicJobDispatches.has(jobAction) && !jobs.enabled)
+      )
+        return json(503, { status: "topic-jobs-unconfigured" });
+      const parsed = topicJobPayloads[jobAction].safeParse(command.data);
+      if (!parsed.success) return json(400, { status: "invalid-request" });
+      return jobs.binding.get(jobs.binding.idFromName(owner)).fetch(
+        new Request("https://topic-jobs.internal/command", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...parsed.data, action: jobAction, owner }),
+        }),
+      );
+    }
     if (command.action?.startsWith("document-")) {
       if (!documents) return json(503, { status: "document-unconfigured" });
       return documents.handle(

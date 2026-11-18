@@ -532,6 +532,22 @@ test("不正な偽値の索引を未作成と見なして置き換えない", as
   }
 });
 
+test("権限拒否は拒否済みとして理由を保持し、再照会で結果不明へ戻さず明示削除できる", async () => {
+  const f = fixture({
+      run: async () => ({ status: "account-forbidden", account: owner }),
+    }),
+    command = input();
+  await f.queue.enqueue(owner, command);
+  await f.queue.alarm();
+  const saved = await f.queue.read(owner, command.requestId);
+  assert.equal(saved.state, "rejected");
+  assert.equal(saved.reason, "access-unavailable");
+  assert.deepEqual(await f.queue.refresh(owner, command.requestId), saved);
+  assert.equal(f.lookups(), 0);
+  await f.queue.remove(owner, command.requestId);
+  assert.equal(await f.queue.read(owner, command.requestId), null);
+});
+
 test("無効化中に消えた予定をIDだけで再開でき、未実行の予約を取消して枠を空けられる", async () => {
   const f = fixture(),
     command = input();
