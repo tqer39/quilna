@@ -1,5 +1,13 @@
 import { z } from "zod";
 import {
+  topicJobListSchema,
+  topicJobReplySchema,
+  topicJobRemovedSchema,
+  topicJobReadInputSchema,
+  topicJobListInputSchema,
+  topicJobConfirmInputSchema,
+} from "./topic-job-protocol";
+import {
   parseSharedJSON,
   parseTextbookCandidate,
   parseReviewedTextbookCandidate,
@@ -32,6 +40,14 @@ const errors = z.enum([
   "response-limit",
   "rate-limit",
   "held",
+  "topic-jobs-unconfigured",
+  "topic-job-owner",
+  "topic-job-active",
+  "topic-job-missing",
+  "topic-job-cursor",
+  "topic-job-unavailable",
+  "topic-job-request",
+  "not-found",
 ]);
 export class TopicClientError extends Error {
   constructor(readonly code: string) {
@@ -61,7 +77,8 @@ export class TopicGenerationClient {
   private async request(
     path: string,
     signal: AbortSignal,
-    input?: TopicGenerationInput,
+    input?: unknown,
+    responseLimit = 262144,
   ) {
     this.check(signal);
     const timeout = new AbortController(),
@@ -99,7 +116,8 @@ export class TopicGenerationClient {
         this.check(combined);
         if (chunk.done) break;
         size += chunk.value.byteLength;
-        if (size > 262144) throw new TopicClientError("invalid-response");
+        if (size > responseLimit)
+          throw new TopicClientError("invalid-response");
         raw += decoder.decode(chunk.value, { stream: true });
       }
       raw += decoder.decode();
@@ -114,7 +132,9 @@ export class TopicGenerationClient {
           response.status === 401 ||
           (response.status === 403 &&
             code.success &&
-            ["account-mismatch", "owner-mismatch"].includes(code.data))
+            ["account-mismatch", "owner-mismatch", "topic-job-owner"].includes(
+              code.data,
+            ))
         ) {
           this.csrf = "";
           this.identityLost();
@@ -157,6 +177,82 @@ export class TopicGenerationClient {
     }
     this.csrf = parsed.data.csrfToken;
     this.mode = parsed.data.mode;
+    return parsed.data;
+  }
+  /** 結果の回収は生成と分離し、通信失敗時も予約・再送を行わない。 */
+  async jobs(
+    action: "list",
+    input: { after?: string },
+    signal: AbortSignal,
+  ): Promise<z.infer<typeof topicJobListSchema>>;
+  async jobs(
+    action: "read" | "refresh" | "cancel",
+    input: { id: string; confirm?: true },
+    signal: AbortSignal,
+  ): Promise<z.infer<typeof topicJobReplySchema>>;
+  async jobs(
+    action: "remove",
+    input: { id: string; confirm: true },
+    signal: AbortSignal,
+  ): Promise<z.infer<typeof topicJobRemovedSchema>>;
+  async jobs(
+    action: "list" | "read" | "refresh" | "cancel" | "remove",
+    input: unknown,
+    signal: AbortSignal,
+  ) {
+    const schema =
+      action === "list"
+        ? topicJobListInputSchema
+        : ["cancel", "remove"].includes(action)
+          ? topicJobConfirmInputSchema
+          : topicJobReadInputSchema;
+    const command = schema.safeParse(input);
+    if (!command.success) throw new TopicClientError("invalid-request");
+    await this.status(signal);
+    const raw = await this.request(
+      `jobs/${action}`,
+      signal,
+      command.data,
+      270336,
+    );
+    this.check(signal);
+    const parsed = (
+      action === "list"
+        ? topicJobListSchema
+        : action === "remove"
+          ? topicJobRemovedSchema
+          : topicJobReplySchema
+    ).safeParse(raw);
+    if (!parsed.success) throw new TopicClientError("invalid-response");
+    const after = "after" in command.data ? command.data.after : undefined;
+    if (
+      "jobs" in parsed.data &&
+      after &&
+      parsed.data.jobs.some((job) => job.id === after)
+    )
+      throw new TopicClientError("invalid-response");
+    if (
+      parsed.data.account !== this.account ||
+      ("job" in parsed.data &&
+        parsed.data.job?.result &&
+        parsed.data.job.result.account !== this.account)
+    ) {
+      this.csrf = "";
+      this.identityLost();
+      throw new TopicClientError("account-mismatch");
+    }
+    if (
+      "job" in parsed.data &&
+      parsed.data.job &&
+      "id" in command.data &&
+      parsed.data.job.id !== command.data.id
+    )
+      throw new TopicClientError("invalid-response");
+    if (
+      action === "cancel" &&
+      (!("job" in parsed.data) || parsed.data.job?.state !== "cancelled")
+    )
+      throw new TopicClientError("invalid-response");
     return parsed.data;
   }
   async operate(

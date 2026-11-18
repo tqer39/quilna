@@ -323,3 +323,188 @@ it("CSRFだけの失効は所有者を無効化せず、明示的な次の操作
   );
   expect(f.calls.filter((c) => c.url.endsWith("/status"))).toHaveLength(2);
 });
+
+const jobID = "e9cae8c8-692f-49e8-9a4f-b2a92c8061c3";
+const queued = () => ({
+  id: jobID,
+  state: "queued",
+  createdAt: 1800000000000,
+  updatedAt: 1800000000000,
+  reason: "",
+  result: null,
+});
+it("未接続でもCSRFを確認し保存済みジョブを読み、生成を送らない", async () => {
+  const f = setup(() => Response.json({ account, job: queued() }), {
+    ...capabilities,
+    mode: "unconnected" as typeof capabilities.mode,
+    quotes: [],
+  });
+  expect((await f.client.jobs("read", { id: jobID }, signal())).job).toEqual(
+    queued(),
+  );
+  expect(f.calls.map((call) => call.url)).toEqual([
+    "/api/topic-textbooks/status",
+    "/api/topic-textbooks/jobs/read",
+  ]);
+  expect(f.calls[1].init).toMatchObject({
+    method: "POST",
+    headers: {
+      "X-CSRF-Token": capabilities.csrfToken,
+      "X-Library-Account": account,
+    },
+  });
+  expect(JSON.parse(String(f.calls[1].init?.body))).toEqual({ id: jobID });
+});
+it("ジョブの変更は明示確認を必須とし、所有者の注入や余計な項目を送らない", async () => {
+  const f = setup();
+  await expect(
+    f.client.jobs("cancel", { id: jobID }, signal()),
+  ).rejects.toHaveProperty("code", "invalid-request");
+  await expect(
+    f.client.jobs(
+      "read",
+      { id: jobID, owner: account } as { id: string },
+      signal(),
+    ),
+  ).rejects.toHaveProperty("code", "invalid-request");
+  expect(f.calls).toHaveLength(0);
+});
+it("別アカウントや別IDのジョブ結果を受け入れない", async () => {
+  const f = setup(() =>
+    Response.json({ account, job: { ...queued(), id: crypto.randomUUID() } }),
+  );
+  await expect(
+    f.client.jobs("read", { id: jobID }, signal()),
+  ).rejects.toHaveProperty("code", "invalid-response");
+  const g = setup(() =>
+    Response.json({ account: "b".repeat(64), jobs: [], after: null }),
+  );
+  await expect(g.client.jobs("list", {}, signal())).rejects.toHaveProperty(
+    "code",
+    "account-mismatch",
+  );
+  expect(g.lost()).toBe(1);
+  const h = setup(() =>
+    Response.json({
+      account,
+      job: {
+        ...queued(),
+        state: "rejected",
+        result: { status: "account-forbidden", account: "b".repeat(64) },
+      },
+    }),
+  );
+  await expect(
+    h.client.jobs("read", { id: jobID }, signal()),
+  ).rejects.toHaveProperty("code", "account-mismatch");
+});
+it("不整合な完了・重複一覧・循環カーソルを拒否する", async () => {
+  const f = setup(() =>
+    Response.json({ account, job: { ...queued(), state: "complete" } }),
+  );
+  await expect(
+    f.client.jobs("read", { id: jobID }, signal()),
+  ).rejects.toHaveProperty("code", "invalid-response");
+  const { result: ignored, ...summary } = queued();
+  void ignored;
+  const g = setup(() =>
+    Response.json({ account, jobs: [summary, summary], after: null }),
+  );
+  await expect(g.client.jobs("list", {}, signal())).rejects.toHaveProperty(
+    "code",
+    "invalid-response",
+  );
+  const h = setup(() =>
+    Response.json({ account, jobs: [summary], after: crypto.randomUUID() }),
+  );
+  await expect(h.client.jobs("list", {}, signal())).rejects.toHaveProperty(
+    "code",
+    "invalid-response",
+  );
+});
+it("ジョブ応答の待機中のアカウント変更・中止を採用せず、失敗時も再送しない", async () => {
+  let release!: () => void, entered!: () => void;
+  const waiting = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const f = setup(async () => {
+    entered();
+    await gate;
+    return Response.json({ account, job: queued() });
+  });
+  const pending = f.client.jobs("read", { id: jobID }, signal());
+  await waiting;
+  f.owner("b".repeat(64));
+  release();
+  await expect(pending).rejects.toHaveProperty("code", "account-mismatch");
+  expect(f.calls).toHaveLength(2);
+  const g = setup(() => {
+    throw Error("network");
+  });
+  await expect(
+    g.client.jobs("cancel", { id: jobID, confirm: true }, signal()),
+  ).rejects.toHaveProperty("code", "held");
+  expect(g.calls.filter((call) => call.url.endsWith("/cancel"))).toHaveLength(
+    1,
+  );
+});
+it("同じページへ戻るジョブカーソルと大きすぎる応答を再送せず拒否する", async () => {
+  const { result: ignored, ...summary } = queued();
+  void ignored;
+  const f = setup(() =>
+    Response.json({ account, jobs: [summary], after: jobID }),
+  );
+  await expect(
+    f.client.jobs("list", { after: jobID }, signal()),
+  ).rejects.toHaveProperty("code", "invalid-response");
+  const g = setup(
+    () =>
+      new Response(" ".repeat(270337), {
+        headers: { "Content-Type": "application/json" },
+      }),
+  );
+  await expect(
+    g.client.jobs("read", { id: jobID }, signal()),
+  ).rejects.toHaveProperty("code", "invalid-response");
+  expect(g.calls).toHaveLength(2);
+});
+it("取消の成功応答には取消済みの状態を要求する", async () => {
+  const f = setup(() => Response.json({ account, job: queued() }));
+  await expect(
+    f.client.jobs("cancel", { id: jobID, confirm: true }, signal()),
+  ).rejects.toHaveProperty("code", "invalid-response");
+  expect(f.calls.filter((call) => call.url.endsWith("/cancel"))).toHaveLength(
+    1,
+  );
+});
+it("ジョブの所有者拒否でも本人性を失効させる", async () => {
+  const f = setup(() =>
+    Response.json({ status: "topic-job-owner" }, { status: 403 }),
+  );
+  await expect(f.client.jobs("list", {}, signal())).rejects.toHaveProperty(
+    "code",
+    "topic-job-owner",
+  );
+  expect(f.lost()).toBe(1);
+});
+it("保存上限近くの大きな結果を外側の包みとともに読み取る", async () => {
+  const reply = {
+    account,
+    job: {
+      ...queued(),
+      state: "complete",
+      result: {
+        ...result(),
+        draft: { ...result().draft, json: "\u0001".repeat(43000) },
+      },
+    },
+  };
+  expect(
+    new TextEncoder().encode(JSON.stringify(reply)).length,
+  ).toBeGreaterThan(258000);
+  const f = setup(() => Response.json(reply));
+  expect(await f.client.jobs("read", { id: jobID }, signal())).toEqual(reply);
+});

@@ -1,4 +1,5 @@
 import { topicGenerationView } from "./topic-generation-view";
+import { topicJobView } from "./topic-job-view";
 import { textbookNoticeView } from "./textbook-notice-view";
 import { hasAccountLibrary } from "./library-context";
 import { button, el } from "./ui";
@@ -212,6 +213,7 @@ export async function sharedTextbookView(root: HTMLElement) {
   library.append(
     list,
     listWarning,
+    topicJobView(),
     topicGenerationView(async (id) => {
       await showList(id);
     }),

@@ -1591,3 +1591,39 @@ header {
   border-top: 1px solid var(--border);
   margin-top: 1rem;
 }
+
+.topic-job-status {
+  border-block: 1px solid var(--border, #879c9c);
+  padding-block: 1rem;
+}
+.topic-job-list {
+  list-style: none;
+  padding: 0;
+  margin-block: 1rem;
+}
+.topic-job-status > summary {
+  font-size: 1.15rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.topic-job-status button {
+  min-height: 44px;
+  max-width: 100%;
+  white-space: normal;
+}
+.topic-job-row {
+  border-top: 1px solid var(--border, #879c9c);
+  padding-block: 1rem;
+}
+.topic-job-row h3 {
+  font-size: 1rem;
+  margin-block: 0 0.4rem;
+}
+.topic-job-row p {
+  margin-block: 0.4rem;
+}
+.topic-job-confirm {
+  border-inline-start: 3px solid var(--border, #879c9c);
+  padding-inline-start: 0.8rem;
+  margin-block: 0.7rem;
+}
