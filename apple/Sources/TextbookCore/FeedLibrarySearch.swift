@@ -18,86 +18,156 @@ enum FeedArticleSearchIndex {
     ]
     private static let installedObjects = requiredObjects.union(shadowObjects)
 
+    private static let preparationTable = "article_search_preparation"
+    private static let preparationSchema = "CREATE TABLE article_search_preparation(singleton INTEGER PRIMARY KEY CHECK(singleton=1),version INTEGER NOT NULL CHECK(version=1),last_rowid INTEGER,processed INTEGER NOT NULL CHECK(processed>=0))"
+
     static func preflight(on db: OpaquePointer) throws {
-        let snapshot = try schemaSnapshot(db)
-        let objects = snapshot.objects
-        let reserved = Set(objects.filter { $0.hasPrefix(objectPrefix) })
-        guard !reserved.isEmpty else { return }
-        guard let versions = snapshot.versions else { throw FeedError.corrupted }
-        guard versions.1 == normalizationVersion else {
-            throw FeedError.corrupted
-        }
-        if versions.0 == schemaVersion {
-            guard reserved == installedObjects else {
-                throw FeedError.corrupted
-            }
-            try validateSchema(db, version: schemaVersion)
-        } else if versions.0 == 1 {
-            let legacyRequired = requiredObjects.subtracting(["article_search_documents_order"])
-            let legacyInstalled = installedObjects.subtracting(["article_search_documents_order"])
-            guard reserved == legacyInstalled, legacyRequired.isSubset(of: objects) else {
-                throw FeedError.corrupted
-            }
-            try validateSchema(db, version: 1)
-        } else {
-            throw FeedError.corrupted
+        // Validation and the optional preparation marker must share a snapshot:
+        // another scene can complete preparation while this connection opens.
+        try exec(db, "BEGIN")
+        do {
+            try validateInstallation(db)
+            try exec(db, "COMMIT")
+        } catch {
+            try? exec(db, "ROLLBACK")
+            throw error
         }
     }
 
-    static func prepare(on db: OpaquePointer) throws {
-        let initialSnapshot = try schemaSnapshot(db)
-        let initialObjects = initialSnapshot.objects
-        let initialReserved = Set(initialObjects.filter { $0.hasPrefix(objectPrefix) })
-        if !initialReserved.isEmpty {
-            guard let versions = initialSnapshot.versions else { throw FeedError.corrupted }
-            guard versions.1 == normalizationVersion else {
+    private static func validateInstallation(_ db: OpaquePointer) throws {
+        let objects = try schemaObjects(db)
+        let reserved = Set(objects.filter { $0.hasPrefix(objectPrefix) })
+        guard !reserved.isEmpty else { return }
+        let versions = try metadataVersions(db)
+        guard versions.1 == normalizationVersion else { throw FeedError.corrupted }
+        if versions.0 == schemaVersion {
+            guard reserved == installedObjects || reserved == installedObjects.union([preparationTable]) else {
                 throw FeedError.corrupted
             }
-            if versions.0 == schemaVersion {
-                guard initialReserved == installedObjects else {
+            try validateSchema(db, version: schemaVersion)
+            if reserved.contains(preparationTable) {
+                guard try scalarText(db, "SELECT sql FROM sqlite_master WHERE type='table' AND name='article_search_preparation'") == preparationSchema else {
                     throw FeedError.corrupted
                 }
-                try validateSchema(db, version: schemaVersion)
-                return
+                _ = try preparationCursor(db)
             }
-            guard versions.0 == 1,
-                  initialReserved == installedObjects.subtracting(["article_search_documents_order"]),
-                  requiredObjects.subtracting(["article_search_documents_order"]).isSubset(of: initialObjects) else {
+        } else if versions.0 == 1 {
+            guard reserved == installedObjects.subtracting(["article_search_documents_order"]) else {
                 throw FeedError.corrupted
             }
             try validateSchema(db, version: 1)
+        } else { throw FeedError.corrupted }
+    }
+
+    static func prepare(on db: OpaquePointer, deferred: Bool = false) throws {
+        try preflight(on: db)
+        // Ready v2 stores open without acquiring a write lock.
+        if try schemaObjects(db).contains("article_search_metadata"),
+           try metadataVersions(db).0 == schemaVersion {
+            if !deferred {
+                while try !preparationStatus(on: db).isReady { _ = try prepareBatch(on: db) }
+            }
+            return
         }
         try exec(db, "BEGIN IMMEDIATE")
         do {
-            // Another process may have completed the installation while this
-            // connection was waiting for the write lock. Re-read under the
-            // lock so two first opens never both execute CREATE statements.
+            // Recheck under the write lock to coordinate simultaneous first opens.
+            try validateInstallation(db)
             let objects = try schemaObjects(db)
-            let reserved = Set(objects.filter { $0.hasPrefix(objectPrefix) })
-            if reserved.isEmpty {
+            if !objects.contains("article_search_metadata") {
                 try exec(db, schema)
-                try backfill(db)
-            } else {
-                let versions = try metadataVersions(db)
-                guard versions.1 == normalizationVersion else {
-                    throw FeedError.corrupted
-                }
-                if versions.0 == 1 {
-                    guard reserved == installedObjects.subtracting(["article_search_documents_order"]),
-                          requiredObjects.subtracting(["article_search_documents_order"]).isSubset(of: objects) else {
-                        throw FeedError.corrupted
-                    }
-                    try validateSchema(db, version: 1)
-                    try exec(db, "CREATE UNIQUE INDEX article_search_documents_order ON article_search_documents(order_id)")
-                    try exec(db, "UPDATE article_search_metadata SET schema_version=2 WHERE singleton=1")
-                } else {
-                    guard versions.0 == schemaVersion, reserved == installedObjects else {
-                        throw FeedError.corrupted
-                    }
-                }
-                try validateSchema(db, version: schemaVersion)
+                if deferred {
+                    try exec(db, preparationSchema)
+                    try exec(db, "INSERT INTO article_search_preparation VALUES(1,1,NULL,0)")
+                } else { try backfill(db) }
+            } else if try metadataVersions(db).0 == 1 {
+                try exec(db, "CREATE UNIQUE INDEX article_search_documents_order ON article_search_documents(order_id)")
+                try exec(db, "UPDATE article_search_metadata SET schema_version=2 WHERE singleton=1")
             }
             try exec(db, "COMMIT")
+        } catch {
+            try? exec(db, "ROLLBACK")
+            throw error
+        }
+        if !deferred {
+            while try !preparationStatus(on: db).isReady { _ = try prepareBatch(on: db) }
+        }
+    }
+
+    static func preparationStatus(on db: OpaquePointer) throws -> ArticleSearchPreparation {
+        // A read transaction also protects against another connection dropping
+        // the marker between its existence check and the progress read.
+        try exec(db, "BEGIN")
+        do {
+            let result: ArticleSearchPreparation
+            if try schemaObjects(db).contains(preparationTable) {
+                result = .preparing(processedArticles: try preparationCursor(db).processed)
+            } else { result = .ready }
+            try exec(db, "COMMIT")
+            return result
+        } catch {
+            try? exec(db, "ROLLBACK")
+            throw error
+        }
+    }
+
+    private static func preparationCursor(_ db: OpaquePointer) throws -> (rowID: Int64?, processed: Int64) {
+        let statement = try prepare(db, "SELECT last_rowid,processed FROM article_search_preparation WHERE singleton=1 AND version=1 AND (SELECT count(*) FROM article_search_preparation)=1")
+        defer { sqlite3_finalize(statement) }
+        guard sqlite3_step(statement) == SQLITE_ROW,
+              [SQLITE_NULL, SQLITE_INTEGER].contains(sqlite3_column_type(statement, 0)),
+              sqlite3_column_type(statement, 1) == SQLITE_INTEGER,
+              sqlite3_column_int64(statement, 1) >= 0 else { throw FeedError.corrupted }
+        return (sqlite3_column_type(statement, 0) == SQLITE_NULL ? nil : sqlite3_column_int64(statement, 0),
+                sqlite3_column_int64(statement, 1))
+    }
+
+    static func prepareBatch(on db: OpaquePointer) throws -> ArticleSearchPreparation {
+        try Task.checkCancellation()
+        try exec(db, "BEGIN IMMEDIATE")
+        do {
+            guard try schemaObjects(db).contains(preparationTable) else {
+                try exec(db, "COMMIT")
+                return .ready
+            }
+            let cursor = try preparationCursor(db)
+            let sql = cursor.rowID == nil
+                ? "SELECT rowid,id FROM articles ORDER BY rowid LIMIT 8"
+                : "SELECT rowid,id FROM articles WHERE rowid>? ORDER BY rowid LIMIT 8"
+            let select = try prepare(db, sql)
+            var rows: [(Int64, String)] = []
+            do {
+                defer { sqlite3_finalize(select) }
+                if let rowID = cursor.rowID {
+                    guard sqlite3_bind_int64(select, 1, rowID) == SQLITE_OK else { throw FeedError.unavailable }
+                }
+                while true {
+                    let step = sqlite3_step(select)
+                    if step == SQLITE_DONE { break }
+                    guard step == SQLITE_ROW else { throw FeedError.unavailable }
+                    rows.append((sqlite3_column_int64(select, 0), try text(select, 1)))
+                }
+            }
+            if rows.isEmpty {
+                try exec(db, "DROP TABLE article_search_preparation")
+                try exec(db, "COMMIT")
+                return .ready
+            }
+            let clock = ContinuousClock()
+            let start = clock.now
+            var processed = cursor.processed
+            for (rowID, articleID) in rows {
+                try Task.checkCancellation()
+                try reindex(articleID: articleID, on: db)
+                processed += 1
+                // Cursor and FTS writes commit together. A crash can only resume
+                // from a fully committed batch. Each call releases the writer.
+                try exec(db, "UPDATE article_search_preparation SET last_rowid=\(rowID),processed=\(processed) WHERE singleton=1")
+                if start.duration(to: clock.now) >= .milliseconds(8) { break }
+            }
+            try Task.checkCancellation()
+            try exec(db, "COMMIT")
+            return .preparing(processedArticles: processed)
         } catch {
             try? exec(db, "ROLLBACK")
             throw error
@@ -294,24 +364,6 @@ enum FeedArticleSearchIndex {
             throw FeedError.corrupted
         }
         return (Int(sqlite3_column_int64(statement, 0)), Int(sqlite3_column_int64(statement, 1)))
-    }
-
-    private static func schemaSnapshot(_ db: OpaquePointer) throws -> (
-        objects: Set<String>, versions: (Int, Int)?
-    ) {
-        try exec(db, "BEGIN")
-        do {
-            let objects = try schemaObjects(db)
-            let reserved = objects.contains { $0.hasPrefix(objectPrefix) }
-            let versions: (Int, Int)?
-            if reserved { versions = try metadataVersions(db) }
-            else { versions = nil }
-            try exec(db, "COMMIT")
-            return (objects, versions)
-        } catch {
-            try? exec(db, "ROLLBACK")
-            throw error
-        }
     }
 
     private static func schemaObjects(_ db: OpaquePointer) throws -> Set<String> {
@@ -527,6 +579,7 @@ private final class FeedSearchHandle: @unchecked Sendable {
 
 actor FeedLibrarySearchReader {
     private let connection: FeedSearchHandle
+    private var indexReady = false
 
     init(url: URL) throws {
         var opened: OpaquePointer?
@@ -574,6 +627,14 @@ actor FeedLibrarySearchReader {
     }
 
     private func execute(_ request: ArticleSearchRequest, expression: String, limit: Int) throws -> ArticleSearchPage {
+        // Readiness is monotonic for this schema. Once ready, normal queries
+        // retain their single joined snapshot without a per-call metadata read.
+        if !indexReady {
+            guard try FeedArticleSearchIndex.preparationStatus(on: connection.db).isReady else {
+                throw ArticleSearchError.notReady
+            }
+            indexReady = true
+        }
         var predicates = [
             "article_search_fts MATCH ?",
             "d.indexed_source_fingerprint=d.source_fingerprint",

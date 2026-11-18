@@ -539,14 +539,15 @@ private final class FeedSQLiteHandle: @unchecked Sendable {
     deinit { sqlite3_close_v2(db) }
 }
 
-public actor FeedLibraryStore: ArticleSearching {
+public actor FeedLibraryStore: ArticleSearching, ArticleSearchPreparing {
     private static let version = 1
     private let connection: FeedSQLiteHandle
     private let beforeCommit: (@Sendable () -> Void)?
     private nonisolated let searchReader: FeedLibrarySearchReader
 
-    public init(directory: URL) throws {
-        try self.init(url: directory.appendingPathComponent("feed-library.sqlite"), onWriteContention: nil, beforeCommit: nil)
+    public init(directory: URL, deferSearchPreparation: Bool = false) throws {
+        try self.init(url: directory.appendingPathComponent("feed-library.sqlite"), onWriteContention: nil,
+                      beforeCommit: nil, deferSearchPreparation: deferSearchPreparation)
     }
     public init(url: URL) throws { try self.init(url: url, onWriteContention: nil, beforeCommit: nil) }
 
@@ -563,7 +564,7 @@ public actor FeedLibraryStore: ArticleSearching {
     }
 
     private init(url: URL, onWriteContention: (@Sendable () -> Void)?,
-                 beforeCommit: (@Sendable () -> Void)?) throws {
+                 beforeCommit: (@Sendable () -> Void)?, deferSearchPreparation: Bool = false) throws {
         do { try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true) } catch { throw FeedError.unavailable }
         var opened: OpaquePointer?
         guard sqlite3_open_v2(url.path, &opened, SQLITE_OPEN_READWRITE | SQLITE_OPEN_CREATE | SQLITE_OPEN_FULLMUTEX, nil) == SQLITE_OK, let opened else { if let opened { sqlite3_close_v2(opened) }; throw FeedError.unavailable }
@@ -604,8 +605,18 @@ public actor FeedLibraryStore: ArticleSearching {
                 throw error
             }
         }
-        try FeedArticleSearchIndex.prepare(on: opened)
+        try FeedArticleSearchIndex.prepare(on: opened, deferred: deferSearchPreparation)
         searchReader = try FeedLibrarySearchReader(url: url)
+    }
+
+    public func searchPreparationStatus() throws -> ArticleSearchPreparation {
+        try FeedArticleSearchIndex.preparationStatus(on: connection.db)
+    }
+
+    /// Performs one short transaction; callers yield between batches so cache
+    /// reads and user writes can run on this actor before the next batch.
+    public func prepareSearchBatch() throws -> ArticleSearchPreparation {
+        try FeedArticleSearchIndex.prepareBatch(on: connection.db)
     }
 
     public nonisolated func searchArticles(_ request: ArticleSearchRequest) async throws -> ArticleSearchPage {

@@ -44,6 +44,15 @@ Bookmarked article snapshots are retained after unsubscribing from a feed.
 Translations are tied to the article ID, source text being translated, and target language; a result for an old source cannot overwrite a translation for a new source.
 When the source changes, the Japanese translation for the old source is not displayed as current in either search or article details.
 
+When an existing library has no search index, the app displays cached articles after storage validation and prepares the index in the background.
+The search field shows preparation status and the number of articles checked. Reading, bookmarks, and translation saves remain available;
+a query entered during preparation runs automatically once the complete index is ready. Partial search results are never shown.
+Preparation commits at most 8 articles per batch and yields between batches, checking an 8 ms work target after each article.
+This favors reading and saving over total preparation time; the target is not a hard deadline for an individual article or a SQLite commit.
+The progress cursor is committed with the index writes, allowing restart after interruption and coordination between scenes.
+A preparation failure leaves cached reading available and offers a retry. Completed version-2 indexes are reused without backfilling.
+The synchronous Core initializer remains available for callers that need a ready index before returning.
+
 Search input is treated as up to 8 ANDed terms separated by Unicode whitespace, with a limit of 128 Unicode scalars after normalization.
 Each term is a literal substring search, without inferred meaning. Full-width and half-width forms, hiragana and katakana,
 and uppercase and lowercase ASCII letters are treated as equivalent; phonetic, spelling, or other semantic variations are not inferred.
