@@ -55,7 +55,7 @@ export const topicTextbookEnvelopeSchema = z.discriminatedUnion("kind", [
 ]);
 export type TopicTextbookEnvelope = z.infer<typeof topicTextbookEnvelopeSchema>;
 const account = z.string().regex(/^[a-f0-9]{64}$/);
-const failureStatus = z.enum([
+export const topicGenerationFailureStatusSchema = z.enum([
   "account-forbidden",
   "unconnected",
   "model-unapproved",
@@ -93,7 +93,11 @@ export const topicGenerationReplySchema = z.discriminatedUnion("status", [
     retryable: z.literal(true).optional(),
     account,
   }),
-  object({ status: failureStatus, draft: z.null().optional(), account }),
+  object({
+    status: topicGenerationFailureStatusSchema,
+    draft: z.null().optional(),
+    account,
+  }),
 ]);
 export type TopicGenerationReply = z.infer<typeof topicGenerationReplySchema>;
 export const topicQuoteSchema = object({

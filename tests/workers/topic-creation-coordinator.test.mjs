@@ -656,6 +656,16 @@ for (const status of [
   "budget-exhausted",
   "provider-budget-exhausted",
   "account-forbidden",
+  "busy",
+  "quote-changed",
+  "cost-policy-changed",
+  "unconnected",
+  "cost-limit",
+  "cost-unapproved",
+  "model-unapproved",
+  "cost-unconfigured",
+  "count-unconfigured",
+  "input-limit",
 ])
   for (const purpose of ["book-addition", "evidence-check"])
     test(`段階の確定拒否 ${purpose}/${status} を結果不明と区別し、台帳を消さず控えを整理する`, async () => {
@@ -675,3 +685,51 @@ for (const status of [
       assert.equal(await f.coordinator.read(owner, id), null);
       assert.deepEqual(f.ledger, ledger);
     });
+
+test("有料処理後のキー変更を未送信の拒否と断定せず、同じ台帳結果を回収する", async () => {
+  const f = fixture();
+  const run = f.settings.run;
+  f.settings.run = async (account, input) => {
+    const completed = await run(account, input);
+    return input.purpose === "book-addition"
+      ? { status: "credential-changed", account }
+      : completed;
+  };
+  const c = f.restart();
+  await c.save(owner, raw);
+  await c.approve(owner, id, approval, quotes);
+  await c.alarm();
+  assert.equal((await c.read(owner, id)).state, "held");
+  await assert.rejects(c.remove(owner, id, true), /active/);
+  assert.equal((await c.refresh(owner, id)).state, "review");
+  await c.alarm();
+  assert.equal((await c.read(owner, id)).state, "ready");
+  assert.equal(
+    f.calls.filter((input) => input.purpose === "book-addition").length,
+    1,
+  );
+});
+
+test("破損した生成結果がある保留の再照会は、進行中と表示せず同じ保留理由を保持する", async () => {
+  const f = fixture();
+  const run = f.settings.run;
+  f.settings.run = async (account, input) => {
+    const completed = await run(account, input);
+    return input.purpose === "evidence-check"
+      ? { status: "unknown", account }
+      : completed;
+  };
+  const c = f.restart();
+  await c.save(owner, raw);
+  await c.approve(owner, id, approval, quotes);
+  await c.alarm();
+  await c.alarm();
+  const fragment = `topic-jobs:result:${id}:0`;
+  f.storage.data.set(fragment, "{}");
+  await c.refresh(owner, id);
+  const current = await c.read(owner, id);
+  assert.equal(current.state, "held");
+  assert.equal(current.reason, "invalid-result");
+  assert.equal(f.storage.data.get(fragment), "{}");
+  assert.equal(f.storage.data.has("alarm"), false);
+});

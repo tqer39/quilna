@@ -5,7 +5,10 @@ import {
   parseTextbookRequest,
   parseSharedTextbook,
 } from "../src/shared-textbook-format.ts";
-import { topicQuoteSchema } from "../src/topic-generation-protocol.ts";
+import {
+  topicQuoteSchema,
+  topicGenerationFailureStatusSchema,
+} from "../src/topic-generation-protocol.ts";
 import {
   createTopicTextbookEdition,
   validateTopicDraft,
@@ -99,12 +102,10 @@ export class TopicCreationCoordinator {
       lookup,
       now,
       nextWake: (tx) => this.nextWake(tx),
-      // 他の論理操作とのID競合や予約前の予算拒否は、送信結果不明と区別する。
-      terminalStatuses: [
-        "id-conflict",
-        "budget-exhausted",
-        "provider-budget-exhausted",
-      ],
+      // キー変更は有料処理後にも返り得るため、台帳から回収するまで保留する。
+      terminalStatuses: topicGenerationFailureStatusSchema.options.filter(
+        (status) => !["not-found", "credential-changed"].includes(status),
+      ),
     });
   }
   async index(tx, owner) {
@@ -356,7 +357,7 @@ export class TopicCreationCoordinator {
           current.state = current.stage;
           current.reason = "";
         });
-      await this.advanceOne(owner, previous.id);
+      await this.advanceSafely(owner, previous.id);
     }
     return this.read(owner, previous.id);
   }
@@ -543,29 +544,28 @@ export class TopicCreationCoordinator {
     const raw = await this.storage.get(indexKey);
     if (raw === undefined) return;
     const index = stored(indexSchema, raw);
-    for (const id of index.ids) {
-      try {
-        await this.advanceOne(index.owner, id);
-      } catch (error) {
-        // 壊れた一件を消さず、他の正常な依頼の進行を妨げない。
-        if (
-          !["topic-creation-invalid", "topic-job-invalid"].includes(
-            error.message,
-          )
-        )
-          throw error;
-        const snapshot = await this.storage
-          .transaction((tx) => this.record(tx, id))
-          .catch((problem) => {
-            if (problem.message !== "topic-creation-invalid") throw problem;
-            return null;
-          });
-        if (snapshot && active(snapshot))
-          await this.update(index.owner, snapshot, async (_tx, current) => {
-            current.state = "held";
-            current.reason = "invalid-result";
-          });
-      }
+    for (const id of index.ids) await this.advanceSafely(index.owner, id);
+  }
+  async advanceSafely(owner, id) {
+    try {
+      await this.advanceOne(owner, id);
+    } catch (error) {
+      // 壊れた一件を消さず、他の正常な依頼の進行を妨げない。
+      if (
+        !["topic-creation-invalid", "topic-job-invalid"].includes(error.message)
+      )
+        throw error;
+      const snapshot = await this.storage
+        .transaction((tx) => this.record(tx, id))
+        .catch((problem) => {
+          if (problem.message !== "topic-creation-invalid") throw problem;
+          return null;
+        });
+      if (snapshot && active(snapshot))
+        await this.update(owner, snapshot, async (_tx, current) => {
+          current.state = "held";
+          current.reason = "invalid-result";
+        });
     }
   }
   async alarm() {

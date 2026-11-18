@@ -123,6 +123,17 @@ for (const scenario of ["ready", "budget", "revoked", "conflict"])
         owner,
         requestRaw,
       });
+      const wrongOwner = await mf.dispatchFetch(origin + "/__creations", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "save",
+          owner: "b".repeat(64),
+          target: owner,
+          requestRaw,
+        }),
+      });
+      assert.equal(wrongOwner.status, 403);
       const quotes = (await call("/api/topic-textbooks/status")).quotes;
       let oldInput, oldResult;
       if (scenario === "conflict") {

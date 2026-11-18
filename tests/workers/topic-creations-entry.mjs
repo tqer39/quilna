@@ -30,6 +30,8 @@ export class CreationFixture extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     this.storage = ctx.storage;
+    this.objectId = ctx.id;
+    this.namespace = env.CREATIONS_FIXTURE;
     this.instance = env.TEST_INSTANCE_ID;
     const call = async (owner, input, lookup) => {
       const response = await env.ACCOUNTS.get(
@@ -61,6 +63,12 @@ export class CreationFixture extends DurableObject {
   }
   async fetch(request) {
     const command = await request.json();
+    if (
+      !/^[a-f0-9]{64}$/.test(command.owner) ||
+      this.objectId.toString() !==
+        this.namespace.idFromName(command.owner).toString()
+    )
+      return Response.json({ status: "owner-mismatch" }, { status: 403 });
     if (command.action === "stages") {
       const r = await this.storage.get(`topic-creations:record:${command.id}`);
       return Response.json({
@@ -104,7 +112,7 @@ export default {
       return jobsFixture.fetch(request, env);
     const command = await request.clone().json();
     return env.CREATIONS_FIXTURE.get(
-      env.CREATIONS_FIXTURE.idFromName(command.owner),
+      env.CREATIONS_FIXTURE.idFromName(command.target ?? command.owner),
     ).fetch(request);
   },
 };
