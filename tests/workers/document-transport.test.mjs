@@ -6,6 +6,7 @@ import { mkdtemp, rm, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { hash } from "../../workers/crypto.mjs";
+import { publicDocuments } from "../../workers/public-documents.mjs";
 
 const origin = "http://documents.test",
   url = "https://publisher.example.org/article";
@@ -23,7 +24,12 @@ const script = (
 ).outputFiles[0].text;
 async function fixture(
   t,
-  { enabled = true, publicEnabled = false, outbound } = {},
+  {
+    enabled = true,
+    publicEnabled = false,
+    publicRateLimit = 1000,
+    outbound,
+  } = {},
 ) {
   const dir = await mkdtemp(join(tmpdir(), "quilna-documents-"));
   let calls = 0;
@@ -38,6 +44,15 @@ async function fixture(
       DOCUMENTS: { className: "SourceDocument", useSQLite: true },
     },
     d1Databases: { DOCUMENT_ACCESS_DB: "document-access" },
+    ratelimits:
+      publicEnabled && publicRateLimit !== null
+        ? {
+            PUBLIC_DOCUMENT_RATE_LIMITER: {
+              namespace_id: "9001",
+              simple: { limit: publicRateLimit, period: 60 },
+            },
+          }
+        : undefined,
     bindings: {
       APP_ORIGIN: origin,
       DOCUMENTS_ENABLED: String(enabled),
@@ -182,6 +197,104 @@ async function publish(
     )
     .run();
 }
+
+test("匿名閲覧の制限・設定障害・未入力フォームはDBへ到達せず、HTMLでも制限を示す", async () => {
+  let databaseAccesses = 0;
+  const base = {
+    APP_ORIGIN: origin,
+    PUBLIC_DOCUMENTS_ENABLED: "true",
+    get DOCUMENT_ACCESS_DB() {
+      databaseAccesses++;
+      throw Error("DBへ到達してはいけません");
+    },
+  };
+  for (const [limiter, expectedStatus] of [
+    [undefined, 503],
+    [
+      {
+        limit: async () => {
+          throw Error("制限サービスの障害");
+        },
+      },
+      503,
+    ],
+    [{ limit: async () => ({ success: "true" }) }, 503],
+    [{ limit: async () => ({ success: false }) }, 429],
+  ]) {
+    for (const path of ["/api/public/documents", "/public/documents"]) {
+      const response = await publicDocuments(
+        new Request(origin + path + "?url=" + encodeURIComponent(url)),
+        Object.create(base, {
+          PUBLIC_DOCUMENT_RATE_LIMITER: { value: limiter },
+        }),
+      );
+      assert.equal(response.status, expectedStatus);
+      assert.equal(response.headers.get("Cache-Control"), "no-store");
+      assert.equal(response.headers.get("ETag"), null);
+      if (response.status === 429) {
+        assert.equal(response.headers.get("Retry-After"), "60");
+        if (path === "/public/documents") {
+          assert.match(
+            response.headers.get("Content-Security-Policy"),
+            /default-src 'none'/,
+          );
+          assert.match(await response.text(), /アクセスが集中しています/);
+        } else
+          assert.deepEqual(await response.json(), {
+            status: "document-rate-limit",
+          });
+      }
+    }
+  }
+  let limitCalls = 0;
+  const form = await publicDocuments(
+    new Request(origin + "/public/documents"),
+    Object.create(base, {
+      PUBLIC_DOCUMENT_RATE_LIMITER: {
+        value: {
+          limit: async () => {
+            limitCalls++;
+            return { success: false };
+          },
+        },
+      },
+    }),
+  );
+  assert.equal(form.status, 200);
+  assert.equal(limitCalls, 0);
+  assert.equal(databaseAccesses, 0);
+});
+
+test(
+  "匿名閲覧はDBに触れる前に共通の流量枠を確認し、未設定時も配信しない",
+  { timeout: 20000 },
+  async (t) => {
+    const f = await fixture(t, { publicEnabled: true, publicRateLimit: 1 });
+    await f.grant();
+    await publish(f);
+    await f.call("acquire", { body: { url, audience: "shared" } });
+    assert.equal((await f.publicRead()).status, 200);
+    await (await f.db()).exec("DROP TABLE document_publications");
+    const responses = await Promise.all([
+      f.publicRead(),
+      f.publicRead("/public/documents?url=" + encodeURIComponent(url)),
+    ]);
+    // 窓の境界をまたいでも、同時要求の少なくとも一方はDBの故障より先に拒否する。
+    const limited = responses.filter((r) => r.status === 429);
+    assert.ok(limited.length > 0);
+    for (const response of limited) {
+      assert.equal(response.headers.get("Retry-After"), "60");
+      assert.equal(response.headers.get("Cache-Control"), "no-store");
+      assert.equal(response.headers.get("ETag"), null);
+    }
+    const unavailable = await fixture(t, {
+      publicEnabled: true,
+      publicRateLimit: null,
+    });
+    assert.equal((await unavailable.publicRead()).status, 503);
+    assert.equal(unavailable.calls(), 0);
+  },
+);
 
 test(
   "一般公開は独立した許可と取得済み共有版を要し、匿名の再検証で同じ版を再利用する",

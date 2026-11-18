@@ -90,22 +90,7 @@ async function seed(page: Page, design = "studio") {
     .click();
 }
 
-test("本文より上のタイトルの高さが変わっても、同じ原文の読書位置を維持する", async ({
-  page,
-}) => {
-  await seed(page);
-  const source = page.locator(".rss-source-text");
-  await source
-    .locator("h2")
-    .last()
-    .evaluate((e) => e.scrollIntoView({ block: "start" }));
-  const before = await source.boundingBox(),
-    title = page.locator("#rss-current-title"),
-    oldTitle = await title.boundingBox();
-  const replacement =
-    "保存済みの記事の題名が長くなっても、読んでいる本文の位置を保ちます。".repeat(
-      8,
-    );
+async function replaceTitle(page: Page, title: string) {
   await page.evaluate(async (title) => {
     const path = "/src/feed-store.ts",
       api = await import(path),
@@ -124,12 +109,53 @@ test("本文より上のタイトルの高さが変わっても、同じ原文�
     const channel = new BroadcastChannel("tsumiki.rss.v1");
     channel.postMessage({ articleId: "map" });
     channel.close();
-  }, replacement);
+  }, title);
+}
+
+test("本文より上のタイトルの高さが変わっても、同じ原文の読書位置を維持する", async ({
+  page,
+}) => {
+  await seed(page);
+  const source = page.locator(".rss-source-text");
+  const outline = page.locator(".rss-article-outline");
+  if (!(await outline.evaluate((e) => (e as HTMLDetailsElement).open)))
+    await outline.locator("summary").click();
+  await outline.getByRole("link", { name: "Conclusion", exact: true }).click();
+  await expect
+    .poll(async () => (await source.boundingBox())!.y)
+    .toBeLessThan(0);
+  const before = await source.boundingBox(),
+    title = page.locator("#rss-current-title"),
+    oldTitle = await title.boundingBox();
+  const replacement =
+    "保存済みの記事の題名が長くなっても、読んでいる本文の位置を保ちます。".repeat(
+      8,
+    );
+  await replaceTitle(page, replacement);
   await expect(title).toHaveText(replacement);
   expect((await title.boundingBox())!.height).toBeGreaterThan(oldTitle!.height);
   await expect
     .poll(async () => Math.abs((await source.boundingBox())!.y - before!.y))
     .toBeLessThanOrEqual(2);
+});
+
+test("記事上部を確認中は、タイトル更新で本文へスクロールさせない", async ({
+  page,
+}) => {
+  await seed(page);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  const before = await page.evaluate(() => scrollY);
+  const sourceTop = (await page.locator(".rss-source-text").boundingBox())!.y;
+  const navigation = (await page
+    .locator(".rss-reader-navigation")
+    .boundingBox())!;
+  expect(sourceTop).toBeGreaterThan(
+    Math.max(0, navigation.y + navigation.height),
+  );
+  const replacement = "更新された長い記事のタイトル。".repeat(30);
+  await replaceTitle(page, replacement);
+  await expect(page.locator("#rss-current-title")).toHaveText(replacement);
+  expect(await page.evaluate(() => scrollY)).toBe(before);
 });
 
 for (const design of ["studio", "editorial", "focus"])

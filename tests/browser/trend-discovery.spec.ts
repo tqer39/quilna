@@ -13,6 +13,65 @@ async function openTrends(page: Page) {
   return page.locator(".rss-trend-sources");
 }
 
+test("保存の完了確認が遅れても失敗と断定せず、確認後は保存済みの話題を表示する", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await page.addInitScript(() => {
+    const state = window as unknown as {
+      waitingForTrendSave: boolean;
+      releaseTrendSave: () => void;
+    };
+    const descriptor = Object.getOwnPropertyDescriptor(
+      IDBTransaction.prototype,
+      "oncomplete",
+    )!;
+    Object.defineProperty(IDBTransaction.prototype, "oncomplete", {
+      ...descriptor,
+      set(handler) {
+        const tx = this as IDBTransaction;
+        descriptor.set!.call(tx, (event: Event) => {
+          if (
+            tx.mode === "readwrite" &&
+            tx.db.name.startsWith("quilna.trends.v1")
+          ) {
+            state.waitingForTrendSave = true;
+            state.releaseTrendSave = () => handler?.call(tx, event);
+          } else handler?.call(tx, event);
+        });
+      },
+    });
+  });
+  await page.route("**/api/feeds/fetch", (r) =>
+    r.fulfill({ json: { url: googleURL, xml: google } }),
+  );
+  await page.goto("/?view=feeds");
+  const trends = await openTrends(page);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () =>
+          (window as unknown as { waitingForTrendSave: boolean })
+            .waitingForTrendSave,
+      ),
+    )
+    .toBe(true);
+  await page.clock.fastForward(17000);
+  await expect(trends.getByRole("status")).toContainText(
+    "保存の完了を確認できていません",
+  );
+  await page.evaluate(() =>
+    (window as unknown as { releaseTrendSave: () => void }).releaseTrendSave(),
+  );
+  await expect(trends.getByRole("status")).toContainText("保存しました");
+  await expect(trends.locator("li")).toHaveCount(2);
+  await page.reload();
+  const reopened = await openTrends(page);
+  await expect(reopened.getByRole("status")).toContainText(
+    "保存済みの話題を表示",
+  );
+});
+
 test("Googleの同じリンクを持つ別キーワードも残し、取得時刻と地域を示して辞書へ渡す", async ({
   page,
 }, info) => {

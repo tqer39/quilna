@@ -106,12 +106,14 @@ export class TrendDiscoveryView {
     this.message = "保存済みの話題を確認しています…";
     this.render();
     let storageProblem = false;
+    let saving = false;
     const timer = setTimeout(() => {
-      controller.abort();
+      if (!saving) controller.abort();
       if (ticket === this.epoch) {
         this.busy = false;
-        this.message =
-          "時間内に取得できませんでした。接続後に更新してください。";
+        this.message = saving
+          ? "保存の完了を確認できていません。もう少し待つか、あとで確認してください。"
+          : "時間内に取得できませんでした。接続後に更新してください。";
         this.render();
       }
     }, 16000);
@@ -138,6 +140,7 @@ export class TrendDiscoveryView {
       const snapshot = await fetchTrendSnapshot(source, controller.signal);
       if (!current()) return;
       try {
+        saving = true;
         const retained = await saveTrendSnapshot(snapshot);
         if (!current()) return;
         this.snapshot = retained;

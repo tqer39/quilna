@@ -47,6 +47,12 @@ async function fixture(
       DOCUMENTS: { className: "SourceDocument", useSQLite: true },
     },
     d1Databases: { DOCUMENT_ACCESS_DB: "policies" },
+    ratelimits: {
+      PUBLIC_DOCUMENT_RATE_LIMITER: {
+        namespace_id: "9001",
+        simple: { limit: 1000, period: 60 },
+      },
+    },
     bindings: {
       APP_ORIGIN: origin,
       DOCUMENTS_ENABLED: "true",

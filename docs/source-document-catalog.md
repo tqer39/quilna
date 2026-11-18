@@ -35,7 +35,25 @@ INSERT INTO document_publications
 VALUES (:policy_id, :policy_revision, :source_generation, 1, :expires_ms, :public_delivery_evidence);
 ```
 
-The SQL source generation is the current `publicationGeneration` from the administrator read API; the UI supplies it automatically. An enabled, unexpired base policy and publication must both match; changing the base generation does not republish its replacement. Stopping/restarting source sharing or changing its expiry advances a separate publication generation. The prior anonymous permission then stays invalid until explicitly reviewed again, without changing the shared document identity or fetching its body again. Disable the publication row to withdraw anonymous delivery. Public access uses the existing shared document scope, never a private scope. A permitted member must have acquired the shared copy first. Both the gateway and source object verify the public permission, and verify it again after asynchronous reads. Catalog lifecycle withdrawal, expiry and deletion remain effective.
+The SQL example is only for initial bootstrap; its original actor/time will be recorded as unknown on the first managed edit. Use the publication panel or authenticated `/api/documents/admin-publication-save` for subsequent changes and withdrawal so permission and history commit together. Direct SQL updates bypass that audit contract.
+
+The SQL source generation is the current `publicationGeneration` from the administrator read API; the UI supplies it automatically. An enabled, unexpired base policy and publication must both match; changing the base generation does not republish its replacement. Stopping/restarting source sharing or changing its expiry advances a separate publication generation. The prior anonymous permission then stays invalid until explicitly reviewed again, without changing the shared document identity or fetching its body again. Public access uses the existing shared document scope, never a private scope. A permitted member must have acquired the shared copy first. Both the gateway and source object verify the public permission, and verify it again after asynchronous reads. Catalog lifecycle withdrawal, expiry and deletion remain effective.
+
+Public URL lookups also require a `PUBLIC_DOCUMENT_RATE_LIMITER` [Workers Rate Limiting binding](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/). For example, add this to the intended Wrangler configuration, choosing an account-unique namespace and an appropriate quota before enabling public delivery:
+
+```json
+{
+  "ratelimits": [{
+    "name": "PUBLIC_DOCUMENT_RATE_LIMITER",
+    "namespace_id": "1001",
+    "simple": { "limit": 60, "period": 60 }
+  }]
+}
+```
+
+Both routes use one aggregate key, `public-documents`, independent of source URL and without personal identifiers. The check runs before D1/catalog access, including conditional requests: permission revalidation still reads the database even when the content ETag matches. Exhaustion returns `429`, `Retry-After: 60`, `no-store` and no ETag; a missing or failed binding returns `503`. The empty HTML entry form does not access the catalog or consume this quota. Cloudflare's limit is per location and best effort, not a global request or billing cap. The shared quota protects database work but can be exhausted by one client or legitimate revalidations, refusing other readers at that location. Size it for expected traffic and consider edge abuse controls before production use. This example is not applied to the checked-in deployment configurations.
+
+If publication administration is unavailable and all anonymous delivery must stop, disable `PUBLIC_DOCUMENTS_ENABLED` in every serving deployment. This is a deployment operation, not an automatic application fallback; it takes effect after the new configuration is serving. Record the incident and later verify the publication history before re-enabling delivery. Previously downloaded copies cannot be recalled.
 
 The JSON response contains only document/version IDs, source URL and original content. It has an `ETag` and `Cache-Control: public, no-cache, must-revalidate`: a cache may retain it but must revalidate before every reuse. Permission and lifecycle checks run before a matching ETag can produce 304. This deliberately avoids a CDN freshness window after revocation; an already delivered or downloaded copy cannot be retracted. The HTML reader uses `no-store`, escapes all source text, makes no subresource requests and has a nonce-bound stylesheet with scripts disabled. Errors use `no-store` and no ETag. There is no public acquisition endpoint, continuous public collection, live publication or owner acceptance yet. Local SQLite-backed runtime tests prove reuse after restart, private/shared separation, missing-copy refusal, expiration/revision/withdrawal checks and conditional delivery; they do not prove real-source redistribution permission.
 

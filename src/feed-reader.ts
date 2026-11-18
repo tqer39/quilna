@@ -2275,12 +2275,25 @@ export async function feedReader(root: HTMLElement) {
   function render() {
     if (composing) return;
     const previousSource = main.querySelector<HTMLElement>(".rss-source-text");
+    const previousBounds = previousSource?.getBoundingClientRect();
+    const readingLine =
+      Math.max(
+        0,
+        document
+          .querySelector(".rss-reader-navigation")
+          ?.getBoundingClientRect().bottom ?? 80,
+      ) + 12;
     const readingPosition =
-      readerIdentity === selected && previousSource?.dataset.selectionContext
+      readerIdentity === selected &&
+      previousSource?.dataset.selectionContext &&
+      previousBounds &&
+      previousBounds.top <= readingLine &&
+      previousBounds.bottom > readingLine
         ? {
             context: previousSource.dataset.selectionContext,
             x: scrollX,
-            top: previousSource.getBoundingClientRect().top,
+            top: previousBounds.top,
+            text: previousSource.textContent,
           }
         : null;
     const articleSelection = captureReaderSelection(
@@ -3080,7 +3093,8 @@ export async function feedReader(root: HTMLElement) {
     // 本文の入れ替え中にページが縮んでも、同じ読書文脈の位置を失わない。
     if (
       readingPosition &&
-      readingPosition.context === nextSource?.dataset.selectionContext
+      readingPosition.context === nextSource?.dataset.selectionContext &&
+      readingPosition.text === nextSource.textContent
     )
       window.scrollTo(
         readingPosition.x,

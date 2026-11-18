@@ -125,6 +125,7 @@ export class QuickDictionary {
   private selection: ReaderSelection | null = null;
   private scroll = { x: 0, y: 0 };
   private location = "";
+  private restored = true;
   private readonly trends = new TrendDiscoveryView((word) => {
     this.lookup(word);
     this.input.focus();
@@ -138,7 +139,7 @@ export class QuickDictionary {
     this.root.setAttribute("aria-labelledby", heading.id);
     header.append(
       heading,
-      button("読書に戻る", () => this.root.close()),
+      button("読書に戻る", () => this.close()),
     );
     const content = el("div", undefined, "rss-settings-body");
     const label = el("label", "調べたい言葉");
@@ -171,29 +172,42 @@ export class QuickDictionary {
       if (event.key === "Escape") {
         event.preventDefault();
         event.stopPropagation();
-        this.root.close();
+        this.close();
       }
     });
     this.root.addEventListener("close", () => {
-      this.trends.root.open = false;
-      this.trends.suspend();
-      if (this.returnTo?.isConnected)
-        this.returnTo.focus({ preventScroll: true });
-      restoreReaderSelection(
-        this.selection,
-        document.querySelector(".rss-source-text"),
-      );
-      if (location.href === this.location)
-        window.scrollTo(this.scroll.x, this.scroll.y);
-      this.selection = null;
+      if (!this.root.open) this.restoreReading();
     });
     window.addEventListener("popstate", () => {
-      if (this.root.open) this.root.close();
+      if (this.root.open) this.close();
     });
+  }
+
+  private close() {
+    this.root.close();
+    // closeイベントは後のタスクになるため、同じ操作内で選択を戻す。
+    this.restoreReading();
+  }
+
+  private restoreReading() {
+    if (this.restored) return;
+    this.restored = true;
+    this.trends.root.open = false;
+    this.trends.suspend();
+    if (this.returnTo?.isConnected)
+      this.returnTo.focus({ preventScroll: true });
+    restoreReaderSelection(
+      this.selection,
+      document.querySelector(".rss-source-text"),
+    );
+    if (location.href === this.location)
+      window.scrollTo(this.scroll.x, this.scroll.y);
+    this.selection = null;
   }
 
   open(usePointerCapture = false) {
     if (this.root.open) return;
+    this.restored = false;
     this.returnTo =
       document.activeElement instanceof HTMLElement
         ? document.activeElement

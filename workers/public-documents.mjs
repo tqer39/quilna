@@ -61,6 +61,17 @@ export async function publicDocuments(request, env) {
         throw Error("document-request");
       }
     } else {
+      if (typeof env.PUBLIC_DOCUMENT_RATE_LIMITER?.limit !== "function")
+        throw Error("document-unconfigured");
+      // URLを変えても上限を回避できず、個人の識別子も保存しない共通枠。
+      const quota = await env.PUBLIC_DOCUMENT_RATE_LIMITER.limit({
+        key: "public-documents",
+      });
+      if (quota?.success !== true) {
+        if (quota?.success !== false) throw Error("document-unconfigured");
+        status = 429;
+        throw Error("document-rate-limit");
+      }
       const { documentIdentity, validDocumentVersion, sourceContent } =
         await import("../src/source-document.ts");
       const access = await publicDocumentAccess(env, source);
@@ -107,11 +118,13 @@ export async function publicDocuments(request, env) {
     if (status === 200)
       status = error.message === "document-unavailable" ? 404 : 503;
     message =
-      status === 400
-        ? "記事の元のURLを一つ入力してください。"
-        : status === 404
-          ? "公開されている保存済みの記事が見つかりません。元の記事を確認してください。"
-          : "共有記事を確認できません。時間をおいて再度開いてください。";
+      status === 429
+        ? "アクセスが集中しています。少し待ってから開き直してください。"
+        : status === 400
+          ? "記事の元のURLを一つ入力してください。"
+          : status === 404
+            ? "公開されている保存済みの記事が見つかりません。元の記事を確認してください。"
+            : "共有記事を確認できません。時間をおいて再度開いてください。";
   }
   const headers = {
     "Content-Type": html ? "text/html; charset=utf-8" : "application/json",
@@ -120,6 +133,7 @@ export async function publicDocuments(request, env) {
     "X-Content-Type-Options": "nosniff",
     "Referrer-Policy": "no-referrer",
   };
+  if (status === 429) headers["Retry-After"] = "60";
   if (!html && version) {
     headers.ETag = etag;
     const tags = request.headers
@@ -141,11 +155,13 @@ export async function publicDocuments(request, env) {
         ? publication
         : {
             status:
-              status === 400
-                ? "document-request"
-                : status === 404
-                  ? "document-unavailable"
-                  : "document-failed",
+              status === 429
+                ? "document-rate-limit"
+                : status === 400
+                  ? "document-request"
+                  : status === 404
+                    ? "document-unavailable"
+                    : "document-failed",
           },
     );
   return new Response(request.method === "HEAD" ? null : body, {

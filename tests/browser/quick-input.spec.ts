@@ -99,6 +99,39 @@ test("中断したポインター操作の選択を、後のキーボード辞�
   await expect(dialog.getByLabel("調べたい言葉")).toHaveValue("同期");
 });
 
+test("辞書をEscapeで閉じた同じ操作内で、本文の選択を復元する", async ({
+  page,
+}) => {
+  await seed(page);
+  await page.getByRole("button", { name: titles[0], exact: true }).click();
+  await page.evaluate(() => {
+    const node = document.querySelector(".rss-source-text p")!.firstChild!,
+      range = document.createRange();
+    range.setStart(node, 0);
+    range.setEnd(node, 3);
+    const s = getSelection()!;
+    s.removeAllRanges();
+    s.addRange(range);
+  });
+  await page.getByRole("button", { name: "ことばの辞書を開く" }).click();
+  const dialog = page.getByRole("dialog", { name: "ことばの辞書" });
+  await expect(dialog.getByLabel("調べたい言葉")).toHaveValue("非同期");
+  const result = await dialog.evaluate((el) => {
+    el.dispatchEvent(
+      new KeyboardEvent("keydown", {
+        key: "Escape",
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    return {
+      open: (el as HTMLDialogElement).open,
+      selected: getSelection()?.toString(),
+    };
+  });
+  expect(result).toEqual({ open: false, selected: "非同期" });
+});
+
 test("一覧から未読のまま保存でき、再読込後にも残り、保存一覧で解除すると次の行へ戻る", async ({
   page,
 }) => {
