@@ -140,6 +140,8 @@ export function textbookNoticeView(
     failure = initial.error,
     expected: string | null = initial.notice?.revision ?? null;
   let busy = false,
+    loadingChoices = false,
+    edited = false,
     prepared = false,
     ready = !initial.error,
     disposed = false,
@@ -186,7 +188,7 @@ export function textbookNoticeView(
   );
   const controls = () => {
     for (const field of [kind, reason, evidence])
-      field.disabled = busy || !ready;
+      field.disabled = (busy && !loadingChoices) || !ready;
     target.disabled = busy || !ready || kind.value !== "correction";
     save.disabled = busy || !ready;
     remove.disabled =
@@ -198,9 +200,11 @@ export function textbookNoticeView(
     reason.value = notice?.reason ?? "";
     evidence.value = notice?.evidence ?? "";
     expected = notice?.revision ?? null;
+    edited = false;
   };
   const finish = () => {
     busy = false;
+    loadingChoices = false;
     controls();
     if (refreshPending) {
       refreshPending = false;
@@ -210,6 +214,8 @@ export function textbookNoticeView(
   async function loadChoices(keepBusy = false) {
     const ticket = ++generation;
     busy = true;
+    // 候補の確認待ちに入力を無効化すると、入力途中の最初の文字が失われる。
+    loadingChoices = !keepBusy;
     controls();
     try {
       const books = (await listSharedTextbooks()).filter(
@@ -272,10 +278,10 @@ export function textbookNoticeView(
       replacementState = latest.replacementState;
       failure = undefined;
       ready = true;
-      if (!prepared) fill();
+      if (!prepared && !edited) fill();
       draw();
       controls();
-      if (prepared && (notice?.revision ?? null) !== expected)
+      if ((prepared || edited) && (notice?.revision ?? null) !== expected)
         status.textContent =
           "別の画面で記録が変更されています。入力は保持しています。最新記録を読み直して比較してください。";
     } catch (error) {
@@ -391,6 +397,14 @@ export function textbookNoticeView(
     }
   });
   kind.addEventListener("change", controls);
+  for (const field of [kind, target, reason, evidence]) {
+    field.addEventListener("input", () => {
+      edited = true;
+    });
+    field.addEventListener("change", () => {
+      edited = true;
+    });
+  }
   channel?.addEventListener("message", () => void refresh());
   const focus = () => void refresh();
   window.addEventListener("focus", focus);

@@ -6,6 +6,7 @@ import { FeedCollector } from "./feed-collector.mjs";
 import { DocumentGateway } from "./document-gateway.mjs";
 import { topicGenerationInputSchema } from "../src/topic-generation-protocol.ts";
 import { topicJobAccess } from "./topic-job-access.mjs";
+import { prepareTopicEvidence } from "./topic-preparation.mjs";
 export { TopicTextbookJobs } from "./topic-job-object.mjs";
 export { SourceDocument } from "./document-object.mjs";
 export class AccountVault extends DurableObject {
@@ -72,6 +73,7 @@ export class AccountVault extends DurableObject {
       this.collector,
       this.documents,
       this.topicJobs,
+      (owner, input) => prepareTopicEvidence(owner, input, this.env),
     );
   }
   async alarm() {

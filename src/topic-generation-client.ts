@@ -1,5 +1,10 @@
 import { z } from "zod";
 import {
+  topicPreparationInputSchema,
+  topicPreparationPageSchema,
+} from "./topic-preparation-protocol";
+import { sharedTextbookDigest } from "./shared-textbook-format";
+import {
   topicJobListSchema,
   topicJobReplySchema,
   topicJobRemovedSchema,
@@ -48,6 +53,9 @@ const errors = z.enum([
   "topic-job-unavailable",
   "topic-job-request",
   "not-found",
+  "topic-preparation-unconfigured",
+  "topic-preparation-unavailable",
+  "topic-preparation-topic",
 ]);
 export class TopicClientError extends Error {
   constructor(readonly code: string) {
@@ -177,6 +185,42 @@ export class TopicGenerationClient {
     }
     this.csrf = parsed.data.csrfToken;
     this.mode = parsed.data.mode;
+    return parsed.data;
+  }
+  /** 保存済みの公開資料をテーマから準備し、応答の所有者と原文を検査する。 */
+  async prepare(input: { topic: string; after?: string }, signal: AbortSignal) {
+    const command = topicPreparationInputSchema.safeParse(input);
+    if (!command.success) throw new TopicClientError("invalid-request");
+    await this.status(signal);
+    const value = await this.request("preparations", signal, command.data);
+    this.check(signal);
+    const bound = z
+      .object({ account: z.string().regex(/^[a-f0-9]{64}$/) })
+      .safeParse(value);
+    if (!bound.success) throw new TopicClientError("invalid-response");
+    if (bound.data.account !== this.account) {
+      this.csrf = "";
+      this.identityLost();
+      throw new TopicClientError("account-mismatch");
+    }
+    const parsed = topicPreparationPageSchema.safeParse(value);
+    if (!parsed.success) throw new TopicClientError("invalid-response");
+    if (
+      parsed.data.topic !== command.data.topic ||
+      (command.data.after && parsed.data.after === command.data.after)
+    )
+      throw new TopicClientError("invalid-response");
+    for (const candidate of parsed.data.sources) {
+      const digest = await sharedTextbookDigest(
+        new TextEncoder().encode(candidate.source.excerpt),
+      );
+      this.check(signal);
+      if (
+        digest !== candidate.source.sourceFingerprint ||
+        candidate.source.id !== candidate.versionId
+      )
+        throw new TopicClientError("invalid-response");
+    }
     return parsed.data;
   }
   /** 結果の回収は生成と分離し、通信失敗時も予約・再送を行わない。 */

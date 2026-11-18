@@ -148,6 +148,27 @@ async function fixture(
     call,
     db,
     grant,
+    prepareTopic: async (
+      body,
+      { csrf = tokens.get("alice"), account, headers = {} } = {},
+    ) => {
+      const response = await mf.dispatchFetch(
+        origin + "/api/topic-textbooks/preparations",
+        {
+          method: "POST",
+          headers: {
+            Origin: origin,
+            "X-Test-Principal": "alice",
+            "Content-Type": "application/json",
+            "X-CSRF-Token": csrf,
+            "X-Library-Account": account ?? (await hash("document-test:alice")),
+            ...headers,
+          },
+          body: JSON.stringify(body),
+        },
+      );
+      return { status: response.status, value: await response.json() };
+    },
     publicRead: (
       path = "/api/public/documents?url=" + encodeURIComponent(url),
       options,
@@ -825,5 +846,215 @@ test(
       200,
     );
     assert.equal(f.calls(), 2);
+  },
+);
+test(
+  "教材の資料準備は認証・CSRF付きで公開保存版だけを読み、再起動でも元サイトを再取得しない",
+  { timeout: 20000 },
+  async (t) => {
+    const f = await fixture(t, { publicEnabled: true });
+    await f.grant();
+    await f.call("acquire", { body: { url, audience: "shared" } });
+    assert.equal(f.calls(), 1);
+    const before = await f.prepareTopic({ topic: "original" });
+    assert.equal(before.status, 200);
+    assert.equal(before.value.inspected, 0);
+    await publish(f);
+    const prepared = await f.prepareTopic({ topic: "original" });
+    assert.equal(prepared.status, 200, JSON.stringify(prepared.value));
+    assert.equal(prepared.value.sources.length, 1);
+    assert.equal(prepared.value.sources[0].source.url, url);
+    assert.equal(
+      prepared.value.sources[0].source.excerpt.includes("Public original"),
+      true,
+    );
+    assert.equal(
+      (await f.prepareTopic({ topic: "original" }, { csrf: "wrong" })).status,
+      403,
+    );
+    assert.equal(
+      (await f.prepareTopic({ topic: "original" }, { account: "b".repeat(64) }))
+        .status,
+      403,
+    );
+    await f.restart();
+    assert.deepEqual(
+      (await f.prepareTopic({ topic: "original" })).value.sources,
+      prepared.value.sources,
+    );
+    await (
+      await f.db()
+    )
+      .prepare("UPDATE document_publications SET enabled=0")
+      .run();
+    assert.equal(
+      (await f.prepareTopic({ topic: "original" })).value.sources.length,
+      0,
+    );
+    assert.equal(f.calls(), 1);
+  },
+);
+test(
+  "公開目録の資料準備を5件ずつ進め、未取得の原文を探索だけで取りに行かない",
+  { timeout: 20000 },
+  async (t) => {
+    const f = await fixture(t, { publicEnabled: true });
+    await f.grant();
+    await publish(f);
+    await f.call("acquire", { body: { url, audience: "shared" } });
+    const db = await f.db();
+    for (let n = 1; n <= 5; n++) {
+      const id = `${n}1111111-1111-4111-8111-111111111111`;
+      await db
+        .prepare(
+          "INSERT INTO document_policies(id,source_url,revision,enabled,expires,evidence) VALUES(?,?,1,1,?,?)",
+        )
+        .bind(
+          id,
+          `${url}/${n}`,
+          Date.now() + 3600000,
+          "Synthetic source permission",
+        )
+        .run();
+      await db
+        .prepare(
+          "INSERT INTO document_publications(policy_id,policy_revision,enabled,expires,evidence) VALUES(?,1,1,?,?)",
+        )
+        .bind(id, Date.now() + 3600000, "Synthetic public permission")
+        .run();
+    }
+    const first = await f.prepareTopic({ topic: "original" });
+    assert.equal(first.status, 200, JSON.stringify(first.value));
+    assert.equal(first.value.inspected, 5);
+    assert.equal(first.value.unavailable, 5);
+    assert.equal(first.value.sources.length, 0);
+    assert.equal(typeof first.value.after, "string");
+    const second = await f.prepareTopic({
+      topic: "original",
+      after: first.value.after,
+    });
+    assert.equal(second.status, 200);
+    assert.equal(second.value.inspected, 1);
+    assert.equal(second.value.after, null);
+    assert.equal(second.value.sources.length, 1);
+    await db
+      .prepare("DELETE FROM document_publications WHERE policy_id=?")
+      .bind("11111111-1111-4111-8111-111111111111")
+      .run();
+    await db
+      .prepare("DELETE FROM document_policies WHERE id=?")
+      .bind("11111111-1111-4111-8111-111111111111")
+      .run();
+    const exactlyFive = await f.prepareTopic({ topic: "original" });
+    assert.equal(exactlyFive.value.inspected, 5);
+    assert.equal(exactlyFive.value.after, null);
+    assert.equal(exactlyFive.value.sources.length, 1);
+    assert.equal(f.calls(), 1);
+  },
+);
+test(
+  "実workerdで日本語の複数文字と一文字の漢字のテーマを分割して資料を準備する",
+  { timeout: 20000 },
+  async (t) => {
+    const f = await fixture(t, {
+      publicEnabled: true,
+      outbound: async () =>
+        new Response(
+          "<article><h1>税と非同期処理の公開資料</h1><p>" +
+            "税は公共サービスを支えます。非同期処理は完了を待つ間に別の仕事を進めます。".repeat(
+              20,
+            ) +
+            "</p></article>",
+          { headers: { "Content-Type": "text/html; charset=utf-8" } },
+        ),
+    });
+    await f.grant();
+    await publish(f);
+    await f.call("acquire", { body: { url, audience: "shared" } });
+    const tax = await f.prepareTopic({ topic: "税について" });
+    assert.equal(tax.status, 200, JSON.stringify(tax.value));
+    assert.equal(tax.value.sources.length, 1);
+    assert.deepEqual(tax.value.sources[0].matchedTerms, ["税"]);
+    const asyncTopic = await f.prepareTopic({ topic: "非同期処理の仕組み" });
+    assert.equal(asyncTopic.status, 200, JSON.stringify(asyncTopic.value));
+    assert.equal(asyncTopic.value.sources.length, 1);
+    assert.equal(
+      asyncTopic.value.sources[0].matchedTerms.some(
+        (word) => [...word].length > 1,
+      ),
+      true,
+    );
+    assert.equal(f.calls(), 1);
+  },
+);
+test(
+  "資料準備のHTTP制限は20ページで429を返し、通常の文書操作を止めない",
+  { timeout: 20000 },
+  async (t) => {
+    const f = await fixture(t, { publicEnabled: true });
+    await f.grant();
+    await publish(f);
+    await f.call("acquire", { body: { url, audience: "shared" } });
+    for (let n = 0; n < 20; n++)
+      assert.equal((await f.prepareTopic({ topic: "original" })).status, 200);
+    const limited = await f.prepareTopic({ topic: "original" });
+    assert.equal(limited.status, 429);
+    assert.equal(limited.value.status, "rate-limit");
+    assert.equal(
+      (await f.call("read", { body: { url, audience: "shared" } })).status,
+      200,
+    );
+    assert.equal(f.calls(), 1);
+  },
+);
+test(
+  "公開許可と元の共有許可の期限が切れた資料は準備一覧に含めない",
+  { timeout: 20000 },
+  async (t) => {
+    const f = await fixture(t, { publicEnabled: true });
+    await f.grant();
+    await publish(f);
+    await f.call("acquire", { body: { url, audience: "shared" } });
+    const db = await f.db();
+    await db
+      .prepare("UPDATE document_publications SET expires=?")
+      .bind(Date.now() - 1)
+      .run();
+    assert.equal(
+      (await f.prepareTopic({ topic: "original" })).value.inspected,
+      0,
+    );
+    await db
+      .prepare("UPDATE document_publications SET expires=?")
+      .bind(Date.now() + 3600000)
+      .run();
+    await db
+      .prepare("UPDATE document_policies SET expires=?")
+      .bind(Date.now() - 1)
+      .run();
+    await db.exec(
+      "UPDATE document_publications SET source_revision=(SELECT publication_revision FROM document_policies WHERE id=policy_id)",
+    );
+    assert.equal(
+      (await f.prepareTopic({ topic: "original" })).value.inspected,
+      0,
+    );
+    assert.equal(f.calls(), 1);
+  },
+);
+test(
+  "資料準備の共通枠を超えると429になり、匿名閲覧の枠を消費しない",
+  { timeout: 20000 },
+  async (t) => {
+    const f = await fixture(t, { publicEnabled: true, publicRateLimit: 1 });
+    await f.grant();
+    await publish(f);
+    await f.call("acquire", { body: { url, audience: "shared" } });
+    assert.equal((await f.prepareTopic({ topic: "original" })).status, 200);
+    const refused = await f.prepareTopic({ topic: "original" });
+    assert.equal(refused.status, 429);
+    assert.equal(refused.value.status, "rate-limit");
+    assert.equal((await f.publicRead()).status, 200);
+    assert.equal(f.calls(), 1);
   },
 );

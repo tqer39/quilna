@@ -508,3 +508,97 @@ it("保存上限近くの大きな結果を外側の包みとともに読み取�
   const f = setup(() => Response.json(reply));
   expect(await f.client.jobs("read", { id: jobID }, signal())).toEqual(reply);
 });
+const evidencePage = () => {
+  const source = structuredClone(candidate.request.sources[0]);
+  return {
+    account,
+    topic: "CAA",
+    after: null,
+    inspected: 1,
+    unavailable: 0,
+    sources: [
+      {
+        source: { ...source, url: "https://example.org/caa" },
+        documentId: crypto.randomUUID(),
+        versionId: source.id,
+        score: 10,
+        matchedTerms: ["caa"],
+      },
+    ],
+  };
+};
+it("テーマの資料準備はCSRF付きで独立した経路へ送り、元の記事や生成操作を送らない", async () => {
+  const page = evidencePage(),
+    f = setup(() => Response.json(page));
+  expect(await f.client.prepare({ topic: "CAA" }, signal())).toEqual(page);
+  expect(f.calls.map((c) => c.url)).toEqual([
+    "/api/topic-textbooks/status",
+    "/api/topic-textbooks/preparations",
+  ]);
+  expect(JSON.parse(String(f.calls[1].init?.body))).toEqual({ topic: "CAA" });
+});
+it("資料準備でテーマ・アカウント・原文の改変を拒否する", async () => {
+  for (const change of [
+    "topic",
+    "account",
+    "excerpt",
+    "url",
+    "malformed-url",
+  ] as const) {
+    const page = evidencePage();
+    if (change === "topic") page.topic = "other";
+    if (change === "account") page.account = "b".repeat(64);
+    if (change === "excerpt") page.sources[0].source.excerpt += "changed";
+    if (change === "url") page.sources[0].source.url = "javascript:alert(1)";
+    if (change === "malformed-url") page.sources[0].source.url = "not a URL";
+    const f = setup(() => Response.json(page));
+    await expect(
+      f.client.prepare({ topic: "CAA" }, signal()),
+    ).rejects.toHaveProperty(
+      "code",
+      change === "account" ? "account-mismatch" : "invalid-response",
+    );
+  }
+});
+it("資料の探索待ち中に利用者が変わった場合は候補を採用しない", async () => {
+  let release!: () => void, entered!: () => void;
+  const gate = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const waiting = new Promise<void>((resolve) => {
+    entered = resolve;
+  });
+  const page = evidencePage();
+  const f = setup(async () => {
+    entered();
+    await gate;
+    return Response.json(page);
+  });
+  const pending = f.client.prepare({ topic: "CAA" }, signal());
+  await waiting;
+  f.owner("b".repeat(64));
+  release();
+  await expect(pending).rejects.toHaveProperty("code", "account-mismatch");
+  expect(f.lost()).toBe(1);
+  expect(f.calls).toHaveLength(2);
+});
+it("資料応答のテーマも食い違っていても別アカウントなら本人性を先に失効させる", async () => {
+  const page = evidencePage();
+  page.account = "b".repeat(64);
+  page.topic = "other";
+  const f = setup(() => Response.json(page));
+  await expect(
+    f.client.prepare({ topic: "CAA" }, signal()),
+  ).rejects.toHaveProperty("code", "account-mismatch");
+  expect(f.lost()).toBe(1);
+});
+it("資料応答の本文も壊れていても、別アカウントなら本人性を失効させる", async () => {
+  const page = evidencePage();
+  page.account = "b".repeat(64);
+  page.sources[0].source.url = "not a URL";
+  const f = setup(() => Response.json(page));
+  await expect(
+    f.client.prepare({ topic: "CAA" }, signal()),
+  ).rejects.toHaveProperty("code", "account-mismatch");
+  expect(f.lost()).toBe(1);
+});

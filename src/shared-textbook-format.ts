@@ -71,7 +71,7 @@ const articleRequestSchema = object({
   sources: z.array(sourceSchema).min(1).max(3),
 });
 // 記事への入口と教材の根拠を分け、私的なリンクを教材ファイルへ混入させない。
-const topicSourceSchema = object(sourceFields);
+export const topicSourceSchema = object(sourceFields);
 const topicRequestSchema = object({
   schemaVersion: z.literal(2),
   id: uuid,

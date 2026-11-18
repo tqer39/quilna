@@ -1596,6 +1596,34 @@ header {
   border-block: 1px solid var(--border, #879c9c);
   padding-block: 1rem;
 }
+.topic-preparation {
+  border-block-start: 1px solid #879c9c;
+  padding-block: 1rem;
+}
+.topic-preparation > summary {
+  font-size: 1.15rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.topic-preparation form {
+  display: grid;
+  gap: 0.75rem;
+  max-width: 32rem;
+}
+.topic-preparation input {
+  min-width: 0;
+  width: 100%;
+  padding: 0.65rem;
+  font: inherit;
+}
+.topic-preparation button {
+  min-height: 44px;
+  max-width: 100%;
+  white-space: normal;
+}
+.topic-preparation blockquote {
+  white-space: pre-wrap;
+}
 .topic-job-list {
   list-style: none;
   padding: 0;

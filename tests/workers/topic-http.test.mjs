@@ -641,3 +641,200 @@ for (const missing of ["both", "amount", "digest"])
     assert.equal((await response.json()).status, "cost-unapproved");
     assert.equal(f.calls.length, 0);
   });
+test("実キー受付の停止中も資料準備を本人・CSRF付きで配送し、余分な入力を拒否する", async () => {
+  const f = await setup({ credentialsEnabled: false });
+  const response = await f.handler(
+    f.request("preparations", JSON.stringify({ topic: "RSS" })),
+    f.env,
+  );
+  assert.equal(response.status, 200);
+  assert.equal(f.calls[0].command.action, "topic-prepare");
+  assert.deepEqual(f.calls[0].command.data, { topic: "RSS" });
+  assert.equal(f.calls[0].command.csrf, "synthetic-csrf");
+  assert.equal(
+    (
+      await f.handler(
+        f.request(
+          "preparations",
+          JSON.stringify({ topic: "RSS", owner: f.account }),
+        ),
+        f.env,
+      )
+    ).status,
+    400,
+  );
+  assert.equal(f.calls.length, 1);
+});
+test("資料準備の内部経路でも本文・CSRF・利用者を確認してから探索する", async () => {
+  const calls = [],
+    owner = await hash(ownerA.subject);
+  const core = {
+    async authorize(who, csrf, mutating, options) {
+      assert.deepEqual(who, ownerA);
+      assert.equal(csrf, "synthetic-csrf");
+      assert.equal(mutating, true);
+      assert.equal(options.countRate, true);
+      assert.equal(options.rateScope, "topic-preparation");
+      return owner;
+    },
+  };
+  const command = (data) => ({
+    action: "topic-prepare",
+    principal: ownerA,
+    csrf: "synthetic-csrf",
+    data,
+  });
+  const request = (url, data) =>
+    new Request(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(command(data)),
+    });
+  const prepare = async (account, data) => {
+    calls.push({ account, data });
+    return { synthetic: true };
+  };
+  const path = "https://account.internal/command/topic-textbooks";
+  assert.equal(
+    (
+      await handleAccount(
+        core,
+        request(path, { topic: "RSS" }),
+        null,
+        null,
+        null,
+        prepare,
+      )
+    ).status,
+    200,
+  );
+  assert.deepEqual(calls, [{ account: owner, data: { topic: "RSS" } }]);
+  assert.equal(
+    (
+      await handleAccount(
+        core,
+        request(path, { topic: "RSS", owner }),
+        null,
+        null,
+        null,
+        prepare,
+      )
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await handleAccount(
+        core,
+        request(path + "?wrong", { topic: "RSS" }),
+        null,
+        null,
+        null,
+        prepare,
+      )
+    ).status,
+    404,
+  );
+  assert.equal(calls.length, 1);
+});
+test("資料準備はテーマの500/501バイトとJSON本文4096バイトの上限を区別する", async () => {
+  const f = await setup();
+  assert.equal(
+    (
+      await f.handler(
+        f.request("preparations", JSON.stringify({ topic: "a".repeat(500) })),
+        f.env,
+      )
+    ).status,
+    200,
+  );
+  assert.equal(
+    (
+      await f.handler(
+        f.request("preparations", JSON.stringify({ topic: "a".repeat(501) })),
+        f.env,
+      )
+    ).status,
+    400,
+  );
+  assert.equal(
+    (
+      await f.handler(
+        f.request(
+          "preparations",
+          JSON.stringify({ topic: "a".repeat(500) }) + " ".repeat(4096),
+        ),
+        f.env,
+      )
+    ).status,
+    413,
+  );
+  assert.equal(f.calls.length, 1);
+});
+test("原文3件と題名・語句が最大でエスケープの多い資料候補もHTTP応答枠に収まる", async () => {
+  const owner = await hash(ownerA.subject),
+    excerpt = "RSS" + "\u0001".repeat(5994) + "RSS";
+  const fingerprint = Array.from(
+    new Uint8Array(
+      await crypto.subtle.digest("SHA-256", new TextEncoder().encode(excerpt)),
+    ),
+    (n) => n.toString(16).padStart(2, "0"),
+  ).join("");
+  const page = {
+    account: owner,
+    topic: "RSS",
+    after: null,
+    inspected: 3,
+    unavailable: 0,
+    sources: Array.from({ length: 3 }, (_, i) => {
+      const id = crypto.randomUUID();
+      return {
+        documentId: crypto.randomUUID(),
+        versionId: id,
+        source: {
+          id,
+          title: "T" + "\u0001".repeat(1999),
+          url: "https://example.org/" + i,
+          capturedAt: 800000000,
+          publishedAt: null,
+          updatedAt: null,
+          sourceFingerprint: fingerprint,
+          excerpt,
+        },
+        score: 120,
+        matchedTerms: Array.from(
+          { length: 8 },
+          (_, n) => String(n) + "\u0001".repeat(499),
+        ),
+      };
+    }),
+  };
+  const { topicPreparationPageSchema } =
+    await import("../../src/topic-preparation-protocol.ts");
+  assert.equal(topicPreparationPageSchema.safeParse(page).success, true);
+  const request = new Request(
+    "https://account.internal/command/topic-textbooks",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        action: "topic-prepare",
+        principal: ownerA,
+        csrf: "synthetic-csrf",
+        data: { topic: "RSS" },
+      }),
+    },
+  );
+  const response = await handleAccount(
+    { authorize: async () => owner },
+    request,
+    null,
+    null,
+    null,
+    async () => page,
+  );
+  assert.equal(response.status, 200);
+  const raw = await response.text();
+  assert.equal(new TextEncoder().encode(raw).length < 262144, true);
+  assert.equal(JSON.parse(raw).sources.length, 3);
+});

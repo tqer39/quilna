@@ -137,7 +137,14 @@ export class AccountVaultCore {
       };
     });
   }
-  async authorize(principal, csrf, mutating, { countRate = true } = {}) {
+  async authorize(
+    principal,
+    csrf,
+    mutating,
+    { countRate = true, rateScope = "mutations" } = {},
+  ) {
+    if (!["mutations", "topic-preparation"].includes(rateScope))
+      throw Error("invalid-command");
     principalSchema.parse(principal);
     const owner = await hash(principal.subject);
     await this.transaction(owner, async (tx) => {
@@ -153,11 +160,13 @@ export class AccountVaultCore {
         throw Error("csrf-invalid");
       // 保存結果の照会にもCSRFは必要だが、生成・キー変更の回数枠は消費しない。
       if (!countRate) return;
-      const recent = ((await tx.get("rate")) ?? []).filter(
+      const rateKey =
+        rateScope === "topic-preparation" ? "topic-preparation:rate" : "rate";
+      const recent = ((await tx.get(rateKey)) ?? []).filter(
         (t) => t > now - 60000,
       );
       if (recent.length >= 20) throw Error("rate-limit");
-      await tx.put("rate", [...recent, now]);
+      await tx.put(rateKey, [...recent, now]);
     });
     return owner;
   }

@@ -1229,3 +1229,35 @@ test(
     assert.equal(f.calls(), 1);
   },
 );
+test("資料準備の回数枠を変更操作から分け、両方に独立した制限とCSRFを適用する", async () => {
+  const f = await fixture();
+  const principal = {
+    subject: "verified-test-owner-a",
+    sessionId: "prep-session",
+  };
+  const session = await f.core.session(principal);
+  for (let n = 0; n < 20; n++)
+    await f.core.authorize(principal, session.csrfToken, true, {
+      rateScope: "topic-preparation",
+    });
+  await assert.rejects(
+    f.core.authorize(principal, session.csrfToken, true, {
+      rateScope: "topic-preparation",
+    }),
+    /rate-limit/,
+  );
+  await assert.rejects(
+    f.core.authorize(principal, "wrong", true, {
+      rateScope: "topic-preparation",
+    }),
+    /csrf-invalid/,
+  );
+  for (let n = 0; n < 20; n++)
+    await f.core.authorize(principal, session.csrfToken, true);
+  await assert.rejects(
+    f.core.authorize(principal, session.csrfToken, true),
+    /rate-limit/,
+  );
+  assert.equal(f.storage.data.get("rate").length, 20);
+  assert.equal(f.storage.data.get("topic-preparation:rate").length, 20);
+});
