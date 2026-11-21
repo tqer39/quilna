@@ -146,12 +146,7 @@ test("記事上部を確認中は、タイトル更新で本文へスクロー�
   await page.evaluate(() => window.scrollTo(0, 0));
   const before = await page.evaluate(() => scrollY);
   const sourceTop = (await page.locator(".rss-source-text").boundingBox())!.y;
-  const navigation = (await page
-    .locator(".rss-reader-navigation")
-    .boundingBox())!;
-  expect(sourceTop).toBeGreaterThan(
-    Math.max(0, navigation.y + navigation.height),
-  );
+  expect(sourceTop).toBeGreaterThan(12);
   const replacement = "更新された長い記事のタイトル。".repeat(30);
   await replaceTitle(page, replacement);
   await expect(page.locator("#rss-current-title")).toHaveText(replacement);
@@ -184,11 +179,7 @@ for (const design of ["studio", "editorial", "focus"])
     await expect
       .poll(async () => {
         const heading = await page.locator(`#${href}`).boundingBox();
-        const toolbar = await page
-          .locator(".rss-reader-navigation")
-          .boundingBox();
-        if (!heading || !toolbar) return -Infinity;
-        return heading.y - (toolbar.y + toolbar.height);
+        return heading?.y ?? -Infinity;
       })
       .toBeGreaterThanOrEqual(12);
     await expect(duplicates.nth(1)).toHaveAttribute("aria-current", "location");

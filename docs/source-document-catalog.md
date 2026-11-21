@@ -22,7 +22,7 @@ Fixed fixtures compare browser/server text, code ranges, title and language for 
 
 ## Anonymous reading of explicitly published copies
 
-The optional public reader is `GET /public/documents?url=<encoded exact source URL>`; `GET /api/public/documents?url=...` returns the same stored latest version as JSON. Both support `HEAD`. These exact routes work without a login, even when the personal library requires authentication. They never acquire a source, enumerate documents, return version history, accept aliases, or change personal state. Unknown, private, unpublished and missing copies all return the same unavailable status.
+The optional public reader is `GET /public/documents?url=<encoded exact source URL>`; `GET /api/public/documents?url=...` returns the same stored latest version as JSON. Both support `HEAD`. These exact routes work without a login, even when the personal library requires authentication. When public delivery is configured, a link on the login page opens a form where readers enter the original article URL. The public routes never acquire a source, enumerate documents, return version history, accept aliases, or change personal state. Unknown, private, unpublished and missing copies all return the same unavailable status.
 
 Internal textbook authoring may supply `versionId` to the binding-only `public-read` command to verify an approved retained edition. The same current publication permission and document lifecycle checks apply, and missing versions never trigger acquisition. Anonymous URL routes still return only the latest version.
 
@@ -58,6 +58,8 @@ Both routes use one aggregate key, `public-documents`, independent of source URL
 If publication administration is unavailable and all anonymous delivery must stop, disable `PUBLIC_DOCUMENTS_ENABLED` in every serving deployment. This is a deployment operation, not an automatic application fallback; it takes effect after the new configuration is serving. Record the incident and later verify the publication history before re-enabling delivery. Previously downloaded copies cannot be recalled.
 
 The JSON response contains only document/version IDs, source URL and original content. It has an `ETag` and `Cache-Control: public, no-cache, must-revalidate`: a cache may retain it but must revalidate before every reuse. Permission and lifecycle checks run before a matching ETag can produce 304. This deliberately avoids a CDN freshness window after revocation; an already delivered or downloaded copy cannot be retracted. The HTML reader uses `no-store`, escapes all source text, makes no subresource requests and has a nonce-bound stylesheet with scripts disabled. Errors use `no-store` and no ETag. There is no public acquisition endpoint, continuous public collection, live publication or owner acceptance yet. Local SQLite-backed runtime tests prove reuse after restart, private/shared separation, missing-copy refusal, expiration/revision/withdrawal checks and conditional delivery; they do not prove real-source redistribution permission.
+
+On 2026-11-18, a local Chromium test at desktop and mobile widths used a simulated publisher and a SQLite-backed Worker. An anonymous browser fetched the saved JSON article twice. The second request received HTTP 304 and the browser reused the original body. After the publication grant was withdrawn, the same browser received HTTP 404 for both JSON and HTML. None of these reads contacted the publisher.
 
 ### Publication administration and history
 

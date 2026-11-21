@@ -33,8 +33,8 @@ for (const design of ["studio", "editorial", "focus"])
     await row.click();
     await expect(page.locator("#rss-current-title")).toBeFocused();
     await page
-      .getByRole("link", { name: "翻訳・読み上げ", exact: true })
-      .click();
+      .locator(".rss-source-text")
+      .evaluate((body) => body.scrollIntoView({ block: "center" }));
     const back = page.getByRole("button", {
       name: "← 記事一覧へ",
       exact: true,
@@ -55,6 +55,28 @@ for (const design of ["studio", "editorial", "focus"])
       .poll(async () => Math.abs((await row.boundingBox())!.y - before!.y))
       .toBeLessThan(8);
   });
+
+test("ブラウザで戻ると検索結果の元の見出しにフォーカスと表示位置が戻る", async ({
+  page,
+}) => {
+  await seed(page);
+  await page.getByLabel("保存領域の記事を検索").fill("共通");
+  await page.getByRole("button", { name: "次の50件", exact: true }).click();
+  const row = page.getByRole("button", { name: "記事 70", exact: true });
+  await row.evaluate((element) => element.scrollIntoView({ block: "center" }));
+  const top = (await row.boundingBox())!.y;
+  await row.click();
+  await expect(page.locator("#rss-current-title")).toBeFocused();
+  await page.goBack();
+  await expect(row).toBeFocused();
+  await expect
+    .poll(async () => Math.abs((await row.boundingBox())!.y - top))
+    .toBeLessThan(8);
+  await page.goForward();
+  await expect(page.locator("#rss-current-title")).toHaveText("記事 70");
+  await page.goBack();
+  await expect(row).toBeFocused();
+});
 
 for (const fromDiscovery of [false, true])
   test(`importing an article URL moves focus to its reading view${fromDiscovery ? " after unsuccessful feed discovery" : ""}`, async ({

@@ -1,3 +1,4 @@
+import type { ArticleImage } from "./article-images";
 import { libraryName } from "./library-context";
 import {
   captureReaderSelection,
@@ -21,6 +22,7 @@ export type ReadingView = Omit<HighlightSource, "version"> & {
   original: string;
   ranges?: ArticleCodeRange[];
   structure?: ArticleStructure;
+  images?: ArticleImage[];
 };
 type Span = { node: Text; start: number };
 export class ArticleHighlightView {
@@ -504,6 +506,7 @@ export class ArticleHighlightView {
       },
       this.view.structure,
       this.textbookLinks,
+      this.view.images,
     );
     restoreReaderSelection(selection, this.body);
   }

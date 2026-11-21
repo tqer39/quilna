@@ -1,62 +1,12 @@
 import { openReaderTools } from "../browser/reader-tools";
 import { test, expect } from "@playwright/test";
-import { createServer } from "node:net";
-import { readFile, readdir } from "node:fs/promises";
-import { extname, resolve } from "node:path";
+import { readFile } from "node:fs/promises";
+import { assets, freePort } from "../fixtures/browser-runtime.mjs";
 import { authWorkerFixture } from "../fixtures/auth-worker.mjs";
 
 const articleURL = "https://publisher.example.org/article";
 const feedURL = "https://publisher.example.org/feed.xml";
 const xml = `<rss version="2.0"><channel><title>Runtime news</title><item><guid>one</guid><title>Runtime article</title><link>${articleURL}</link><description>Summary from the runtime feed.</description></item></channel></rss>`;
-// The OS selects an unused loopback port. A race is a setup failure, never permission to reuse another server.
-async function freePort() {
-  const server = createServer();
-  await new Promise((resolve, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", resolve);
-  });
-  const port = server.address().port;
-  await new Promise((resolve, reject) =>
-    server.close((error) => (error ? reject(error) : resolve())),
-  );
-  return port;
-}
-async function assets() {
-  const root = resolve("dist"),
-    files = new Map();
-  for (const file of await readdir(root, {
-    recursive: true,
-    withFileTypes: true,
-  })) {
-    if (file.isFile()) {
-      const path = resolve(file.parentPath, file.name);
-      files.set(
-        "/" + path.slice(root.length + 1).replaceAll("\\", "/"),
-        await readFile(path),
-      );
-    }
-  }
-  if (!files.has("/index.html"))
-    throw Error("Build the browser app before running the runtime suite.");
-  return (request) => {
-    const path = new URL(request.url).pathname,
-      key = path === "/" ? "/index.html" : path;
-    if (!["GET", "HEAD"].includes(request.method) || !files.has(key))
-      return new Response("", { status: 404 });
-    return new Response(request.method === "HEAD" ? null : files.get(key), {
-      headers: {
-        "Content-Type":
-          {
-            ".html": "text/html",
-            ".js": "text/javascript",
-            ".css": "text/css",
-          }[extname(key)] ?? "application/octet-stream",
-        "Cache-Control": "no-store",
-        "X-Content-Type-Options": "nosniff",
-      },
-    });
-  };
-}
 async function settings(page, mode) {
   await page.getByRole("button", { name: "設定", exact: true }).click();
   await page.getByLabel("新しく取り込む本文の取得先").selectOption(mode);
@@ -340,7 +290,7 @@ async function runReaderScenario(browser, info, aliasMode) {
     expect(bodyRequests).toBe(1);
     const readerPage = await a.page.goto(origin + "/?view=feeds");
     expect(readerPage.headers()["content-security-policy"]).toContain(
-      "connect-src 'self';",
+      "connect-src 'self' https://www.wikidata.org/w/api.php;",
     );
     expect(readerPage.headers()["content-security-policy"]).not.toContain(
       "api.crossref.org",
@@ -348,6 +298,33 @@ async function runReaderScenario(browser, info, aliasMode) {
     expect(readerPage.headers()["content-security-policy"]).not.toContain("www.ebi.ac.uk");
     // Navigation load/CSP inspection does not guarantee the lazy reader is ready.
     await expect(a.page.getByRole("button", { name: "設定", exact: true })).toBeVisible();
+    let wordLookups = 0;
+    await a.page.route("https://www.wikidata.org/w/api.php?**", async (route) => {
+      wordLookups++;
+      const request = route.request();
+      expect(request.headers().cookie).toBeUndefined();
+      expect(request.headers().referer).toBeUndefined();
+      expect(new URL(request.url()).searchParams.get("search")).toBe("合成の語");
+      await route.fulfill({headers: {"Access-Control-Allow-Origin":"*"}, json:{
+        success:1, searchinfo:{search:"合成の語"}, search:[
+          {id:"Q123", display:{label:{language:"ja",value:"例の項目"},description:{language:"ja",value:"検査用の説明"}}},
+          {id:"Q124", display:{label:{language:"en",value:"example"},description:{language:"en",value:"Only in English"}}}
+        ]
+      }});
+    });
+    await a.page.getByRole("button",{name:"ことばの辞書を開く"}).click();
+    const dictionary = a.page.getByRole("dialog",{name:"ことばの辞書"});
+    const term = dictionary.getByLabel("調べたい言葉");
+    await term.fill("合成の語");
+    await term.press("Enter");
+    expect(wordLookups).toBe(0);
+    await dictionary.getByRole("button",{name:"「合成の語」をWikidataへ送って調べる"}).click();
+    const candidates = dictionary.getByRole("region",{name:"Wikidataの候補"});
+    await expect(candidates).toContainText("検査用の説明");
+    await expect(candidates.getByRole("link")).toHaveCount(1);
+    await expect(candidates.getByRole("link")).toHaveAttribute("href","https://www.wikidata.org/wiki/Q123");
+    expect(wordLookups).toBe(1);
+    await dictionary.getByRole("button",{name:"読書に戻る"}).click();
     await f.restart(a.account);
     const admin = a.page.locator(".rss-policy-settings");
     async function openAdmin() {

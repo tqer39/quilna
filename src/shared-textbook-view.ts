@@ -1,3 +1,4 @@
+import { localTextbookView } from "./local-textbook-view";
 import { topicGenerationView } from "./topic-generation-view";
 import { topicJobView } from "./topic-job-view";
 import { topicCreationView } from "./topic-creation-view";
@@ -7,7 +8,11 @@ import "./reader-experience.css";
 import { textbookNoticeView } from "./textbook-notice-view";
 import { hasAccountLibrary } from "./library-context";
 import { button, el } from "./ui";
-import { pushReaderURL, revealReaderAnchor } from "./reader-route";
+import {
+  pushReaderURL,
+  revealReaderAnchor,
+  textbookSectionAnchor,
+} from "./reader-route";
 import {
   parseSharedTextbook,
   sharedTextbookMaximumBytes,
@@ -228,9 +233,28 @@ export async function sharedTextbookView(root: HTMLElement) {
       await showList(id);
     }),
   );
+  const authorTerm = !hasAccountLibrary()
+    ? new URLSearchParams(location.hash.slice(1))
+        .get("author")
+        ?.trim()
+        .slice(0, 500)
+    : undefined;
+  const localAuthor = localTextbookView(
+    authorTerm || term,
+    download,
+    (book, trigger) => {
+      if (input.disabled) return;
+      fileEpoch++;
+      input.value = "";
+      importTools.open = true;
+      showImportPreview(book, trigger);
+    },
+  );
+  localAuthor.hidden = hasAccountLibrary();
   library.append(
     list,
     listWarning,
+    localAuthor,
     topicCreationView(
       term,
       async (id) => {
@@ -238,6 +262,7 @@ export async function sharedTextbookView(root: HTMLElement) {
       },
       (allowed) => {
         legacy.hidden = !allowed;
+        localAuthor.hidden = hasAccountLibrary() && !allowed;
       },
     ),
     legacy,
@@ -579,7 +604,7 @@ export async function sharedTextbookView(root: HTMLElement) {
         q = content.question,
         section = el("section");
       const title = el("h3", content.title);
-      title.id = `shared-section-${content.id}`;
+      title.id = textbookSectionAnchor(content.id);
       title.tabIndex = -1;
       const jump = el("a", content.title);
       jump.href = bookURL(book.id, title.id).href;
@@ -773,6 +798,57 @@ export async function sharedTextbookView(root: HTMLElement) {
     revealReaderAnchor();
   }
 
+  function showImportPreview(book: SharedTextbook, trigger?: HTMLElement) {
+    notice.textContent = "まだ保存していません。教材と出典を確認してください。";
+    const cancel = button("取り込みを取り消す", () => {
+      fileEpoch++;
+      preview.replaceChildren();
+      input.value = "";
+      notice.textContent =
+        "取り込みを取り消しました。保存済みデータは変更していません。";
+      (trigger ?? input).focus();
+    });
+    const save = button("確認してこのブラウザに取り込む", () => {
+      input.disabled = true;
+      save.disabled = true;
+      cancel.disabled = true;
+      pending++;
+      notice.textContent = "教材を保存しています。";
+      void importSharedTextbook(book.raw)
+        .then(async () => {
+          notice.textContent =
+            "教材を取り込みました。自分の回答は別に保存します。";
+          preview.replaceChildren();
+          input.value = "";
+          await showList(book.id);
+          if (trigger && root.isConnected && !library.hidden)
+            await showBook(book, trigger);
+        })
+        .catch((error) => {
+          notice.textContent = message(error);
+        })
+        .finally(() => {
+          pending--;
+          input.disabled = false;
+          save.disabled = false;
+          cancel.disabled = false;
+        });
+    });
+    preview.replaceChildren(
+      overview(book),
+      el(
+        "p",
+        "取り込み前の教材や回答は上書きしません。同じ教材・版で内容が異なる場合は取り込みを拒否します。",
+      ),
+      save,
+      cancel,
+    );
+    if (trigger) {
+      preview.tabIndex = -1;
+      preview.focus();
+    }
+  }
+
   input.addEventListener("change", () => {
     importTools.open = true;
     const epoch = ++fileEpoch,
@@ -798,53 +874,15 @@ export async function sharedTextbookView(root: HTMLElement) {
       }
       const book = await parseSharedTextbook(raw);
       if (epoch !== fileEpoch) return;
-      notice.textContent =
-        "まだ保存していません。教材と出典を確認してください。";
-      const cancel = button("取り込みを取り消す", () => {
-        fileEpoch++;
-        preview.replaceChildren();
-        input.value = "";
-        notice.textContent =
-          "取り込みを取り消しました。保存済みデータは変更していません。";
-        input.focus();
-      });
-      const save = button("確認してこのブラウザに取り込む", () => {
-        input.disabled = true;
-        save.disabled = true;
-        cancel.disabled = true;
-        pending++;
-        notice.textContent = "教材を保存しています。";
-        void importSharedTextbook(book.raw)
-          .then(async () => {
-            notice.textContent =
-              "教材を取り込みました。自分の回答は別に保存します。";
-            preview.replaceChildren();
-            input.value = "";
-            await showList(book.id);
-          })
-          .catch((error) => {
-            notice.textContent = message(error);
-          })
-          .finally(() => {
-            pending--;
-            input.disabled = false;
-            save.disabled = false;
-            cancel.disabled = false;
-          });
-      });
-      preview.append(
-        overview(book),
-        el(
-          "p",
-          "取り込み前の教材や回答は上書きしません。同じ教材・版で内容が異なる場合は取り込みを拒否します。",
-        ),
-        save,
-        cancel,
-      );
+      showImportPreview(book);
     })().catch((error) => {
       if (epoch === fileEpoch) notice.textContent = message(error);
     });
   });
   // A URL names one edition; opening it need not wait for every edition's validation.
   await Promise.all([showList(), restoreRoute()]);
+  if (authorTerm && !localAuthor.hidden && !library.hidden) {
+    localAuthor.open = true;
+    localAuthor.querySelector("input")?.focus();
+  }
 }

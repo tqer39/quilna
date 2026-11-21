@@ -80,6 +80,7 @@ import { ArticleGraphView } from "./article-graph-view";
 import { QuoteConnectionView } from "./quote-connection-view";
 import { LearningCueView } from "./learning-cue-view";
 import {
+  sourceFailureLabel,
   browserTranslator,
   translateArticle,
   isLinkOnly,
@@ -93,9 +94,12 @@ import {
 } from "./cloud-collection";
 import { AuthClient } from "./auth-client";
 import { button, el } from "./ui";
+import { readerIcon } from "./reader-icons";
+import { installNavigationShortcuts } from "./navigation-shortcuts";
 import { readerDesignSettings } from "./reader-design";
 import "./reader-design.css";
 import "./reader-experience.css";
+import "./reader-layout.css";
 import { parseFeed, type Feed, type FeedArticle } from "./feed-parser";
 import { discoverFeeds, sourceURL, type FeedCandidate } from "./feed-discovery";
 import {
@@ -115,6 +119,7 @@ import {
 /** Mount collection and reading while retaining browser-local state through asynchronous updates. */
 export async function feedReader(root: HTMLElement) {
   document.title = "情報収集 | Quilna";
+  root.classList.add("rss-app");
   const designSettings = readerDesignSettings();
   function updateReadingLink(link: HTMLAnchorElement) {
     const destination = new URL(location.href);
@@ -159,6 +164,7 @@ export async function feedReader(root: HTMLElement) {
     hash: string;
     fallback: number;
     attempted: boolean;
+    row?: ArticleListPosition;
   } | null = null;
   let lastRoute = initialRoute;
   let replaceRoute = false;
@@ -219,7 +225,10 @@ export async function feedReader(root: HTMLElement) {
   let speechRate = 1;
   let readerIdentity: string | null = null;
   const speech = new ArticleSpeech(() => render());
-  const headlinePlayer = new HeadlinePlayer();
+  const headlinePlayer = new HeadlinePlayer((id) => {
+    const article = articles[articlePositions.get(id) ?? -1];
+    if (article && !article.saved) void change(article, "saved", true);
+  });
   const documentHistory = new SourceDocumentView(
     async () => {
       const article = articles.find((a) => a.id === selected);
@@ -258,7 +267,8 @@ export async function feedReader(root: HTMLElement) {
   brand.href = "/?view=feeds";
   const actions = el("div", undefined, "rss-header-actions");
   const dictionary = new QuickDictionary();
-  const dictionaryOpen = el("button", "辞書");
+  const dictionaryOpen = el("button");
+  dictionaryOpen.append(readerIcon("dictionary"), el("span", "辞書"));
   dictionaryOpen.type = "button";
   dictionaryOpen.addEventListener("click", (event) =>
     dictionary.open(event.detail > 0),
@@ -273,10 +283,11 @@ export async function feedReader(root: HTMLElement) {
   settings.setAttribute("aria-labelledby", "rss-settings-title");
   const settingsTitle = el("h2", "設定・保存先");
   settingsTitle.id = "rss-settings-title";
-  const settingsOpen = button("設定", () => {
+  const settingsOpen = button("", () => {
     settings.showModal();
     updateLocation();
   });
+  settingsOpen.append(readerIcon("settings"), el("span", "設定"));
   const closeSettings = () => {
     settings.close();
     updateLocation();
@@ -527,10 +538,12 @@ export async function feedReader(root: HTMLElement) {
     paperLink,
   );
   settingsBody.append(papers);
-  const textbooksLink = el("a", "教材", "rss-text-link");
+  const textbooksLink = el("a", undefined, "rss-text-link");
+  textbooksLink.append(readerIcon("book"), el("span", "教材"));
   textbooksLink.href = "/?view=textbooks";
-  actions.append(skipToArticles, dictionaryOpen, textbooksLink, settingsOpen);
-  rootHeader.append(brand, actions);
+  // 学ぶ（辞書・教材）と設定は読む操作より一段下げ、ブランドの近くにまとめる。
+  actions.append(dictionaryOpen, textbooksLink, settingsOpen);
+  rootHeader.append(skipToArticles, brand, actions);
   const locationNavigation = new ReaderLocation({
     list: (next) => {
       navigationRevision++;
@@ -565,12 +578,14 @@ export async function feedReader(root: HTMLElement) {
   const layout = el("div", undefined, "rss-shell");
   const navigation = el("section", undefined, "rss-navigation");
   navigation.setAttribute("aria-label", "収集メニュー");
+  navigation.id = "rss-collection";
   const collectionNavigation = new CollectionNavigation(navigation, {
     filter: (value) => {
       navigationRevision++;
       filter = value;
       selected = null;
       render();
+      returnToResults();
     },
     input: (value) => {
       if (!importDialog.open) discoveryInDialog = false;
@@ -584,6 +599,7 @@ export async function feedReader(root: HTMLElement) {
       source = value;
       selected = null;
       render();
+      returnToResults();
     },
     refresh: (url, insert) => void refresh(url, insert),
     refreshAll: () => void refreshAll(),
@@ -595,11 +611,40 @@ export async function feedReader(root: HTMLElement) {
   // Keep list controls connected while background writes refresh the results.
   const listHeading = el("h1");
   listHeading.tabIndex = -1;
-  const listLede = el(
-    "p",
-    "見出しから選んで、気になる記事はあとで読むへ。わからない言葉は辞書で、じっくり学ぶなら教科書で。",
-    "rss-lede",
+  navigation.tabIndex = -1;
+  const compactList = matchMedia("(max-width: 800px)");
+  const collectionJump = button(
+    "",
+    () => {
+      navigation.focus({ preventScroll: true });
+      navigation.scrollIntoView({ block: "start" });
+    },
+    "rss-collection-jump",
   );
+  collectionJump.setAttribute("aria-label", "配信元・未読で絞り込み");
+  collectionJump.title = "配信元・未読で絞り込み";
+  collectionJump.append(readerIcon("filter"));
+  const listHeader = el("div", undefined, "rss-list-header");
+  listHeader.append(listHeading, headlinePlayer.root, collectionJump);
+  function orderCollection(articleOpen: boolean) {
+    // 狭い画面では記事一覧や空の案内を先に置き、収集メニューは後ろへ回す。
+    const first = compactList.matches && !articleOpen;
+    collectionJump.hidden = !first || !articles.length;
+    if ((layout.firstElementChild === main) === first) return;
+    const focused = document.activeElement;
+    layout.insertBefore(navigation, first ? null : main);
+    if (focused instanceof HTMLElement && navigation.contains(focused))
+      focused.focus({ preventScroll: true });
+  }
+  compactList.addEventListener("change", () =>
+    orderCollection(main.classList.contains("rss-reading")),
+  );
+  function returnToResults() {
+    if (compactList.matches && layout.firstElementChild === main) {
+      listHeading.focus({ preventScroll: true });
+      main.scrollIntoView({ block: "start" });
+    }
+  }
   const highlights = new ArticleHighlightView(
     (quote) => quoteConnections.begin(quote),
     (quote) => learningRecords.begin(quote),
@@ -698,6 +743,7 @@ export async function feedReader(root: HTMLElement) {
       const position = articlePositions.get(id);
       if (position !== undefined) {
         listPosition = listView.position(id);
+        history.replaceState({ ...history.state, readerRow: listPosition }, "");
         openArticle(articles[position]);
       }
     },
@@ -755,6 +801,27 @@ export async function feedReader(root: HTMLElement) {
     pageNumber = 0;
     render();
   });
+  // 検索・配信元・タグを一行の道具帯にまとめ、最初の見出しを押し下げない。
+  const searchTools = el("div", undefined, "rss-list-search-tools");
+  searchTools.setAttribute("role", "search");
+  searchTools.setAttribute("aria-label", "記事の検索と絞り込み");
+  const wordsField = el("div", undefined, "rss-search-field"),
+    tagsField = el("div", undefined, "rss-tag-field");
+  wordsField.append(searchLabel, readerIcon("search"), searchField);
+  tagsField.append(tagFilterLabel, tagsSelect);
+  searchTools.append(wordsField, collectionNavigation.sourceField, tagsField);
+  const welcome = el("section", undefined, "rss-welcome");
+  welcome.setAttribute("aria-labelledby", "rss-welcome-title");
+  const welcomeTitle = el("h2", "最初の配信元を追加");
+  welcomeTitle.id = "rss-welcome-title";
+  welcome.append(
+    welcomeTitle,
+    el(
+      "p",
+      "サイトやRSSのURLから配信元を探します。届いた記事は新しい順にここへ並び、既読と保存の印はこのブラウザに残ります。",
+      "rss-welcome-lede",
+    ),
+  );
   const discoveryPanel = el("section", undefined, "rss-discovery");
   discoveryPanel.setAttribute("aria-label", "見つかった配信元");
   const errors = el("div", undefined, "rss-error");
@@ -763,7 +830,6 @@ export async function feedReader(root: HTMLElement) {
   layout.append(navigation, main);
   root.append(
     rootHeader,
-    locationNavigation.root,
     layout,
     errors,
     settings,
@@ -829,9 +895,6 @@ export async function feedReader(root: HTMLElement) {
       articleId: article?.id,
       title: article?.content?.title || article?.title,
       filter,
-      source: source
-        ? feeds.find((feed) => feed.url === source)?.title || "選択中の配信元"
-        : "",
       importing: importDialog.open,
     });
   }
@@ -847,6 +910,15 @@ export async function feedReader(root: HTMLElement) {
     }
     requestAnimationFrame(() => {
       if (pendingAnchor !== pending || pending.url !== location.href) return;
+      if (pending.row) {
+        if (connecting || (displayedQuery.trim() && !searchIndex.ready)) return;
+        if (!listView.restorePosition(pending.row)) {
+          listHeading.focus({ preventScroll: true });
+          main.scrollIntoView({ block: "start" });
+        }
+        pendingAnchor = null;
+        return;
+      }
       if (revealReaderAnchor(pending.hash)) pendingAnchor = null;
       else if (!pending.attempted) {
         window.scrollTo(0, pending.fallback);
@@ -855,15 +927,19 @@ export async function feedReader(root: HTMLElement) {
     });
   }
   function restoreRoute() {
+    const route = readReaderRoute();
     pendingAnchor = {
       url: location.href,
       hash: location.hash,
       fallback: Number(history.state?.readerScroll) || 0,
+      row:
+        !route.article && !route.screen && !location.hash
+          ? history.state?.readerRow
+          : undefined,
       attempted: false,
     };
     restoringRoute = true;
     navigationRevision++;
-    const route = readReaderRoute();
     const sourceHeading = /^#rss-section-\d+$/.test(location.hash);
     if (sourceHeading) translatedView = false;
     selected = route.article;
@@ -1877,12 +1953,18 @@ export async function feedReader(root: HTMLElement) {
           articles.find((a) => a.url === article.url && a.content)?.content;
         if (seed && !seed.document)
           await retainDocument(article.url, seed, { seed: true });
+        const retryMissing = !!sourceFailureLabel(
+          article.bodyUpdate?.error ?? article.contentError,
+        );
         const acquired = await documentAcquisition.acquire(
           article.url,
-          restoreCode || refreshOriginal,
+          restoreCode || refreshOriginal || retryMissing,
           acquisition,
         );
-        if (!acquired.warning && (refreshOriginal || restoreCode))
+        if (
+          !acquired.warning &&
+          (refreshOriginal || restoreCode || retryMissing)
+        )
           sourceCheckedAt = Date.now();
         patch =
           (refreshOriginal || restoreCode) && acquired.warning
@@ -2276,13 +2358,7 @@ export async function feedReader(root: HTMLElement) {
     if (composing) return;
     const previousSource = main.querySelector<HTMLElement>(".rss-source-text");
     const previousBounds = previousSource?.getBoundingClientRect();
-    const readingLine =
-      Math.max(
-        0,
-        document
-          .querySelector(".rss-reader-navigation")
-          ?.getBoundingClientRect().bottom ?? 80,
-      ) + 12;
+    const readingLine = 12;
     const readingPosition =
       readerIdentity === selected &&
       previousSource?.dataset.selectionContext &&
@@ -2305,6 +2381,7 @@ export async function feedReader(root: HTMLElement) {
       : undefined;
     const article =
       selectedPosition === undefined ? undefined : articles[selectedPosition];
+    orderCollection(!!article);
     if (readerIdentity !== (article?.id ?? null)) {
       cancelReading();
       readerIdentity = article?.id ?? null;
@@ -2426,6 +2503,8 @@ export async function feedReader(root: HTMLElement) {
           unsubscribed: !!feed.unsubscribed,
           cloudUnsubscribePending,
           subscriptionBusy: cloudBusy,
+          total: articleCounts.get(feed.url)?.all ?? 0,
+          unread: articleCounts.get(feed.url)?.unread ?? 0,
         };
       }),
     });
@@ -2433,6 +2512,15 @@ export async function feedReader(root: HTMLElement) {
     const discoveryHost = discoveryInDialog ? importBody : main;
     if (discoveryPanel.parentNode !== discoveryHost)
       discoveryHost.append(discoveryPanel);
+    const emptyLibrary =
+      !connecting && !feeds.length && !articles.length && !selected;
+    collectionNavigation.placeImport(
+      emptyLibrary ? welcome : collectionNavigation.railImport,
+    );
+    collectionNavigation.railImport.hidden = emptyLibrary;
+    // 一覧はレールと紙面の二段、本文に集中するときは一段にする。
+    root.dataset.layout = article && readerFocused ? "single" : "rail";
+    root.dataset.screen = article ? "article" : "list";
     if (article) {
       main.classList.add("rss-reading");
       layout.classList.toggle("rss-focused", readerFocused);
@@ -2462,7 +2550,8 @@ export async function feedReader(root: HTMLElement) {
               `著者：${article.content.info.author}`,
             date(article.content?.info?.published || article.published),
             articleReadingTime(article),
-            article.content && "画像・埋め込みなし",
+            article.content?.images?.length &&
+              `画像 ${article.content.images.length}枚`,
           ]
             .filter(Boolean)
             .join(" · "),
@@ -2584,7 +2673,7 @@ export async function feedReader(root: HTMLElement) {
         importingNow
           ? "保存済みの本文を確認し、必要な場合は元サイトから取り込み中… RSSの情報はそのまま読めます。"
           : article.content
-            ? "元サイトから取り込んだ本文です。画像や埋め込みは省略しています。"
+            ? "元サイトから取り込んだ本文です。"
             : article.contentError
               ? `本文の取り込みに失敗しました：${article.contentError}`
               : "RSSで配信された本文・概要です。元サイトの本文はまだ取り込んでいません。",
@@ -2884,6 +2973,7 @@ export async function feedReader(root: HTMLElement) {
             ? displayTranslation.targetLanguage
             : originalLanguage,
           structure,
+          images: displayTranslation ? undefined : article.content?.images,
           ranges: displayTranslation
             ? displayTranslation.codeRanges
             : article.content?.codeRanges,
@@ -2941,6 +3031,7 @@ export async function feedReader(root: HTMLElement) {
         extraContents.append(readingTools, documentHistory.root);
         articleNode.append(readingExtras);
       } else articleNode.append(documentHistory.root);
+      articleNode.append(readerNavigation, locationNavigation.progress);
       main.append(articleNode);
     } else {
       outline.detach();
@@ -2963,16 +3054,21 @@ export async function feedReader(root: HTMLElement) {
             ? "未読の記事"
             : "すべての記事";
       if (listResults.parentNode !== main)
-        main.append(
-          listHeading,
-          listLede,
-          headlinePlayer.root,
-          searchLabel,
-          searchField,
-          tagFilterLabel,
-          tagsSelect,
-          listResults,
-        );
+        main.append(listHeader, searchTools, listResults);
+      // 空のライブラリでは追加欄そのものを紙面の主役にし、空の道具は出さない。
+      if (emptyLibrary && welcome.parentNode !== main)
+        main.insertBefore(welcome, searchTools);
+      else if (!emptyLibrary) welcome.remove();
+      // 空の紙面では、見つかった配信元を入力欄の直後に示す。
+      if (
+        emptyLibrary &&
+        discoveryPanel.parentNode === main &&
+        welcome.nextSibling !== discoveryPanel
+      )
+        welcome.after(discoveryPanel);
+      headlinePlayer.root.hidden = emptyLibrary;
+      searchTools.hidden = emptyLibrary && !displayedQuery.trim();
+      listResults.hidden = emptyLibrary && !displayedQuery.trim();
       if (searchField.value !== searchQuery) searchField.value = searchQuery;
       const desiredOptions = [
         ["", "すべてのタグ"],
@@ -3026,12 +3122,25 @@ export async function feedReader(root: HTMLElement) {
         pageSize,
       });
       if (!preparing && !connecting) pageNumber = result.page;
-      headlinePlayer.update(result.items);
+      headlinePlayer.update(result.items, articles, relationLibraryRevision);
       listView.update({
         saving: changing,
         items: result.items,
-        metadata: (item) =>
-          `${feeds.find((f) => f.url === item.feedUrl)?.title ?? "取り込んだ記事"} · ${date(item.published)}${item.saved ? " · 保存済み" : ""}${item.read ? " · 既読" : " · 未読"}${hasArticleUpdate(item) ? " · 本文の更新あり" : item.bodyUpdate?.error ? " · 更新確認に失敗" : ""}`,
+        metadata: (item) => {
+          const failure = sourceFailureLabel(
+            item.bodyUpdate?.error ?? item.contentError,
+          );
+          const availability = failure
+            ? failure + (item.content ? " · 保存した本文を読めます" : "")
+            : hasArticleUpdate(item)
+              ? "本文の更新あり"
+              : item.bodyUpdate?.error
+                ? "更新確認に失敗"
+                : item.contentError
+                  ? "本文の取得に失敗"
+                  : "";
+          return `${feeds.find((f) => f.url === item.feedUrl)?.title ?? "取り込んだ記事"} · ${date(item.published)}${item.saved ? " · 保存済み" : ""}${item.read ? " · 既読" : " · 未読"}${availability ? " · " + availability : ""}`;
+        },
         status:
           searchProblem ||
           (preparing
@@ -3118,6 +3227,11 @@ export async function feedReader(root: HTMLElement) {
         ),
       );
   });
+  // 一覧では入力欄の外から n / p で見出しを順に移り、Enter で開ける。
+  installNavigationShortcuts(
+    () => !selected && !composing && listResults.isConnected,
+    (direction) => listView.moveFocus(direction),
+  );
   routeReady = true;
   restoringRoute = false;
   await connect();

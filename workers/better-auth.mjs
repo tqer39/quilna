@@ -1,8 +1,18 @@
 export const readerContentSecurityPolicy =
   "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'";
-/** Only the paper-source page can contact the explicit metadata/body endpoints; other reader routes retain the default. */
+/** 外部検索は、その操作を提供する画面と取得先に限定する。 */
 export function readerPolicyForURL(url) {
   const target = new URL(url);
+  if (
+    target.pathname === "/" &&
+    [null, "feeds"].includes(target.searchParams.get("view"))
+  )
+    return readerContentSecurityPolicy
+      .replace("img-src 'self' data:", "img-src 'self' data: https:")
+      .replace(
+        "connect-src 'self'",
+        "connect-src 'self' https://www.wikidata.org/w/api.php",
+      );
   return target.pathname === "/" && target.searchParams.get("view") === "papers"
     ? readerContentSecurityPolicy.replace(
         "connect-src 'self'",
@@ -435,7 +445,16 @@ export async function productionFetch(request, env) {
     }
     if (!principal) {
       if (path === "/" && ["GET", "HEAD"].includes(request.method))
-        return loginPage(!!bridge, request);
+        return loginPage(
+          !!bridge,
+          request,
+          new URL(request.url).origin === env.APP_ORIGIN &&
+            env.PUBLIC_DOCUMENTS_ENABLED === "true" &&
+            env.DOCUMENTS_ENABLED === "true" &&
+            !!env.DOCUMENTS &&
+            typeof env.DOCUMENT_ACCESS_DB?.withSession === "function" &&
+            typeof env.PUBLIC_DOCUMENT_RATE_LIMITER?.limit === "function",
+        );
       return response(401, { status: "authentication-required" });
     }
     const asset = await createHandler()(request, env);

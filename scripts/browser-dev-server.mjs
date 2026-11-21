@@ -11,6 +11,8 @@ let server;
 try {
   server = await createServer({
     root,
+    // 検査時の依存再構築で、同時に開いている読書プレビューを失効させない。
+    cacheDir: resolve(root, "node_modules/.cache/quilna-browser", String(port)),
     configFile: resolve(root, "vite.config.mjs"),
     server: { host: "127.0.0.1", port, strictPort: true },
   });

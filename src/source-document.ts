@@ -1,3 +1,4 @@
+import { validArticleImages } from "./article-images";
 import { validArticleStructure, validArticleInfo } from "./article-structure";
 import { validSourceTags } from "./source-tags";
 import type { ArticleContent } from "./article-content";
@@ -98,6 +99,8 @@ export function validDocumentContent(v: unknown): v is ArticleContent {
     validCodeRanges(v.text, v.codeRanges) &&
     validArticleStructure(v.text, v.structure) &&
     validArticleInfo(v.info) &&
+    (v.images === undefined || validArticleImages(v.images, v.text.length)) &&
+    (v.thumbnailUrl === undefined || documentURL(v.thumbnailUrl)) &&
     (v.sourceTags === undefined || validSourceTags(v.sourceTags)) &&
     v.document === undefined
   );
@@ -123,6 +126,10 @@ export function sourceContent(content: ArticleContent): ArticleContent {
     title: content.title,
     language: content.language,
     fetchedAt: content.fetchedAt,
+    ...(content.images !== undefined
+      ? { images: structuredClone(content.images) }
+      : {}),
+    ...(content.thumbnailUrl ? { thumbnailUrl: content.thumbnailUrl } : {}),
     ...(content.structure === undefined
       ? {}
       : { structure: structuredClone(content.structure) }),
@@ -155,8 +162,12 @@ export async function representationHash(content: ArticleContent) {
       c.title,
       c.language,
       c.codeRanges ?? null,
+      ...(c.images?.length ? [{ images: c.images }] : []),
       ...(c.sourceTags === undefined ? [] : [{ sourceTags: c.sourceTags }]),
       ...(c.structure === undefined ? [] : [{ structure: c.structure }]),
+      ...(c.thumbnailUrl === undefined
+        ? []
+        : [{ thumbnailUrl: c.thumbnailUrl }]),
       ...(c.info === undefined ? [] : [{ info: c.info }]),
     ]),
   );

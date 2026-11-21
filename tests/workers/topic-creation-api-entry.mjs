@@ -1,3 +1,4 @@
+import { productionFetch } from "../../workers/better-auth.mjs";
 // 合成接続専用。本番の作成DO/資料/予算経路を使い、提供元の送信だけを置き換える。
 import { AccountVault as FixtureVault } from "./fixture-entry.mjs";
 import { TopicTextbookCreations } from "../../workers/topic-creation-object.mjs";
@@ -61,6 +62,12 @@ export class AccountVault extends FixtureVault {
                 await env.DOCUMENT_ACCESS_DB.prepare(
                   "UPDATE document_publications SET enabled=0",
                 ).run();
+              if (env.FIXTURE_REVOKE_AUTHOR_AFTER_COUNT === "true")
+                await env.AUTH_DB.prepare(
+                  'UPDATE "user" SET "emailVerified"=0 WHERE id=?',
+                )
+                  .bind("creation-fixture-user")
+                  .run();
               return Response.json({ input_tokens: 1000 });
             }
             await ctx.storage.put(
@@ -150,6 +157,8 @@ const handler = createHandler({
 export default {
   async fetch(request, env) {
     const path = new URL(request.url).pathname;
+    if (path === "/" && !request.headers.has("X-Test-Principal"))
+      return productionFetch(request, env);
     if (
       path === "/__creation-stats" ||
       path === "/__creation-stages" ||

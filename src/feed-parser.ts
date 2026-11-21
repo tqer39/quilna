@@ -1,3 +1,4 @@
+import { htmlThumbnail, thumbnailURL } from "./article-thumbnail";
 import type { ArticleUpdate } from "./article-update";
 import type { FeedRevision } from "./feed-revision";
 import type { ReadingPositions } from "./reading-position";
@@ -11,6 +12,7 @@ export type FeedArticle = {
   title: string;
   url: string;
   published: string | null;
+  thumbnailUrl?: string;
   body: string;
   saved: boolean;
   read: boolean;
@@ -134,12 +136,36 @@ export function parseFeed(
       url ||
       `${articleTitle}:${date}`
     ).slice(0, 2048);
-    const body = plain(
+    const markup =
       field(entry, "encoded") ||
-        field(entry, "content") ||
-        field(entry, atom ? "summary" : "description"),
-      40000,
-    );
+      field(entry, "content") ||
+      field(entry, atom ? "summary" : "description");
+    const body = plain(markup, 40000);
+    let thumbnailUrl: string | undefined;
+    for (const node of Array.from(entry.querySelectorAll("*"))) {
+      const name = node.localName;
+      const imageType = /^image\//i.test(node.getAttribute("type") ?? "");
+      if (
+        (node.namespaceURI === "http://search.yahoo.com/mrss/" &&
+          (name === "thumbnail" ||
+            (name === "content" &&
+              (imageType || node.getAttribute("medium") === "image")))) ||
+        (imageType &&
+          (name === "enclosure" ||
+            (name === "link" && node.getAttribute("rel") === "enclosure")))
+      ) {
+        thumbnailUrl = thumbnailURL(
+          node.getAttribute("url") ?? node.getAttribute("href"),
+          base,
+        );
+        if (thumbnailUrl) break;
+      }
+    }
+    if (!thumbnailUrl && /<img\b/i.test(markup)) {
+      const template = document.createElement("template");
+      template.innerHTML = markup;
+      thumbnailUrl = htmlThumbnail(template.content, url ?? base, true);
+    }
     const id = JSON.stringify([feedUrl, guid]);
     articles.set(id, {
       id,
@@ -147,6 +173,7 @@ export function parseFeed(
       title: articleTitle,
       url: url ?? "",
       published,
+      ...(thumbnailUrl ? { thumbnailUrl } : {}),
       ...(sourceUpdated ? { sourceUpdated } : {}),
       body,
       saved: false,

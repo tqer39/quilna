@@ -1,3 +1,5 @@
+import { dictionaryPhrases } from "./quick-dictionary-entries";
+
 export const trendSources = [
   {
     id: "google",
@@ -23,11 +25,17 @@ export const trendSources = [
   },
 ] as const;
 export type TrendSource = (typeof trendSources)[number]["id"];
+export type TrendArticleLink = {
+  title: string;
+  url: string;
+  publisher: string;
+};
 export type TrendItem = {
   title: string;
   url: string;
   published: string | null;
   terms: string[];
+  articles?: TrendArticleLink[];
 };
 export type TrendSnapshot = {
   version: 1;
@@ -87,7 +95,7 @@ export function headlineTerms(title: string): string[] {
     title.match(
       /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}ー]{2,30}|[a-zA-Z][a-zA-Z0-9+#.-]{1,29}/gu,
     ) ?? [];
-  return [...new Set(words)]
+  return [...new Set([...dictionaryPhrases(title), ...words])]
     .filter((word) => !stop.has(word.toLowerCase()))
     .slice(0, 6);
 }
@@ -95,6 +103,30 @@ export function headlineTerms(title: string): string[] {
 function published(value: string) {
   const date = new Date(value);
   return Number.isFinite(date.getTime()) ? date.toISOString() : null;
+}
+
+function googleArticles(row: Element): TrendArticleLink[] {
+  const ns = "https://trends.google.com/trending/rss";
+  const articles: TrendArticleLink[] = [];
+  const seen = new Set<string>();
+  for (const item of Array.from(row.children)) {
+    if (item.namespaceURI !== ns || item.localName !== "news_item") continue;
+    const value = (name: string) =>
+      Array.from(item.children).find(
+        (child) => child.namespaceURI === ns && child.localName === name,
+      )?.textContent ?? "";
+    const title = clean(value("news_item_title"));
+    const url = safeURL(value("news_item_url"));
+    if (!title || !url || seen.has(url)) continue;
+    seen.add(url);
+    articles.push({
+      title,
+      url,
+      publisher: clean(value("news_item_source"), 80),
+    });
+    if (articles.length === 3) break;
+  }
+  return articles;
 }
 
 export function parseTrendResponse(
@@ -167,11 +199,18 @@ export function parseTrendResponse(
         config.url,
       );
       if (!title || !url) continue;
+      const articles = source === "google" ? googleArticles(row) : [];
       items.push({
+        ...(articles.length ? { articles } : {}),
         title,
         url,
         published: published(row.querySelector("pubDate")?.textContent ?? ""),
-        terms: source === "google" ? [clean(title, 80)] : headlineTerms(title),
+        terms:
+          source === "google"
+            ? [
+                ...new Set([clean(title, 80), ...dictionaryPhrases(title)]),
+              ].slice(0, 6)
+            : headlineTerms(title),
       });
       if (items.length === 20) break;
     }
@@ -205,6 +244,21 @@ export function validateTrendSnapshot(value: unknown): TrendSnapshot {
       (item.published !== null &&
         (typeof item.published !== "string" ||
           !Number.isFinite(Date.parse(item.published)))) ||
+      (item.articles !== undefined &&
+        (snapshot.source !== "google" ||
+          !Array.isArray(item.articles) ||
+          item.articles.length > 3 ||
+          item.articles.some(
+            (article) =>
+              !article ||
+              typeof article.title !== "string" ||
+              !article.title.trim() ||
+              article.title.length > 160 ||
+              typeof article.url !== "string" ||
+              !safeURL(article.url) ||
+              typeof article.publisher !== "string" ||
+              article.publisher.length > 80,
+          ))) ||
       !Array.isArray(item.terms) ||
       item.terms.length > 6 ||
       item.terms.some(

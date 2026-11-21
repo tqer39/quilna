@@ -6,7 +6,7 @@ export const readerDesigns = [
   {
     id: "studio",
     name: "Studio",
-    description: "新着を軽快に探す、明るいカード表示。",
+    description: "暗いメニューと白い紙面で、見出しから流し読み。",
   },
   {
     id: "editorial",

@@ -1,3 +1,4 @@
+import type { ArticleImage } from "./article-images";
 import { readerIcon } from "./reader-icons";
 import {
   safeArticleLink,
@@ -99,6 +100,7 @@ export function appendArticleText(
     document.createTextNode(value),
   structure?: ArticleStructure,
   textbookLinks: readonly ArticleLink[] = [],
+  images: readonly ArticleImage[] = [],
 ) {
   if (!structure) {
     structure = {
@@ -161,7 +163,7 @@ export function appendArticleText(
   let syntaxBudget = 20_000;
   let syntaxBlocks = 0;
   let firstRange = 0;
-  const appendFlow = (target: HTMLElement, from: number, to: number) => {
+  const appendText = (target: HTMLElement, from: number, to: number) => {
     let offset = from;
     let paragraph: HTMLElement | undefined;
     const getParagraph = () => {
@@ -251,6 +253,24 @@ export function appendArticleText(
         offset += piece.length;
       }
     }
+  };
+  let imageIndex = 0;
+  const appendFlow = (target: HTMLElement, from: number, to: number) => {
+    let cursor = from;
+    while (imageIndex < images.length && images[imageIndex].offset <= to) {
+      const image = images[imageIndex++];
+      appendText(target, cursor, image.offset);
+      const img = document.createElement("img");
+      img.alt = image.alt;
+      img.width = image.width;
+      img.height = image.height;
+      img.className = "rss-imported-image";
+      img.loading = "lazy";
+      img.src = image.data;
+      target.append(img);
+      cursor = image.offset;
+    }
+    appendText(target, cursor, to);
   };
   const appendLayout = (
     target: HTMLElement,

@@ -1,3 +1,4 @@
+import { trendBackgroundControl, withTrendLock } from "./trend-background";
 import { button, el } from "./ui";
 import {
   fetchTrendSnapshot,
@@ -73,6 +74,23 @@ export class TrendDiscoveryView {
         "RedditはRSS提供を終了しているため未接続です。参考元のページは別タブで確認できます。",
         "muted",
       ),
+      trendBackgroundControl((saved) => {
+        if (
+          !this.root.open ||
+          this.busy ||
+          this.source.value !== saved.source ||
+          (this.snapshot &&
+            Date.parse(saved.fetchedAt) <= Date.parse(this.snapshot.fetchedAt))
+        )
+          return;
+        if (this.list.contains(document.activeElement)) {
+          this.message = "新しい話題を保存しました。次に開くと表示します。";
+        } else {
+          this.snapshot = saved;
+          this.message = "読書中に更新した話題を表示しています。";
+        }
+        this.render();
+      }),
       references,
     );
     this.root.append(body);
@@ -118,40 +136,42 @@ export class TrendDiscoveryView {
       }
     }, 16000);
     try {
-      try {
-        const saved = await readTrendSnapshot(source);
+      await withTrendLock(source, controller.signal, async () => {
+        try {
+          const saved = await readTrendSnapshot(source);
+          if (!current()) return;
+          this.snapshot = saved;
+        } catch {
+          storageProblem = true;
+        }
         if (!current()) return;
-        this.snapshot = saved;
-      } catch {
-        storageProblem = true;
-      }
-      if (!current()) return;
-      const age = this.snapshot
-        ? Date.now() - Date.parse(this.snapshot.fetchedAt)
-        : Infinity;
-      if (!force && !storageProblem && age >= 0 && age < trendFreshMs) {
-        this.message = "15分以内に取得した保存済みの話題を表示しています。";
-        return;
-      }
-      this.message = this.snapshot
-        ? "前回の話題を表示したまま更新しています…"
-        : "話題を取得しています…";
-      this.render();
-      const snapshot = await fetchTrendSnapshot(source, controller.signal);
-      if (!current()) return;
-      try {
-        saving = true;
-        const retained = await saveTrendSnapshot(snapshot);
+        const age = this.snapshot
+          ? Date.now() - Date.parse(this.snapshot.fetchedAt)
+          : Infinity;
+        if (!force && !storageProblem && age >= 0 && age < trendFreshMs) {
+          this.message = "15分以内に取得した保存済みの話題を表示しています。";
+          return;
+        }
+        this.message = this.snapshot
+          ? "前回の話題を表示したまま更新しています…"
+          : "話題を取得しています…";
+        this.render();
+        const snapshot = await fetchTrendSnapshot(source, controller.signal);
         if (!current()) return;
-        this.snapshot = retained;
-        this.message = "話題を取得し、このブラウザに保存しました。";
-      } catch {
-        if (!current()) return;
-        this.snapshot = snapshot;
-        this.message = storageProblem
-          ? "話題を取得しましたが、保存領域を確認できません。今回は表示のみです。"
-          : "話題を取得しましたが保存できませんでした。今回は表示のみです。";
-      }
+        try {
+          saving = true;
+          const retained = await saveTrendSnapshot(snapshot);
+          if (!current()) return;
+          this.snapshot = retained;
+          this.message = "話題を取得し、このブラウザに保存しました。";
+        } catch {
+          if (!current()) return;
+          this.snapshot = snapshot;
+          this.message = storageProblem
+            ? "話題を取得しましたが、保存領域を確認できません。今回は表示のみです。"
+            : "話題を取得しましたが保存できませんでした。今回は表示のみです。";
+        }
+      });
     } catch (error) {
       if (ticket !== this.epoch) return;
       this.message = controller.signal.aborted
@@ -187,7 +207,13 @@ export class TrendDiscoveryView {
     this.list.replaceChildren();
     for (const item of this.snapshot?.items ?? []) {
       const row = el("li");
-      row.append(reference(item.title, item.url));
+      // GoogleのRSSは各語句に同じ配信URLを付ける。以前の保存分にも語句別の入口を用意する。
+      if (config.id === "google" && item.url === config.endpoint) {
+        const explore = new URL("https://trends.google.com/trends/explore");
+        explore.searchParams.set("geo", "JP");
+        explore.searchParams.set("q", item.title);
+        row.append(reference(item.title, explore.href));
+      } else row.append(reference(item.title, item.url));
       if (item.published)
         row.append(
           el(
@@ -211,6 +237,22 @@ export class TrendDiscoveryView {
           words.append(word);
         }
         row.append(words);
+      }
+      if (item.articles?.length) {
+        const details = el("details", undefined, "rss-trend-articles"),
+          links = el("ul");
+        details.append(
+          el("summary", `関連ニュース（${item.articles.length}件）`),
+          links,
+        );
+        for (const article of item.articles) {
+          const entry = el("li");
+          entry.append(reference(article.title, article.url));
+          if (article.publisher)
+            entry.append(el("span", article.publisher, "muted"));
+          links.append(entry);
+        }
+        row.append(details);
       }
       this.list.append(row);
     }

@@ -155,6 +155,12 @@ test("selection across prose and inline code stores exact offsets, memo, and saf
   await expect(page.locator(".rss-source-text code mark")).toHaveText(
     "deleteAlarm()",
   );
+  const markedCode = page.locator(".rss-source-text code mark");
+  await expect(markedCode).toHaveCSS("text-decoration-line", "underline");
+  await page.getByRole("button", { name: "ことばの辞書を開く" }).click();
+  await expect(page.getByRole("dialog", { name: "ことばの辞書" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(markedCode).toHaveText("deleteAlarm()");
   await expect(page.locator("#rss-highlights img")).toHaveCount(0);
   await page.reload();
   await open(page);
@@ -165,6 +171,7 @@ test("selection across prose and inline code stores exact offsets, memo, and saf
   );
   await page.getByRole("button", { name: "本文の引用へ", exact: true }).click();
   await expect(page.locator(".rss-source-text mark").first()).toBeFocused();
+  await expect(markedCode).toHaveCSS("text-decoration-line", "underline");
   await page.screenshot({ path: info.outputPath("highlight.png") });
 });
 

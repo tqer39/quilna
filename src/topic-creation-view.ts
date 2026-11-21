@@ -638,6 +638,8 @@ export function topicCreationView(
             }),
         ),
       );
+    const operation =
+      c.operation && "status" in c.operation ? c.operation : null;
     if (c.reason === "capacity")
       detail.append(
         el(
@@ -652,13 +654,31 @@ export function topicCreationView(
           "結果がまだ確定していません。まず処理結果を照会してください。自動では送り直しません。",
         ),
       );
-    else if (c.state === "rejected")
+    else if (
+      c.state === "rejected" &&
+      operation?.status === "rejected" &&
+      operation.outcome === "credential-unavailable"
+    ) {
       detail.append(
         el(
           "p",
-          c.operation &&
-            "reviewPassed" in c.operation &&
-            c.operation.reviewPassed === false
+          c.stage === "generation"
+            ? "生成に必要な権限や接続を確認できませんでした。入力の計数が済んでいる場合があります。新たに生成するときは、資料・モデル・費用をもう一度確認してください。"
+            : "検証に必要な権限や接続を確認できませんでした。入力の計数が済んでいる場合があります。追加検証には新しい費用の承認が必要です。",
+        ),
+      );
+      if (canAuthor && c.stage === "generation")
+        actions.append(
+          button("新しい依頼の資料を探す", () => {
+            preparation.open = true;
+            preparation.querySelector("input")?.focus();
+          }),
+        );
+    } else if (c.state === "rejected")
+      detail.append(
+        el(
+          "p",
+          operation?.reviewPassed === false
             ? "内容の検証で不合格になりました。教材には取り込めません。追加の検証には別途費用がかかります。"
             : "処理を見送りました。未送信が確認できた場合だけ同じ内容を再予約できます。送信済みの生成は自動でやり直しません。",
         ),
@@ -673,8 +693,6 @@ export function topicCreationView(
             ),
         ),
       );
-    const operation =
-      c.operation && "status" in c.operation ? c.operation : null;
     const statusMessages: Record<string, string> = {
       "materials-unavailable":
         "公開資料を送信前に確認できなかったため保留しました。資料を確認できるようになった後、未送信を照合して再予約できます。",
@@ -921,7 +939,11 @@ export function topicCreationView(
         ),
       );
     applyPermission(status.creations?.canAuthor === true);
-    if (!status.creations?.enabled) {
+    if (
+      !canAuthor ||
+      !status.creations?.enabled ||
+      status.mode !== "test-only"
+    ) {
       area.append(
         el(
           "p",
@@ -930,6 +952,12 @@ export function topicCreationView(
       );
       return;
     }
+    area.append(
+      el(
+        "p",
+        "模擬生成です。表示額はテスト用の見積りで、OpenAIへの送信や実際の課金はありません。",
+      ),
+    );
     const form = el("form"),
       chosen: Record<string, TopicQuote> = {};
     const purposes =
@@ -996,24 +1024,37 @@ export function topicCreationView(
     consentLabel.append(
       consent,
       document.createTextNode(
-        "表示した公開資料の抜粋・テーマ・学習目的をOpenAIへ送り、この費用上限で処理することを確認しました。",
+        "表示した公開資料の抜粋・テーマ・学習目的と費用上限で模擬処理を行うことを確認しました。",
       ),
     );
     submit.type = "submit";
     function updateTotal() {
       const sum = Object.values(chosen).reduce((n, q) => n + q.maxMilliYen, 0);
-      total.textContent = `今回の上限 合計${yen(sum)}。${action === "approve" ? "生成と検証の2段階です。" : "すでに発生した費用とは別の上限です。"}月の残り目安 ${yen(Math.max(0, status.budget.limitMilliYen - status.budget.spentMilliYen - status.budget.heldMilliYen))}。`;
+      const budget = status.budget;
+      const remaining = Math.max(
+        0,
+        budget.limitMilliYen -
+          budget.spentMilliYen -
+          budget.heldMilliYen -
+          (budget.fixedMilliYen ?? 0) -
+          (budget.safetyMilliYen ?? 0),
+      );
+      total.textContent = `今回の上限 合計${yen(sum)}。${action === "approve" ? "生成と検証の2段階です。" : "すでに発生した費用とは別の上限です。"}月の残り目安 ${yen(remaining)}。`;
       submit.disabled =
-        sum > status.budget.limitMilliYen ||
-        status.budget.spentMilliYen + status.budget.heldMilliYen >=
-          status.budget.limitMilliYen;
+        sum > budget.limitMilliYen ||
+        chosen[purposes[0]].maxMilliYen > remaining;
+      if (submit.disabled)
+        total.textContent += " 今回の費用上限を予算内で確保できません。";
+      else if (sum > remaining)
+        total.textContent +=
+          " 生成の上限は残額の目安に収まりますが、実際の生成費用によっては検証の予算が不足します。";
     }
     updateTotal();
     form.append(
       total,
       el(
         "p",
-        "送信する内容は、依頼に保存した資料・テーマ・学習目的と、検証時の生成候補です。記事の閲覧履歴・ハイライト・回答は送りません。",
+        "模擬処理に使う内容は、依頼に保存した資料・テーマ・学習目的と、検証時の生成候補です。記事の閲覧履歴・ハイライト・回答は送りません。",
       ),
       consentLabel,
       submit,

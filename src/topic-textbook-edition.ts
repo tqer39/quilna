@@ -90,6 +90,26 @@ export async function createTopicTextbookEdition({
     content.draftDigest !== reviewed.draftDigest
   )
     throw invalid();
+  return packTopicEdition(
+    bookID,
+    createdAt,
+    requestRaw,
+    generated.json,
+    reviewed.json,
+    generated.invocation,
+    reviewed.invocation,
+  );
+}
+
+export function packTopicEdition(
+  bookID: string,
+  createdAt: string,
+  requestRaw: string,
+  draftRaw: string,
+  reviewRaw: string,
+  generator: TopicTextbookEnvelope["invocation"],
+  reviewer: TopicTextbookEnvelope["invocation"],
+) {
   return parseSharedTextbook(
     JSON.stringify({
       format: "TsumikiText",
@@ -101,10 +121,10 @@ export async function createTopicTextbookEdition({
           version: 1,
           createdAt: Date.parse(createdAt) / 1000 - 978307200,
           request: encode(requestRaw),
-          draft: encode(generated.json),
-          review: encode(reviewed.json),
-          generator: generated.invocation,
-          reviewer: reviewed.invocation,
+          draft: encode(draftRaw),
+          review: encode(reviewRaw),
+          generator,
+          reviewer,
         }),
       ),
     }),

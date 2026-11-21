@@ -151,6 +151,7 @@ export class FeedCollector {
       .object({
         url: z.string().max(2048),
         discover: z.boolean().optional(),
+        image: z.boolean().optional(),
         icon: z.boolean().optional(),
         validators: z.custom(validSourceValidators).optional(),
       })
@@ -170,6 +171,7 @@ export class FeedCollector {
       {
         blockedHosts: this.blockedHosts,
         allowHTML: request.discover === true,
+        allowImage: request.image === true,
         allowIcon: request.icon === true,
         validators: request.validators,
       },

@@ -1,3 +1,8 @@
+import {
+  importArticleImages,
+  type ArticleImage,
+  type ImageSource,
+} from "./article-images";
 import type { ArticleStructure, ArticleInfo } from "./article-structure";
 import { extractArticleDocument } from "./article-extraction";
 import { sourceURL } from "./feed-discovery";
@@ -15,6 +20,8 @@ export type ArticleContent = {
   title: string;
   language: string;
   fetchedAt: string;
+  thumbnailUrl?: string;
+  images?: ArticleImage[];
   codeRanges?: ArticleCodeRange[];
   document?: DocumentReference;
   sourceTags?: string[];
@@ -30,12 +37,38 @@ export type ArticleTranslation = {
 };
 export { articleTextLimit } from "./document-format";
 
-export function extractArticle(html: string, url: string): ArticleContent {
+export async function importArticle(
+  html: string,
+  url: string,
+): Promise<ArticleContent> {
+  const sources: ImageSource[] = [];
+  const content = extractArticle(html, url, sources);
+  const images = await importArticleImages(sources);
+  return images.length || !sources.length ? { ...content, images } : content;
+}
+
+export function extractArticle(
+  html: string,
+  url: string,
+  sources?: ImageSource[],
+): ArticleContent {
   sourceURL(url);
   return extractArticleDocument(
     html,
     url,
     document.implementation.createHTMLDocument(""),
+    undefined,
+    undefined,
+    sources,
+  );
+}
+
+const missingSource = "元記事が見つかりません（404）";
+const removedSource = "元記事は公開終了です（410）";
+
+export function sourceFailureLabel(detail?: string) {
+  return [missingSource, removedSource].find((label) =>
+    detail?.includes(label),
   );
 }
 
@@ -65,6 +98,11 @@ export async function fetchArticle(
       body: JSON.stringify(request),
       signal: controller.signal,
     });
+    if ([404, 410].includes(response.status)) {
+      const failure = await response.json().catch(() => null);
+      if (failure?.error === "source-unavailable")
+        throw Error(response.status === 404 ? missingSource : removedSource);
+    }
     if (!response.ok)
       throw Error(
         "本文を取得できませんでした。通信状態やサイト側の制限を確認し、再試行するか元の記事を開いてください。",
@@ -97,7 +135,7 @@ export async function fetchArticle(
     if (typeof result.html !== "string" || typeof result.url !== "string")
       throw Error("このURLから記事のHTML本文を取得できませんでした。");
     return {
-      content: extractArticle(result.html, result.url),
+      content: await importArticle(result.html, result.url),
       validators,
       notModified: false,
     };

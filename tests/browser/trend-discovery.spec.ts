@@ -117,8 +117,8 @@ test("Googleの同じリンクを持つ別キーワードも残し、取得時�
   ).toBeVisible();
   await expect(trends).toContainText("RedditはRSS提供を終了しているため未接続");
   await page.setViewportSize({ width: 320, height: 740 });
-  await trends.locator("select").scrollIntoViewIfNeeded();
-  const control = await trends.locator("select").boundingBox();
+  await trends.getByLabel("話題の情報源").scrollIntoViewIfNeeded();
+  const control = await trends.getByLabel("話題の情報源").boundingBox();
   const header = await page
     .locator(".rss-dictionary .rss-settings-header")
     .boundingBox();
@@ -371,4 +371,236 @@ test("辞書を閉じて戻ったときも期限切れの観測を再確認し�
   await expect.poll(() => requests).toBe(2);
   await expect(trends.getByRole("status")).toContainText("保存しました");
   expect(requests).toBe(2);
+});
+
+test("英語の見出し末尾の複合語から出典と関連語をキーボードでたどる", async ({
+  page,
+}) => {
+  const title =
+    "Storage projects compare several ways to build retrieval-augmented generation";
+  await page.route("**/api/feeds/fetch", (route) => {
+    const { url } = route.request().postDataJSON();
+    return route.fulfill({
+      json: {
+        url,
+        xml:
+          url === hnURL
+            ? "<rss><channel><item><title>" +
+              title +
+              "</title><link>https://example.org/retrieval</link></item></channel></rss>"
+            : google,
+      },
+    });
+  });
+  await page.goto("/?view=feeds");
+  const trends = await openTrends(page);
+  await trends.getByLabel("話題の情報源").selectOption("hackernews");
+  await trends
+    .getByRole("button", {
+      name: "辞書で調べる：retrieval-augmented generation",
+      exact: true,
+    })
+    .click();
+  await expect(
+    trends.getByRole("button", { name: /辞書で調べる：rag$/i }),
+  ).toHaveCount(0);
+  const result = page.locator(".rss-dictionary-results");
+  await expect(
+    result.getByRole("heading", { name: "RAG", exact: true }),
+  ).toBeVisible();
+  await expect(
+    result.getByRole("link", { name: /説明の出典/ }),
+  ).toHaveAttribute("href", /#retrieval-augmented-generation-rag$/);
+  const related = result.getByRole("button", { name: "大規模言語モデル" });
+  await related.focus();
+  await related.press("Enter");
+  await expect(
+    result.getByRole("heading", { name: "大規模言語モデル", exact: true }),
+  ).toBeFocused();
+  const input = page.getByLabel("調べたい言葉");
+  await input.fill("ＬＬＭ");
+  await input.press("Enter");
+  await expect(
+    result.getByRole("heading", { name: "大規模言語モデル", exact: true }),
+  ).toBeVisible();
+});
+
+test("外部の説明がない場合と応答の不整合を区別し、辞書で調べ直せる", async ({
+  page,
+}) => {
+  const responses = [
+    { success: 1, searchinfo: { search: "検査用語" }, search: [] },
+    { success: 1, searchinfo: { search: "異なる検索語" }, search: [] },
+  ];
+  await page.route("https://www.wikidata.org/w/api.php?**", (route) =>
+    route.fulfill({
+      headers: { "Access-Control-Allow-Origin": "*" },
+      json: responses.shift(),
+    }),
+  );
+  await page.goto("/?view=feeds");
+  await page.getByRole("button", { name: "ことばの辞書を開く" }).click();
+  const input = page.getByLabel("調べたい言葉");
+  await input.fill("検査用語");
+  await input.press("Enter");
+  const region = page.getByRole("region", { name: "Wikidataの候補" });
+  await region.getByRole("button").click();
+  await expect(region).toContainText(
+    "上位3件に日本語の説明がある候補はありません",
+  );
+  await region.getByRole("button").click();
+  await expect(region).toContainText("説明を取得できませんでした");
+  await expect(region.getByRole("link")).toHaveCount(0);
+  await input.fill("RSS");
+  await input.press("Enter");
+  await expect(page.locator(".rss-definition")).toBeVisible();
+  await expect(region).toHaveCount(0);
+});
+
+test("読書中に選んだ情報源だけを更新し、再読み込みと辞書で保存分を再利用できる", async ({
+  page,
+}) => {
+  await page.clock.install();
+  let requests = 0;
+  await page.route("**/api/feeds/fetch", async (route) => {
+    const { url } = route.request().postDataJSON();
+    if (url === hnURL) requests++;
+    await route.fulfill({
+      json: { url, xml: url === hnURL ? hackernews : google },
+    });
+  });
+  await page.goto("/?view=feeds");
+  let trends = await openTrends(page);
+  const label = "読書中に15分ごとに更新する情報源";
+  await expect(trends.getByLabel(label)).toHaveValue("");
+  await expect(trends.getByRole("status")).toContainText("保存しました");
+  expect(requests).toBe(0);
+  await trends.getByLabel(label).selectOption("hackernews");
+  await expect.poll(() => requests).toBe(1);
+  await trends.getByLabel("話題の情報源").selectOption("hackernews");
+  await expect(trends.getByRole("status")).toContainText("保存済み");
+  expect(requests).toBe(1);
+  await page.keyboard.press("Escape");
+  await page.clock.fastForward(16 * 60000);
+  await expect.poll(() => requests).toBe(2);
+  await page.reload();
+  trends = await openTrends(page);
+  await expect(trends.getByLabel(label)).toHaveValue("hackernews");
+  await trends.getByLabel("話題の情報源").selectOption("hackernews");
+  await expect(trends.getByRole("status")).toContainText("保存済み");
+  expect(requests).toBe(2);
+  await trends.getByLabel(label).selectOption("");
+  await page.keyboard.press("Escape");
+  await page.clock.fastForward(16 * 60000);
+  await page.reload();
+  trends = await openTrends(page);
+  await expect(trends.getByLabel(label)).toHaveValue("");
+  expect(requests).toBe(2);
+});
+
+test("別タブの手動照会は進行中の自動取得を待ち、同じ観測を再取得しない", async ({
+  page,
+  context,
+}) => {
+  let count = 0;
+  let release: (() => void) | undefined;
+  await context.route("**/api/feeds/fetch", async (route) => {
+    const { url } = route.request().postDataJSON();
+    if (url === hnURL) {
+      count++;
+      if (count === 1)
+        await new Promise<void>((resolve) => {
+          release = resolve;
+        });
+    }
+    await route.fulfill({
+      json: { url, xml: url === hnURL ? hackernews : google },
+    });
+  });
+  const other = await context.newPage();
+  await other.goto("/?view=feeds");
+  const otherTrends = await openTrends(other);
+  await page.goto("/?view=feeds");
+  const trends = await openTrends(page);
+  await trends
+    .getByLabel("読書中に15分ごとに更新する情報源")
+    .selectOption("hackernews");
+  await expect.poll(() => count).toBe(1);
+  await otherTrends.getByLabel("話題の情報源").selectOption("hackernews");
+  await expect(
+    otherTrends.getByRole("button", { name: "話題を更新" }),
+  ).toHaveAttribute("aria-busy", "true");
+  release!();
+  await expect(otherTrends.getByRole("status")).toContainText("保存済み");
+  expect(count).toBe(1);
+});
+
+test("話題一覧を見ている間の自動更新で新しい見出しを表示する", async ({
+  page,
+}) => {
+  await page.clock.install();
+  let count = 0;
+  await page.route("**/api/feeds/fetch", (route) => {
+    count++;
+    return route.fulfill({
+      json: {
+        url: googleURL,
+        xml: count === 1 ? google : google.replace("非同期", "更新された言葉"),
+      },
+    });
+  });
+  await page.goto("/?view=feeds");
+  const trends = await openTrends(page);
+  await expect(trends.getByRole("status")).toContainText("保存しました");
+  await trends
+    .getByLabel("読書中に15分ごとに更新する情報源")
+    .selectOption("google");
+  await page.clock.fastForward(16 * 60000);
+  await expect(
+    trends.getByRole("button", { name: "辞書で調べる：更新された言葉" }),
+  ).toBeVisible();
+  expect(count).toBe(2);
+});
+
+test("検索語ごとの動向と配信元の関連記事を再読み込み後も開ける", async ({
+  page,
+}) => {
+  const article = (url: string, title: string) =>
+    `<n:news_item><n:news_item_title>${title}</n:news_item_title><n:news_item_url>${url}</n:news_item_url></n:news_item>`;
+  const xml = `<rss xmlns:n="https://trends.google.com/trending/rss"><channel><item><title>C++ &amp; RSS</title><link>${googleURL}</link>
+    ${article("javascript:alert(1)", "無効")}
+    ${article("https://example.org/1", "記事1")}
+    ${article("https://example.org/1", "重複")}
+    ${article("https://example.org/2", "記事2")}
+    ${article("https://example.org/3", "記事3")}
+    ${article("https://example.org/4", "記事4")}
+    </item></channel></rss>`;
+  let requests = 0;
+  await page.route("**/api/feeds/fetch", (route) => {
+    requests++;
+    return route.fulfill({ json: { url: googleURL, xml } });
+  });
+  await page.goto("/?view=feeds");
+  for (const status of ["保存しました", "保存済みの話題を表示"]) {
+    const trends = await openTrends(page);
+    await expect(trends.getByRole("status")).toContainText(status);
+    await expect(
+      trends.getByRole("link", { name: "C++ & RSS" }),
+    ).toHaveAttribute(
+      "href",
+      "https://trends.google.com/trends/explore?geo=JP&q=C%2B%2B+%26+RSS",
+    );
+    await trends.getByText("関連ニュース（3件）").click();
+    await expect(trends.locator("details a")).toHaveText([
+      "記事1",
+      "記事2",
+      "記事3",
+    ]);
+    await expect(trends.getByRole("link", { name: "記事1" })).toHaveAttribute(
+      "href",
+      "https://example.org/1",
+    );
+    if (status === "保存しました") await page.reload();
+  }
+  expect(requests).toBe(1);
 });

@@ -61,7 +61,6 @@ async function seed(page: Page, design = "studio") {
 }
 const destinations = (page: Page) =>
   page.getByRole("navigation", { name: "主な移動先" });
-const current = (page: Page) => page.locator(".rss-location-current");
 const dialog = (page: Page) =>
   page.getByRole("dialog", { name: "サイト・記事の取り込み", exact: true });
 
@@ -98,17 +97,19 @@ for (const design of ["studio", "editorial", "focus"])
     await page.screenshot({
       path: info.outputPath(`${design}-compact-navigation.png`),
     });
-    await expect(current(page)).toHaveText("記事一覧");
-    await destinations(page)
-      .getByRole("link", { name: "保存した記事", exact: true })
-      .click();
-    await expect(current(page)).toHaveText("保存した記事");
-    await expect(
-      destinations(page).getByRole("link", {
-        name: "保存した記事",
-        exact: true,
-      }),
-    ).toHaveAttribute("aria-current", "page");
+    // 一覧表示中の「読む」切り替えは収集メニューが受け持ち、上部の同名リンクは本文表示中の戻り先になる。
+    const savedFilter = page
+      .getByRole("region", { name: "収集メニュー" })
+      .getByRole("button", { name: /^保存した記事 · / });
+    await savedFilter.click();
+    await expect(savedFilter).toHaveAttribute("aria-current", "page");
+    if (info.project.name === "mobile")
+      await expect(
+        destinations(page).getByRole("link", {
+          name: "保存した記事",
+          exact: true,
+        }),
+      ).toHaveAttribute("aria-current", "page");
     await page.getByLabel("保存領域の記事を検索").fill("Common");
     await page.getByLabel("配信元", { exact: true }).selectOption(feed);
     await page.getByLabel("タグで絞り込み").selectOption("tag:検証");
@@ -122,17 +123,14 @@ for (const design of ["studio", "editorial", "focus"])
     );
     const before = await row.boundingBox();
     await row.click();
-    await expect(current(page)).toContainText(
-      "保存した記事 · Location source › 記事詳細",
-    );
-    await expect(current(page)).toContainText("Location article 110");
+    await expect(page.getByRole("region", { name: "現在地と移動先" })).toHaveCount(0);
     await expect(page).toHaveTitle("Location article 110 | Quilna");
     await expect(page.locator("#rss-focus-toggle")).toHaveText("配信元");
     await expect(page.locator("#rss-focus-toggle")).toHaveAccessibleName(
       "配信元の収集メニューを表示",
     );
     const contrasts = await page
-      .locator(".rss-location-bar button")
+      .locator(".rss-reader-navigation button")
       .evaluateAll((buttons) => {
         const luminance = (value: string) => {
           const [r, g, b] = value
@@ -159,7 +157,6 @@ for (const design of ["studio", "editorial", "focus"])
       .click();
     await expect(dialog(page)).toBeVisible();
     await expect(dialog(page).getByLabel("サイト・RSSのURL")).toBeFocused();
-    await expect(current(page)).toContainText("サイト・記事の取り込み");
     await dialog(page)
       .getByLabel("サイト・RSSのURL")
       .fill("https://example.org/unfinished");
@@ -171,7 +168,6 @@ for (const design of ["studio", "editorial", "focus"])
     ).toBe(true);
     await page.keyboard.press("Escape");
     await expect(dialog(page)).toBeHidden();
-    await expect(current(page)).toContainText("記事詳細");
     await expect(
       destinations(page).getByRole("link", {
         name: "サイト・記事の取り込み",
@@ -205,7 +201,6 @@ for (const design of ["studio", "editorial", "focus"])
     await dialog(page)
       .getByRole("button", { name: "記事一覧へ戻る", exact: true })
       .click();
-    await expect(current(page)).toContainText("保存した記事");
     expect(
       await page.evaluate(
         () => document.documentElement.scrollWidth <= innerWidth,
@@ -284,9 +279,6 @@ test("successful article import closes the dialog at the saved article detail", 
     "Imported location",
   );
   await expect(page.locator("#rss-current-title")).toBeFocused();
-  await expect(current(page)).toContainText(
-    "保存した記事 › 記事詳細 — Imported location",
-  );
 });
 
 test("a feed registered through the dialog opens that source's article list", async ({
@@ -313,7 +305,6 @@ test("a feed registered through the dialog opens that source's article list", as
     .getByRole("button", { name: "登録して読む", exact: true })
     .click();
   await expect(dialog(page)).toBeHidden();
-  await expect(current(page)).toHaveText("記事一覧 · New location source");
   await expect(
     page.getByRole("button", { name: "New location article", exact: true }),
   ).toBeVisible();
@@ -331,7 +322,6 @@ test("saved and import destination URLs reopen their named screens", async ({
   await expect(
     page.getByRole("heading", { name: "保存した記事", exact: true }),
   ).toBeVisible();
-  await expect(current(page)).toHaveText("保存した記事");
 });
 
 for (const mode of ["inline", "dialog", "repeat", "draft", "error"])
@@ -425,13 +415,8 @@ for (const mode of ["inline", "dialog", "repeat", "draft", "error"])
     await expect(page.locator("#rss-current-title")).toBeFocused();
     finish!();
     await expect(
-      page
-        .locator("#feed-source option")
-        .filter({ hasText: "Delayed registration" }),
+      page.locator(".rss-feed-label").filter({ hasText: /^Delayed registration$/ }),
     ).toHaveCount(1);
-    await expect(current(page)).toContainText(
-      "記事詳細 — Location article 002",
-    );
     await expect(page.locator("#rss-current-title")).toBeFocused();
     await expect(dialog(page)).toBeHidden();
   });

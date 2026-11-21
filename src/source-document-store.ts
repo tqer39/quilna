@@ -428,7 +428,8 @@ export async function acquireDocument(
                 // not changed. Ordinary cached reads still avoid a fetch.
                 validators:
                   options.force &&
-                  current.version.content.structure?.blocks === undefined
+                  (current.version.content.structure?.blocks === undefined ||
+                    current.version.content.images === undefined)
                     ? undefined
                     : current.document.validators,
               }

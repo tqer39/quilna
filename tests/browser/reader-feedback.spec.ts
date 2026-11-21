@@ -92,11 +92,7 @@ test("reader stays quiet while reading, preserves source and exposes optional to
   await expect(
     page.getByRole("navigation", { name: "主な移動先" }),
   ).toBeVisible();
-  expect(
-    await page
-      .locator(".rss-location-bar")
-      .evaluate((e) => getComputedStyle(e).position),
-  ).toBe("static");
+  await expect(page.locator(".rss-location-bar")).toHaveCount(0);
   await expect(page.locator("#rss-reading-extras")).not.toHaveAttribute(
     "open",
     "",

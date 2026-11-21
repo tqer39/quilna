@@ -60,7 +60,7 @@ test("a site or article URL discovers choices without embedding HTML; only the c
     { url: "https://publisher.example.org/story", discover: true },
   ]);
   await expect(
-    page.getByLabel("配信元", { exact: true }).getByRole("option"),
+    page.getByLabel("配信元", { exact: true }).getByRole("option", { includeHidden: true }),
   ).toHaveCount(1);
   expect(
     await page.evaluate(
@@ -324,7 +324,7 @@ test("unsafe input never reaches discovery and unadvertised or nested template l
     .click();
   await expect(page.locator(".rss-candidates li")).toHaveCount(20);
   await expect(
-    page.getByLabel("配信元", { exact: true }).getByRole("option"),
+    page.getByLabel("配信元", { exact: true }).getByRole("option", { includeHidden: true }),
   ).toHaveCount(1);
 });
 async function register(page: import("@playwright/test").Page) {

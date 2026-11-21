@@ -7,7 +7,11 @@ const titles = [
 ];
 const xml = `<rss version="2.0"><channel><title>毎日の発見</title>${titles.map((title, index) => `<item><guid>${index}</guid><title>${title}</title><category>${index < 2 ? "技術" : "科学"}</category><description>非同期の処理は、完了を待つ間も別の作業を進められます。気になる言葉を調べながら読み進めます。</description></item>`).join("")}</channel></rss>`;
 
-async function seed(page: Page, voices: "local" | "remote" = "local") {
+async function seed(
+  page: Page,
+  voices: "local" | "remote" = "local",
+  feedXML = xml,
+) {
   await page.addInitScript((mode) => {
     localStorage.setItem("quilna.article.updates.v1", "false");
     const state = window as unknown as {
@@ -33,6 +37,7 @@ async function seed(page: Page, voices: "local" | "remote" = "local") {
       speak: (utterance: SpeechSynthesisUtterance) => {
         state.pending = utterance;
         state.spoken.push(utterance.text);
+        utterance.onstart?.(new Event("start") as SpeechSynthesisEvent);
       },
       cancel: () => {
         state.pending = null;
@@ -60,7 +65,7 @@ async function seed(page: Page, voices: "local" | "remote" = "local") {
     });
   }, voices);
   await page.route("**/api/feeds/fetch", (route) =>
-    route.fulfill({ json: { url: "https://example.org/feed", xml } }),
+    route.fulfill({ json: { url: "https://example.org/feed", xml: feedXML } }),
   );
   await page.goto("/?view=feeds");
   await page.getByLabel("サイト・RSSのURL").fill("https://example.org/feed");
@@ -130,6 +135,39 @@ test("辞書をEscapeで閉じた同じ操作内で、本文の選択を復元�
     };
   });
   expect(result).toEqual({ open: false, selected: "非同期" });
+});
+
+test("辞書で長い語から収録語一覧まで戻れ、閉じた履歴は次回に残らない", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 320, height: 740 });
+  await page.goto("/?view=feeds");
+  const open = page.getByRole("button", { name: "ことばの辞書を開く" });
+  await open.click();
+  const dialog = page.getByRole("dialog", { name: "ことばの辞書" });
+  const input = dialog.getByLabel("調べたい言葉");
+  const longWord = "W".repeat(80);
+  await input.fill(longWord);
+  await input.press("Enter");
+  await input.fill("キャッシュ");
+  await input.press("Enter");
+  const back = dialog.getByRole("button", { name: `「${longWord}」に戻る` });
+  await expect(back).toBeVisible();
+  expect(await dialog.evaluate((e) => e.scrollWidth <= e.clientWidth)).toBe(
+    true,
+  );
+  await back.click();
+  await expect(input).toHaveValue(longWord);
+  await dialog.getByRole("button", { name: "収録語一覧に戻る" }).click();
+  await expect(input).toBeFocused();
+  await expect(input).toHaveValue("");
+  await dialog.getByRole("button", { name: "非同期", exact: true }).click();
+  await dialog.getByRole("button", { name: "読書に戻る" }).click();
+  await open.click();
+  await expect(input).toHaveValue("");
+  await expect(
+    dialog.getByRole("button", { name: "「非同期」に戻る" }),
+  ).toHaveCount(0);
 });
 
 test("一覧から未読のまま保存でき、再読込後にも残り、保存一覧で解除すると次の行へ戻る", async ({
@@ -202,6 +240,15 @@ for (const design of ["studio", "editorial", "focus"])
     await expect(dialog.locator(".rss-definition")).toContainText(
       "終わってから次の処理",
     );
+    await dialog
+      .getByRole("button", { name: "「非同期」に戻る" })
+      .press("Enter");
+    await expect(
+      dialog.getByRole("heading", { name: "非同期", exact: true }),
+    ).toBeFocused();
+    await expect(
+      dialog.getByRole("button", { name: /に戻る/ }).filter({ hasText: "「" }),
+    ).toHaveCount(0);
     const input = dialog.getByLabel("調べたい言葉");
     await input.fill('未知の語 <img src=x onerror="alert(1)">');
     await input.press("Enter");
@@ -250,8 +297,18 @@ test("興味のあるタグの見出しだけを読み、停止・再開・条�
   await page.getByText("見出しを聞く", { exact: true }).click();
   const player = page.locator(".rss-headline-player");
   await player.getByRole("button", { name: "この一覧の見出しを聞く" }).click();
+  await expect(player.locator(".rss-headline-current")).toHaveText(
+    `1 / 2 · ${titles[0]}`,
+  );
   await expect(player.getByRole("status")).toHaveText("読み上げ中");
   await player.getByRole("button", { name: "一時停止", exact: true }).click();
+  await expect(player.getByRole("status")).toHaveText("一時停止中");
+  await player
+    .getByRole("button", { name: "あとで読むに保存", exact: true })
+    .click();
+  await expect(
+    player.getByRole("button", { name: "あとで読むに保存済み" }),
+  ).toBeDisabled();
   await expect(player.getByRole("status")).toHaveText("一時停止中");
   await player.getByRole("button", { name: "再開", exact: true }).click();
   await page.evaluate(() =>
@@ -263,6 +320,7 @@ test("興味のあるタグの見出しだけを読み、停止・再開・条�
   const spoken = await page.evaluate(() =>
     (window as unknown as { spoken: string[] }).spoken.join(""),
   );
+  await expect(player.locator(".rss-headline-current")).toBeHidden();
   expect(spoken).toContain(titles[0]);
   expect(spoken).toContain(titles[1]);
   expect(spoken).not.toContain(titles[2]);
@@ -427,4 +485,98 @@ test("ハイライトの非同期再確認を待っても、本文で選択し�
       .getByRole("dialog", { name: "ことばの辞書" })
       .getByLabel("調べたい言葉"),
   ).toHaveValue("非同期");
+});
+
+test("スマートフォンでは先頭記事と保存操作を最初の画面に置き、絞り込みから一覧に戻れる", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 390, height: 844 });
+  const firstTitle =
+    "時間がない日に読みたい記事を選んで保存し、あとで資料と照らし合わせながらじっくり読み返す方法";
+  const longSummary =
+    "選んだ記事を保存し、気になった用語を調べながら読み返します。".repeat(8);
+  await seed(
+    page,
+    "local",
+    xml
+      .replace(titles[0], firstTitle)
+      .replace(/<description>[^<]+/, "<description>" + longSummary),
+  );
+  await page.reload();
+  const list = page.locator("main"),
+    menu = page.getByRole("region", { name: "収集メニュー" });
+  const title = list.getByRole("button", { name: firstTitle, exact: true }),
+    save = list.getByRole("button", {
+      name: `あとで読むに保存：${firstTitle}`,
+    });
+  await expect(title).toBeInViewport({ ratio: 1 });
+  await expect(save).toBeInViewport({ ratio: 1 });
+  await list.getByRole("button", { name: "配信元・未読で絞り込み" }).click();
+  await expect(menu).toBeFocused();
+  await menu.getByRole("button", { name: /未読 ·/ }).click();
+  await expect(list.getByRole("heading", { name: "未読の記事" })).toBeFocused();
+  await expect(title).toBeInViewport();
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await expect(
+    list.getByRole("button", { name: "配信元・未読で絞り込み" }),
+  ).toHaveCount(0);
+  await expect
+    .poll(() =>
+      menu.evaluate((el) => el === el.parentElement?.firstElementChild),
+    )
+    .toBe(true);
+});
+
+test("関心を保存して再読み込みし、空の保存一覧からでも全配信元の該当する未読だけを聞ける", async ({
+  page,
+}) => {
+  await seed(page);
+  const player = page.locator(".rss-headline-player");
+  async function openInterests() {
+    await page.getByText("見出しを聞く", { exact: true }).click();
+    await player.getByText("関心のある未読記事", { exact: true }).click();
+  }
+  await openInterests();
+  await player.getByLabel("関心のある言葉").fill("宇宙、技術");
+  await player.getByRole("button", { name: "関心を保存", exact: true }).click();
+  await expect(
+    player.getByRole("button", { name: "関心のある未読3件を聞く" }),
+  ).toBeEnabled();
+  await player.getByLabel("関心のある言葉").fill("科学");
+  await player.getByRole("button", { name: "関心を保存", exact: true }).click();
+  await page.reload();
+  await page.getByRole("button", { name: /保存した記事 · 0/ }).click();
+  await openInterests();
+  await expect(player.getByLabel("関心のある言葉")).toHaveValue("科学");
+  await expect(
+    player.getByRole("button", { name: "この一覧の見出しを聞く" }),
+  ).toBeDisabled();
+  await player.getByText("読み上げる見出しを確認", { exact: true }).click();
+  await expect(player.locator("ol li")).toHaveText([titles[2]]);
+  await player.getByRole("button", { name: "関心のある未読1件を聞く" }).click();
+  await player
+    .getByRole("button", { name: "あとで読むに保存", exact: true })
+    .click();
+  await expect(
+    player.getByRole("button", { name: "あとで読むに保存済み" }),
+  ).toBeDisabled();
+  await expect(
+    page.getByRole("button", { name: /保存した記事 · 1/ }),
+  ).toBeVisible();
+  await expect(page.locator(".rss-article-title")).toHaveText(titles[2]);
+  await expect(player.getByRole("status")).toHaveText("読み上げ中");
+  await page.evaluate(() =>
+    (window as unknown as { completeSpeech: () => void }).completeSpeech(),
+  );
+  const spoken = await page.evaluate(() =>
+    (window as unknown as { spoken: string[] }).spoken.join(""),
+  );
+  expect(spoken).toContain(titles[2]);
+  expect(spoken).not.toContain(titles[0]);
+  await expect(page.getByRole("button", { name: /未読 · 3/ })).toBeVisible();
+  await player.getByLabel("関心のある言葉").fill("");
+  await player.getByRole("button", { name: "関心を保存", exact: true }).click();
+  await expect(
+    player.getByRole("button", { name: "関心のある未読を聞く" }),
+  ).toBeDisabled();
 });

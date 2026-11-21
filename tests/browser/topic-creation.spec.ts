@@ -41,6 +41,14 @@ async function fixture(context: BrowserContext) {
     creation: null as TopicCreation | null,
     calls: [] as { action: string; input: Record<string, unknown> }[],
     enabled: true,
+    mode: "test-only",
+    budget: {
+      limitMilliYen: 500000,
+      spentMilliYen: 0,
+      heldMilliYen: 0,
+      fixedMilliYen: null as number | null,
+      safetyMilliYen: null as number | null,
+    },
     dropSave: false,
     dropApprove: false,
     deferApprove: false,
@@ -70,17 +78,11 @@ async function fixture(context: BrowserContext) {
     r.fulfill({
       json: {
         account,
-        mode: "test-only",
+        mode: state.mode,
         csrfToken: "synthetic-csrf-token-for-tests",
         quotes: [generation, state.reviewQuote],
         creations: { available: true, enabled: state.enabled, canAuthor: true },
-        budget: {
-          limitMilliYen: 500000,
-          spentMilliYen: 0,
-          heldMilliYen: 0,
-          fixedMilliYen: null,
-          safetyMilliYen: null,
-        },
+        budget: state.budget,
       },
     }),
   );
@@ -253,6 +255,8 @@ async function approve(root: ReturnType<Page["locator"]>) {
     .getByRole("button", { name: "モデルと費用を確認", exact: true })
     .click();
   await expect(root.getByText(/今回の上限 合計3円/)).toBeVisible();
+  await expect(root.getByText(/表示額はテスト用の見積り/)).toBeVisible();
+  await expect(root.getByRole("checkbox")).toHaveAccessibleName(/模擬処理/);
   await root.getByRole("checkbox").check();
   await root
     .getByRole("button", { name: "この費用上限で作成を始める" })
@@ -344,6 +348,40 @@ test("承認応答が不明なら再送を止め、同じ依頼の結果を確�
   await root.getByRole("button", { name: "未確認の受付を確認" }).click();
   await expect(root.getByText("教科書を生成中", { exact: true })).toBeVisible();
 });
+test("固定費・安全枠・保留額を引いた残額で生成と検証の不足を区別する", async ({
+  page,
+  context,
+}) => {
+  const f = await fixture(context),
+    root = await save(page);
+  const quote = root.getByRole("button", {
+    name: "モデルと費用を確認",
+    exact: true,
+  });
+  const submit = root.getByRole("button", {
+    name: "この費用上限で作成を始める",
+  });
+  Object.assign(f.state.budget, {
+    spentMilliYen: 485000,
+    heldMilliYen: 2000,
+    fixedMilliYen: 9000,
+    safetyMilliYen: 3500,
+  });
+  await quote.click();
+  await expect(root.getByText(/月の残り目安 0.5円/)).toBeVisible();
+  await expect(submit).toBeDisabled();
+  f.state.budget.spentMilliYen -= 500;
+  await quote.click();
+  await expect(
+    root.getByText(/月の残り目安 1円.*検証の予算が不足/),
+  ).toBeVisible();
+  await expect(submit).toBeEnabled();
+  f.state.budget.spentMilliYen -= 2000;
+  await quote.click();
+  await expect(root.getByText(/月の残り目安 3円/)).toBeVisible();
+  await expect(root.getByText(/検証の予算が不足/)).toHaveCount(0);
+  expect(f.state.calls.filter((c) => c.action === "approve")).toHaveLength(0);
+});
 test("資料の拒否では入力を保ち、受付未設定や停止中は費用承認を送らない", async ({
   page,
   context,
@@ -372,6 +410,24 @@ test("資料の拒否では入力を保ち、受付未設定や停止中は費�
       "この接続先では新しい生成・検証を開始できません。保存した結果の確認はできます。",
     ),
   ).toBeVisible();
+  expect(f.state.calls.filter((c) => c.action === "approve")).toHaveLength(0);
+});
+test("未接続では見積りが残っていても模擬生成を承認できない", async ({
+  page,
+  context,
+}) => {
+  const f = await fixture(context),
+    root = await save(page);
+  f.state.mode = "unconnected";
+  await root
+    .getByRole("button", { name: "モデルと費用を確認", exact: true })
+    .click();
+  await expect(
+    root.getByText(/この接続先では新しい生成・検証を開始できません/),
+  ).toBeVisible();
+  await expect(
+    root.getByRole("button", { name: "この費用上限で作成を始める" }),
+  ).toHaveCount(0);
   expect(f.state.calls.filter((c) => c.action === "approve")).toHaveLength(0);
 });
 test("未送信保留の取り下げは未保存結果の損失を説明して確認する", async ({
@@ -1043,7 +1099,7 @@ test("管理者でない読者には教科書作成と旧試作を出さず、�
       },
     }),
   );
-  await page.goto("/?view=textbooks");
+  await page.goto("/?view=textbooks#author=RSS");
   await expect(
     page.getByRole("heading", { name: "保存した教材", exact: true }),
   ).toBeVisible();
@@ -1061,6 +1117,17 @@ test("管理者でない読者には教科書作成と旧試作を出さず、�
   await expect(
     page.getByText("教材ファイルを取り込む", { exact: true }),
   ).toBeVisible();
+  await expect(
+    page.getByText("自分のLLMで教科書を作る", { exact: true }),
+  ).toBeHidden();
+  await page.goto("/?view=feeds");
+  await page.getByRole("button", { name: "ことばの辞書を開く" }).click();
+  const word = page.getByLabel("調べたい言葉");
+  await word.fill("RSS");
+  await word.press("Enter");
+  await page.getByRole("button", { name: "保存した教科書を探す" }).click();
+  await expect(page.getByText("この言葉に合う教科書は見つかりませんでした。")).toBeVisible();
+  await expect(page.getByRole("link", { name: "この言葉で教科書を作る" })).toHaveCount(0);
   expect(f.state.calls).toHaveLength(0);
 });
 test("作成権限を失った後も、自分の完成版を確認して取り込める", async ({

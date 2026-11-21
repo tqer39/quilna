@@ -1262,3 +1262,67 @@ test("テーマの個人リンク混入と根拠改変を取り込まず、保�
   ).toBeVisible();
   expect(await exported(page)).toBe(topicFixture);
 });
+
+test("辞書から保存済みのテーマ教材を別タブで開き、もとの言葉を保持する", async ({
+  page,
+}) => {
+  await page.goto("/?view=textbooks");
+  await importBook(page, topicFixture);
+  await page.goto("/?view=feeds");
+  await page.getByRole("button", { name: "ことばの辞書を開く" }).click();
+  const dictionary = page.getByRole("dialog", { name: "ことばの辞書" });
+  const input = dictionary.getByLabel("調べたい言葉");
+  await input.fill("役割分担");
+  await input.press("Enter");
+  const region = dictionary.getByRole("region", { name: "この言葉の教科書" });
+  await region.getByRole("button", { name: "保存した教科書を探す" }).click();
+  const link = region.getByRole("link", {
+    name: /テーマ別の合成教材：モデルと実行/,
+  });
+  const [reader] = await Promise.all([
+    page.waitForEvent("popup"),
+    link.click(),
+  ]);
+  await expect(
+    reader.getByRole("navigation", { name: "教材の目次" }),
+  ).toBeVisible();
+  await expect(
+    reader.getByRole("heading", { name: topicTitle, exact: true }),
+  ).toBeVisible();
+  expect(new URL(reader.url()).searchParams.has("term")).toBe(false);
+  await reader.close();
+  await expect(input).toHaveValue("役割分担");
+  await input.fill("保存の確認");
+  await input.press("Enter");
+  await region.getByRole("button", { name: "保存した教科書を探す" }).click();
+  await expect(region).toContainText("保存した教科書が1件あります");
+  const [chapter] = await Promise.all([
+    page.waitForEvent("popup"),
+    region.getByRole("link", { name: "2. 保存の確認", exact: true }).click(),
+  ]);
+  const heading = chapter.getByRole("heading", {
+    name: "2. 保存の確認",
+    exact: true,
+  });
+  await expect(heading).toBeFocused();
+  await expect(heading).toBeInViewport();
+  expect(new URL(chapter.url()).hash).toBe(
+    "#" + (await heading.getAttribute("id")),
+  );
+  await chapter.close();
+  await expect(input).toHaveValue("保存の確認");
+  await input.fill("未登録のテーマ");
+  await input.press("Enter");
+  await region.getByRole("button", { name: "保存した教科書を探す" }).click();
+  await expect(region).toContainText("見つかりませんでした");
+  const [author] = await Promise.all([
+    page.waitForEvent("popup"),
+    region.getByRole("link", { name: "この言葉で教科書を作る" }).click(),
+  ]);
+  await expect(author.getByLabel("テーマ", { exact: true })).toBeFocused();
+  await expect(author.getByLabel("テーマ", { exact: true })).toHaveValue("未登録のテーマ");
+  await expect(author.getByLabel("資料の抜粋")).toHaveValue("");
+  expect(new URL(author.url()).search).toBe("?view=textbooks");
+  await author.close();
+  await expect(input).toHaveValue("未登録のテーマ");
+});

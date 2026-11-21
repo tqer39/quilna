@@ -10,6 +10,7 @@
   --viewer-radius: 18px;
   --viewer-shadow: 0 6px 24px #25395d08;
   --viewer-reading-font: system-ui, -apple-system, sans-serif;
+  --annotation-ink: #a03232;
   --syntax-keyword: #7c285f;
   --syntax-string: #145b2a;
   --syntax-title: #235e91;
@@ -45,6 +46,7 @@
   --viewer-shadow: none;
   --error-fg: #ffc0c7;
   --error-bg: #3c1e28;
+  --annotation-ink: #ff9797;
   --syntax-keyword: #e9a1cc;
   --syntax-string: #a6d99b;
   --syntax-title: #98c7ff;
@@ -152,7 +154,7 @@
   ) {
   color: var(--viewer-muted);
 }
-:root[data-reader-design] .rss-main > h1 {
+:root[data-reader-design] .rss-list-header h1 {
   font-size: clamp(28px, 3vw, 40px);
   letter-spacing: -0.035em;
 }
@@ -163,22 +165,19 @@
   box-shadow: var(--viewer-shadow);
 }
 :root[data-reader-design] .rss-article-list {
-  display: grid;
-  gap: 16px;
-  margin-block: 24px;
+  margin-block: 16px 32px;
+  max-inline-size: 48rem;
 }
 :root[data-reader-design] .rss-article-list li {
-  display: flex;
-  flex-direction: column;
-  align-items: stretch;
-  gap: 12px;
-  min-width: 0;
-  padding: 24px;
-  border: 1px solid var(--viewer-line);
-  background: var(--viewer-surface);
-  border-radius: var(--viewer-radius);
-  box-shadow: var(--viewer-shadow);
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 44px;
+  column-gap: clamp(8px, 2vw, 24px);
+  align-items: start;
+  padding-block: clamp(18px, 2.4vw, 32px);
+  border: 0;
 }
+.rss-article-list li > :not(.rss-quick-save) { grid-column: 1; }
+.rss-article-list .rss-quick-save { grid-area: 1 / 2; }
 :root[data-reader-design] .rss-shell .rss-article-title {
   min-height: 44px;
   padding: 0;
@@ -186,7 +185,7 @@
   border-radius: 3px;
   background: transparent;
   color: var(--viewer-text);
-  font: 700 21px/1.55 var(--viewer-reading-font);
+  font: 700 clamp(18px, 1.6vw, 22px)/1.5 var(--viewer-reading-font);
   text-wrap: pretty;
 }
 :root[data-reader-design] .rss-article-meta {
@@ -201,9 +200,7 @@
   line-height: 1.85;
 }
 :root[data-reader-design] .rss-article-list .rss-tag-summary {
-  margin: auto 0 0;
-  padding-top: 12px;
-  border-top: 1px solid var(--viewer-line);
+  margin: 0;
   color: var(--viewer-muted);
   font-size: 12px;
   line-height: 1.75;
@@ -451,31 +448,11 @@
   background: #273546;
   border-color: #a3c5ff;
 }
-:root[data-reader-design="studio"] .rss-article-list {
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-:root[data-reader-design="editorial"] .rss-article-list {
-  gap: 0;
-  border-top: 3px solid var(--viewer-text);
-}
-:root[data-reader-design="editorial"] .rss-article-list li {
-  padding: 28px 8px;
-  background: transparent;
-  border: 0;
-  border-bottom: 1px solid var(--viewer-line);
-  border-radius: 0;
-}
-:root[data-reader-design="editorial"] .rss-main > h1 {
+:root[data-reader-design="editorial"] .rss-list-header h1 {
   font-family: var(--viewer-reading-font);
 }
 :root[data-reader-design="focus"] .rss-main {
   max-width: 860px;
-}
-:root[data-reader-design="focus"] .rss-article-list li {
-  border-width: 0 0 1px;
-  border-radius: 0;
-  background: transparent;
-  padding: 24px 8px;
 }
 :root[data-reader-design="focus"] .rss-feed-error {
   color: #ffc0c7;
@@ -484,9 +461,6 @@
   :root[data-reader-design] .rss-shell {
     gap: 24px;
     grid-template-columns: 220px minmax(0, 1fr);
-  }
-  :root[data-reader-design="studio"] .rss-article-list {
-    grid-template-columns: 1fr;
   }
 }
 @media (max-width: 800px) {
@@ -659,9 +633,11 @@
   overflow-wrap: anywhere;
 }
 .rss-source-text mark {
-  background: #f9e4a4;
-  color: #32280d;
-  border-radius: 0.15em;
+  background: transparent;
+  color: inherit;
+  text-decoration: underline solid var(--annotation-ink) 0.12em;
+  text-underline-offset: 0.18em;
+  text-decoration-skip-ink: none;
 }
 .rss-source-text mark:focus {
   outline: 2px solid currentColor;
@@ -1305,37 +1281,7 @@
   }
 }
 
-/* Current context and direct destinations; scrolls away with the page. */
-.rss-location-bar {
-  position: static;
-  top: 0;
-  z-index: 10;
-  max-width: 1360px;
-  margin: 0 auto 16px;
-  padding: 8px 12px;
-  border: 1px solid var(--viewer-line);
-  border-radius: var(--viewer-radius);
-  background: var(--viewer-surface);
-  color: var(--viewer-text);
-  box-shadow: none;
-}
-.rss-location-bar [hidden] {
-  display: none !important;
-}
-.rss-location-current {
-  margin: 0 0 6px;
-  font-size: 12px;
-  overflow: hidden;
-  white-space: nowrap;
-  text-overflow: ellipsis;
-}
-.rss-location-actions {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-:root[data-reader-design] .rss-location-bar .rss-reader-navigation {
+:root[data-reader-design] .rss-reader-navigation {
   position: static;
   padding: 0;
   border: 0;
@@ -1344,7 +1290,7 @@
   margin: 0;
   gap: 6px;
 }
-:root[data-reader-design] .rss-location-bar .rss-reader-navigation button {
+:root[data-reader-design] .rss-reader-navigation button {
   min-height: 44px;
   padding: 8px 10px;
   font-size: 13px;
@@ -1385,18 +1331,18 @@
   max-height: calc(100dvh - 24px);
 }
 
-:root[data-reader-design] .rss-location-bar button {
+:root[data-reader-design] .rss-reader-navigation button {
   background: var(--viewer-surface);
   color: var(--viewer-text);
   border: 1px solid var(--viewer-line);
   border-radius: 8px;
 }
-:root[data-reader-design] .rss-location-bar button:hover {
+:root[data-reader-design] .rss-reader-navigation button:hover {
   background: var(--viewer-soft);
   color: var(--viewer-text);
   border-color: var(--viewer-accent);
 }
-.rss-location-bar :is(a, button, summary):focus-visible {
+.rss-reader-navigation button:focus-visible {
   outline: 3px solid var(--viewer-accent);
   outline-offset: 3px;
 }
@@ -1536,12 +1482,6 @@
 .rss-table-scroll :is(th, td) > p { margin-block: .25em; }
 .rss-table-scroll caption { padding: .6em; font-weight: 650; text-align: start; }
 
-/* Keep card interaction visible for pointer and keyboard readers. */
-:root[data-reader-design] .rss-article-list li:hover,
-:root[data-reader-design] .rss-article-list li:focus-within {
-  background: var(--viewer-soft);
-  border-color: var(--viewer-accent);
-}
 .rss-reading-duration {
   display: inline-flex;
   align-items: center;
@@ -1560,8 +1500,6 @@
   flex-shrink: 0;
 }
 
-/* Primary destinations belong to the header; article context stays with the reader. */
-.rss-location-bar[data-screen="list"] { display: none; }
 :root[data-reader-design] .rss-header { flex-wrap: wrap; gap: 12px; }
 .rss-header .rss-destinations { margin-inline-start: auto; }
 :root[data-reader-design] .rss-feed-state {
@@ -1628,22 +1566,6 @@
 .rss-source-text > :first-child {
   margin-block-start: 0;
 }
-.rss-location-bar[data-screen="article"] {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px 12px;
-  margin-bottom: 8px;
-}
-.rss-location-bar[data-screen="article"] .rss-location-current {
-  width: 100%;
-  margin: 0;
-}
-.rss-location-bar[data-screen="article"] .rss-location-progress,
-.rss-location-bar[data-screen="article"] .rss-reading-progress {
-  margin: 0;
-}
-
 :root[data-reader-design] .shared-textbook-page {
   color: var(--viewer-text);
   font-family: system-ui, -apple-system, "Hiragino Kaku Gothic ProN", "Yu Gothic", sans-serif;

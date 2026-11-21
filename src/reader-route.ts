@@ -58,9 +58,13 @@ export function readerRouteURL(route: ReaderRoute, hash = ""): URL {
 export function pushReaderURL(url: URL, replace = false) {
   if (url.href === location.href) return;
   history.replaceState({ ...history.state, readerScroll: scrollY }, "");
-  const state = { ...history.state, readerScroll: 0 };
+  const state = { ...history.state, readerScroll: 0, readerRow: null };
   if (replace) history.replaceState(state, "", url);
   else history.pushState(state, "", url);
+}
+
+export function textbookSectionAnchor(sectionId: string) {
+  return `shared-section-${sectionId}`;
 }
 
 export function revealReaderAnchor(hash = location.hash): boolean {

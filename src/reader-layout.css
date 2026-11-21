@@ -1,0 +1,1142 @@
+/*
+ * 流し読みの配置。暗いレールは「どこを読むか」、白い紙面は「何を読むか」を受け持つ。
+ * 色はテーマごとのトークンで切り替え、配置と文字の役割は全テーマで共通にする。
+ */
+:root[data-reader-design] {
+  --rail-width: 264px;
+  --rail-bg: #1c2523;
+  --rail-raised: #28342f;
+  --rail-text: #e3ebe7;
+  --rail-muted: #a7b6b0;
+  --rail-accent: #9ad7c4;
+  --rail-line: #36443f;
+  --rail-alert: #ffb4b4;
+  --paper-bg: #ffffff;
+  --paper-pad: clamp(24px, 4vw, 64px);
+  --headline-font:
+    "Hiragino Sans", "Hiragino Kaku Gothic ProN", "Noto Sans JP",
+    "Yu Gothic UI", "Yu Gothic", system-ui, sans-serif;
+}
+:root[data-reader-design="editorial"] {
+  --rail-bg: #2a231e;
+  --rail-raised: #3a3029;
+  --rail-text: #f1e8dc;
+  --rail-muted: #c4b4a1;
+  --rail-accent: #e7b98f;
+  --rail-line: #4a3e35;
+  --paper-bg: #fffdf8;
+  --headline-font: var(--viewer-reading-font);
+}
+:root[data-reader-design="focus"] {
+  --rail-bg: #0b1117;
+  --rail-raised: #18222d;
+  --rail-text: #e2e9f1;
+  --rail-muted: #a3b2c3;
+  --rail-accent: #a3c5ff;
+  --rail-line: #24313f;
+  --paper-bg: #111820;
+}
+@media (max-width: 1099px) {
+  :root[data-reader-design] {
+    --rail-width: 232px;
+  }
+}
+
+/* 表示を消さずに読み上げにだけ残す文字。 */
+.rss-sr {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.rss-app [hidden] {
+  display: none !important;
+}
+/* 既存の配信元アイコン・読了目安の大きさを上書きしないよう、詳細度を上げない。 */
+:where(.rss-app) .rss-icon {
+  margin: 0;
+  flex: none;
+  width: 18px;
+  height: 18px;
+}
+
+/* ---------- 暗いクロム（レール・上部帯）の共通部品 ---------- */
+:root[data-reader-design] .rss-app > .rss-header {
+  margin: 0;
+  border: 0;
+  color: var(--rail-text);
+  background: var(--rail-bg);
+  box-shadow: none;
+}
+:root[data-reader-design] .rss-app > .rss-header .brand {
+  min-height: 44px;
+  font-size: 20px;
+  font-weight: 750;
+  letter-spacing: -0.02em;
+  color: var(--rail-text);
+}
+:root[data-reader-design] .rss-app > .rss-header .brand::before {
+  width: 20px;
+  height: 20px;
+  border-width: 5px;
+  border-color: var(--rail-accent);
+}
+:root[data-reader-design] .rss-app > .rss-header .rss-destinations {
+  margin: 0;
+}
+:root[data-reader-design] .rss-app > .rss-header .rss-destination-links {
+  margin: 0;
+  gap: 2px;
+}
+:root[data-reader-design] .rss-app > .rss-header .rss-destination-links a,
+:root[data-reader-design] .rss-app > .rss-header .rss-header-actions a,
+:root[data-reader-design] .rss-app > .rss-header .rss-header-actions button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  margin: 0;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  color: var(--rail-muted);
+  background: transparent;
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  text-decoration: none;
+  box-shadow: none;
+}
+:root[data-reader-design]
+  .rss-app
+  > .rss-header
+  :is(a, button):not(.brand, :disabled):hover {
+  color: var(--rail-text);
+  background: var(--rail-raised);
+  border-color: transparent;
+}
+:root[data-reader-design] .rss-app > .rss-header .rss-destination-links a[aria-current] {
+  color: var(--rail-text);
+  background: var(--rail-raised);
+  font-weight: 700;
+}
+:root[data-reader-design] .rss-app > .rss-header :is(a, button):focus-visible,
+:root[data-reader-design] #rss-collection :is(a, button, summary, input, select):focus-visible {
+  outline: 2px solid var(--rail-accent);
+  outline-offset: 2px;
+}
+
+/* ヘッダーの高さを変えず、キーボード操作時だけ記事への近道を表示する。 */
+:root[data-reader-design] .rss-app > .rss-header .rss-skip-navigation {
+  position: absolute;
+  top: 8px;
+  left: 12px;
+  z-index: 30;
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  padding: 0 16px;
+  border-radius: 8px;
+  color: var(--viewer-surface);
+  background: var(--viewer-accent);
+  transform: translateY(-200%);
+}
+:root[data-reader-design] .rss-app > .rss-header .rss-skip-navigation:focus {
+  transform: none;
+}
+
+/* ---------- デスクトップ：レールと紙面の二段 ---------- */
+@media (min-width: 801px) {
+  :root[data-reader-design] .rss-app:not([data-layout="single"]) {
+    position: relative;
+    display: grid;
+    grid-template-columns: var(--rail-width) minmax(0, 1fr);
+    grid-template-rows: auto 1fr auto;
+    min-height: 100dvh;
+    background: linear-gradient(
+      to right,
+      var(--rail-bg) var(--rail-width),
+      var(--paper-bg) var(--rail-width)
+    );
+  }
+  :root[data-reader-design] .rss-app:not([data-layout="single"]) > .rss-shell {
+    display: contents;
+  }
+  :root[data-reader-design] .rss-app:not([data-layout="single"]) > .rss-header {
+    grid-column: 1;
+    grid-row: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 6px;
+    min-height: 0;
+    padding: 18px 12px 4px;
+    background: transparent;
+  }
+  :root[data-reader-design]
+    .rss-app:not([data-layout="single"])
+    > .rss-header
+    .brand {
+    align-self: flex-start;
+    padding-inline: 8px;
+  }
+  /* 一覧と保存はレールの「読む」が受け持つ。上部の同名リンクは本文表示中だけ出す。 */
+  :root[data-reader-design]
+    .rss-app:not([data-layout="single"])
+    .rss-destination-links
+    a:not([data-destination="import"]) {
+    display: none;
+  }
+  :root[data-reader-design]
+    .rss-app:not([data-layout="single"])
+    .rss-destination-links {
+    flex-direction: column;
+  }
+  :root[data-reader-design]
+    .rss-app:not([data-layout="single"])
+    .rss-destination-links
+    a[data-destination="import"] {
+    justify-content: flex-start;
+    border: 1px solid var(--rail-line);
+    color: var(--rail-text);
+  }
+  :root[data-reader-design]
+    .rss-app:not([data-layout="single"])
+    a[data-destination="import"][aria-current] {
+    border-color: var(--rail-accent);
+  }
+  :root[data-reader-design]
+    .rss-app:not([data-layout="single"])
+    > .rss-header
+    .rss-header-actions {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 2px;
+    margin: 0;
+  }
+  :root[data-reader-design]
+    .rss-app:not([data-layout="single"])
+    > .rss-header
+    .rss-header-actions
+    :is(a, button) {
+    flex-direction: column;
+    justify-content: center;
+    gap: 2px;
+    min-height: 52px;
+    padding: 4px;
+    font-size: 11.5px;
+  }
+  :root[data-reader-design] .rss-app:not([data-layout="single"]) #rss-collection {
+    grid-column: 1;
+    grid-row: 2 / 4;
+    position: sticky;
+    top: 0;
+    align-self: start;
+    max-height: 100dvh;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    scrollbar-color: var(--rail-line) transparent;
+    margin: 0;
+    padding: 4px 12px 40px;
+  }
+  :root[data-reader-design] .rss-app:not([data-layout="single"]) .rss-main {
+    grid-column: 2;
+    grid-row: 1 / 3;
+    justify-self: start;
+    width: 100%;
+    max-width: none;
+    max-inline-size: calc(46rem + 2 * var(--paper-pad));
+    margin: 0;
+    padding: 28px var(--paper-pad) 72px;
+  }
+  :root[data-reader-design]
+    .rss-app[data-screen="article"]:not([data-layout="single"])
+    .rss-main {
+    max-inline-size: calc(64rem + 2 * var(--paper-pad));
+    padding-top: 16px;
+  }
+  :root[data-reader-design] .rss-app:not([data-layout="single"]) > .rss-error {
+    grid-column: 2;
+    grid-row: 3;
+    margin: 16px var(--paper-pad);
+  }
+  /* 紙面の先頭記事だけを一段大きく組み、見出しの序列をはっきりさせる。 */
+  :root[data-reader-design]
+    .rss-app
+    .rss-article-list
+    > li:first-child
+    .rss-article-title {
+    font-size: 24px;
+    line-height: 1.45;
+  }
+  :root[data-reader-design] .rss-app .rss-article-list > li:first-child .rss-excerpt {
+    -webkit-line-clamp: 3;
+    font-size: 15px;
+  }
+}
+
+/* ---------- レール（収集メニュー） ---------- */
+:root[data-reader-design] .rss-app #rss-collection {
+  min-width: 0;
+  color: var(--rail-text);
+  background: var(--rail-bg);
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+:root[data-reader-design] .rss-app #rss-collection h2 {
+  margin: 18px 10px 6px;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.6;
+  letter-spacing: 0;
+  color: var(--rail-muted);
+}
+:root[data-reader-design] .rss-app #rss-collection .rss-filters {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+}
+:root[data-reader-design] .rss-app #rss-collection .rss-filters button {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 44px;
+  margin: 0;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  color: var(--rail-text);
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  font-weight: 550;
+  text-align: start;
+  box-shadow: none;
+}
+:root[data-reader-design] .rss-app #rss-collection .rss-filters button[aria-current] {
+  color: var(--rail-text);
+  background: var(--rail-raised);
+  border-color: transparent;
+  font-weight: 700;
+  box-shadow: inset 3px 0 0 var(--rail-accent);
+}
+.rss-filter-count,
+.rss-feed-count {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--rail-muted);
+}
+:root[data-reader-design]
+  .rss-app
+  #rss-collection
+  button:not(:disabled):hover {
+  color: var(--rail-text);
+  background: var(--rail-raised);
+  border-color: var(--rail-line);
+}
+:root[data-reader-design] .rss-app #rss-collection button:disabled {
+  color: var(--rail-muted);
+  background: transparent;
+  opacity: 0.7;
+}
+.rss-sources-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 22px 0 4px 10px;
+}
+:root[data-reader-design] .rss-app .rss-sources-header h3 {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.6;
+  color: var(--rail-muted);
+}
+:root[data-reader-design] .rss-app #rss-collection .rss-refresh-all {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-height: 36px;
+  margin: 0;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  color: var(--rail-muted);
+  background: transparent;
+  font-size: 12px;
+}
+.rss-refresh-all .rss-icon {
+  width: 15px;
+  height: 15px;
+}
+:root[data-reader-design] .rss-app #rss-collection :is(.rss-progress, .rss-rail-status, .rss-rail-note) {
+  margin: 8px 10px;
+  font-size: 12px;
+  line-height: 1.7;
+  color: var(--rail-muted);
+}
+:root[data-reader-design] .rss-app #rss-collection .rss-progress {
+  color: var(--rail-accent);
+}
+:root[data-reader-design] .rss-app #rss-collection .rss-rail-status {
+  margin-top: 20px;
+}
+.rss-feed-list {
+  display: grid;
+  gap: 1px;
+}
+:root[data-reader-design] .rss-app #rss-collection .rss-feed-state {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  column-gap: 2px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+:root[data-reader-design] .rss-app #rss-collection .rss-feed-state .rss-feed-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  width: 100%;
+  min-height: 40px;
+  margin: 0;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 8px;
+  color: var(--rail-text);
+  background: transparent;
+  font-size: 13.5px;
+  font-weight: 500;
+  text-align: start;
+}
+:root[data-reader-design] .rss-app #rss-collection .rss-feed-title[aria-pressed="true"] {
+  background: var(--rail-raised);
+  font-weight: 700;
+  box-shadow: inset 3px 0 0 var(--rail-accent);
+}
+.rss-feed-label {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.rss-feed-title .rss-site-icon {
+  width: 20px;
+  height: 20px;
+  flex: none;
+  margin: 0;
+}
+.rss-feed-title .rss-site-icon img {
+  width: 18px;
+  height: 18px;
+  object-fit: contain;
+}
+.rss-feed-state .rss-feed-mark {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border: 1.5px solid currentColor;
+  border-radius: 5px;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  opacity: 0.8;
+}
+.rss-feed-state .rss-feed-counts {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 10px 6px 40px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.rss-feed-total {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: var(--rail-raised);
+  color: var(--rail-text);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.rss-feed-count:empty { display: none; }
+:root[data-reader-design] .rss-app #rss-collection .rss-feed-status {
+  grid-column: 1 / -1;
+  margin: 0 0 6px 40px;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--rail-muted);
+}
+:root[data-reader-design] .rss-app #rss-collection .rss-feed-status[data-state="failed"] {
+  color: var(--rail-alert);
+}
+/* 平常の「購読中」は全行で同じなので、見た目からは省き読み上げだけに残す。 */
+.rss-feed-status[data-state="active"] {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.rss-feed-management {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+}
+.rss-feed-management[open] {
+  grid-column: 1 / -1;
+  grid-row: auto;
+  margin: 0 0 10px 28px;
+  padding: 0 0 8px 10px;
+  border-inline-start: 1px solid var(--rail-line);
+}
+:root[data-reader-design] .rss-app #rss-collection .rss-feed-management > summary {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 44px;
+  min-height: 40px;
+  padding: 0 6px;
+  border-radius: 8px;
+  color: var(--rail-muted);
+  font-size: 11.5px;
+  list-style: none;
+  cursor: pointer;
+}
+.rss-feed-management > summary::-webkit-details-marker {
+  display: none;
+}
+.rss-feed-management[open] > summary {
+  justify-content: flex-start;
+}
+:root[data-reader-design] .rss-app #rss-collection .rss-feed-management > summary:hover {
+  color: var(--rail-text);
+  background: var(--rail-raised);
+}
+:root[data-reader-design] .rss-app #rss-collection .rss-feed-management :is(.muted, span) {
+  display: block;
+  font-size: 11.5px;
+  line-height: 1.7;
+  color: var(--rail-muted);
+}
+:root[data-reader-design] .rss-app #rss-collection .rss-feed-error {
+  font-size: 12px;
+  color: var(--rail-alert);
+}
+:root[data-reader-design] .rss-app #rss-collection .rss-feed-management button {
+  display: block;
+  width: 100%;
+  min-height: 36px;
+  margin: 6px 0 0;
+  padding: 6px 10px;
+  border: 1px solid var(--rail-line);
+  border-radius: 8px;
+  color: var(--rail-text);
+  background: transparent;
+  font-size: 12px;
+  text-align: start;
+  white-space: normal;
+}
+
+/* 購読後の追加欄。読む・配信元の後ろに小さく置く。 */
+:root[data-reader-design] .rss-app .rss-rail-add {
+  margin: 24px 0 0;
+  padding: 16px 10px 0;
+  border-top: 1px solid var(--rail-line);
+}
+:root[data-reader-design] .rss-app .rss-rail-add .rss-add {
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+:root[data-reader-design] .rss-app .rss-rail-add .rss-add h3 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--rail-muted);
+}
+.rss-rail-add :is(label[for="feed-url"], .rss-add-hint) {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+:root[data-reader-design] .rss-app .rss-rail-add #feed-url {
+  width: 100%;
+  min-height: 40px;
+  margin: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--rail-line);
+  border-radius: 8px;
+  color: var(--rail-text);
+  background: var(--rail-raised);
+  font-size: 13px;
+}
+.rss-rail-add #feed-url::placeholder {
+  color: var(--rail-muted);
+}
+:root[data-reader-design] .rss-app #rss-collection .rss-rail-add .rss-add button {
+  width: 100%;
+  min-height: 40px;
+  margin: 8px 0 0;
+  padding: 6px 10px;
+  border: 1px solid var(--rail-line);
+  border-radius: 8px;
+  color: var(--rail-text);
+  background: transparent;
+  font-size: 13px;
+}
+:root[data-reader-design] .rss-app #rss-collection .rss-rail-add #rss-find-feeds:not(:disabled) {
+  color: var(--rail-bg);
+  background: var(--rail-accent);
+  border-color: var(--rail-accent);
+  font-weight: 700;
+}
+
+/* ---------- 紙面：一覧の頭と道具帯 ---------- */
+:root[data-reader-design] .rss-app .rss-main {
+  background: transparent;
+}
+:root[data-reader-design] .rss-app .rss-list-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin: 0;
+}
+:root[data-reader-design] .rss-app .rss-list-header h1 {
+  flex: 1 1 12rem;
+  margin: 0;
+  font-family: var(--headline-font);
+  font-size: clamp(24px, 2.4vw, 30px);
+  font-weight: 750;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  font-feature-settings: "palt";
+}
+:root[data-reader-design] .rss-app .rss-list-header .rss-headline-player {
+  flex: none;
+  margin: 0;
+  border: 0;
+}
+:root[data-reader-design] .rss-app .rss-list-header .rss-headline-player[open] {
+  order: 3;
+  flex-basis: 100%;
+  padding: 4px 0 16px;
+  border-block: 1px solid var(--viewer-line);
+}
+:root[data-reader-design] .rss-app .rss-headline-player > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--viewer-line);
+  border-radius: 8px;
+  color: var(--viewer-text);
+  font-size: 13px;
+  font-weight: 600;
+  list-style: none;
+}
+.rss-headline-player > summary::-webkit-details-marker {
+  display: none;
+}
+:root[data-reader-design] .rss-app .rss-headline-player > summary:hover {
+  background: var(--viewer-soft);
+}
+:root[data-reader-design] .rss-app .rss-headline-player[open] > summary {
+  margin-block: 8px 4px;
+  color: var(--viewer-accent);
+  border-color: var(--viewer-accent);
+}
+:root[data-reader-design] .rss-app .rss-collection-jump {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  margin: 0;
+}
+:root[data-reader-design] .rss-app .rss-list-search-tools {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(8rem, 11rem) minmax(8rem, 10rem);
+  gap: 8px;
+  margin: 16px 0 0;
+}
+:root[data-reader-design] .rss-app .rss-list-search-tools label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+:root[data-reader-design] .rss-app .rss-list-search-tools > div {
+  display: block;
+  min-width: 0;
+}
+.rss-search-field {
+  position: relative;
+  min-width: 0;
+}
+.rss-search-field > .rss-icon {
+  position: absolute;
+  top: 50%;
+  left: 12px;
+  color: var(--viewer-muted);
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+:root[data-reader-design] .rss-app #rss-search {
+  display: block;
+  width: 100%;
+  min-height: 44px;
+  margin: 0;
+  padding: 8px 12px 8px 38px;
+  border: 1px solid var(--viewer-line);
+  border-radius: 8px;
+  color: var(--viewer-text);
+  background: var(--viewer-soft);
+  font-size: 16px;
+  box-shadow: none;
+}
+:root[data-reader-design] .rss-app #rss-search:focus {
+  background: var(--viewer-surface);
+  border-color: var(--viewer-accent);
+}
+:root[data-reader-design] .rss-app .rss-list-search-tools select {
+  width: 100%;
+  min-width: 0;
+  min-height: 44px;
+  margin: 0;
+  border-color: var(--viewer-line);
+  border-radius: 8px;
+  background: var(--paper-bg);
+  font-size: 13px;
+}
+.rss-list-display {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 8px;
+}
+.rss-headlines-label:not([hidden]) {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  color: var(--viewer-muted);
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.rss-headlines-label input {
+  margin: 0;
+  width: 16px;
+  height: 16px;
+  accent-color: var(--viewer-accent);
+}
+:root[data-reader-design] .rss-app #rss-search-status {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.6;
+  color: var(--viewer-muted);
+}
+
+/* ---------- 紙面：見出しの並び ---------- */
+:root[data-reader-design] .rss-app .rss-article-list {
+  max-inline-size: none;
+  margin: 4px 0 24px;
+}
+:root[data-reader-design] .rss-app .rss-article-list > li {
+  padding-block: 18px;
+  border-top: 1px solid var(--viewer-line);
+}
+:root[data-reader-design] .rss-app .rss-article-list > li:first-child {
+  padding-top: 14px;
+  border-top: 0;
+}
+:root[data-reader-design] .rss-app .rss-shell .rss-article-title {
+  min-height: 44px;
+  color: var(--viewer-text);
+  font-family: var(--headline-font);
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1.55;
+  font-feature-settings: "palt";
+  text-decoration-thickness: 1px;
+  text-underline-offset: 4px;
+}
+/* 既読は文字を一段淡く細くし、未読の見出しが先に目に入るようにする。 */
+:root[data-reader-design] .rss-app .rss-article-list > li[data-read="true"] .rss-article-title {
+  color: var(--viewer-muted);
+  font-weight: 500;
+}
+:root[data-reader-design] .rss-app .rss-article-list .rss-article-title:focus-visible {
+  outline: 2px solid var(--viewer-accent);
+  outline-offset: 4px;
+}
+:root[data-reader-design] .rss-app .rss-article-list .rss-article-meta {
+  margin: 2px 0 0;
+}
+:root[data-reader-design] .rss-app .rss-article-list .rss-excerpt {
+  margin: 6px 0 0;
+  font-size: 14px;
+  line-height: 1.8;
+}
+:root[data-reader-design] .rss-app .rss-article-list .rss-tag-summary > summary {
+  min-height: 32px;
+  padding-block: 4px;
+}
+:root[data-reader-design] .rss-app .rss-article-list .rss-quick-save {
+  border-radius: 8px;
+}
+:root[data-reader-design] .rss-app .rss-article-list .rss-quick-save:hover {
+  color: var(--viewer-accent);
+  background: var(--viewer-soft);
+}
+:root[data-reader-design] .rss-app .rss-pagination {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-block: 8px 24px;
+}
+:root[data-reader-design] .rss-app .rss-list-upkeep {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--viewer-line);
+  font-size: 13px;
+  color: var(--viewer-muted);
+}
+:root[data-reader-design] .rss-app .rss-list-upkeep p {
+  margin: 0;
+}
+:root[data-reader-design] .rss-app .rss-main .rss-empty {
+  margin: 24px 0;
+  padding: 20px 0;
+  border: 0;
+  border-top: 1px solid var(--viewer-line);
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: 14px;
+  line-height: 1.8;
+}
+
+/* ---------- 空のライブラリ：追加欄を紙面の主役にする ---------- */
+:root[data-reader-design] .rss-app .rss-welcome {
+  margin: 20px 0 32px;
+  max-inline-size: 38rem;
+}
+:root[data-reader-design] .rss-app .rss-welcome h2 {
+  margin: 0 0 8px;
+  font-family: var(--headline-font);
+  font-size: 22px;
+  line-height: 1.45;
+  font-feature-settings: "palt";
+}
+.rss-welcome-lede {
+  margin: 0 0 20px;
+  font-size: 14px;
+  line-height: 1.8;
+  color: var(--viewer-muted);
+}
+:root[data-reader-design] .rss-app .rss-welcome .rss-add {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+:root[data-reader-design] .rss-app .rss-welcome .rss-add :is(h3, label, .rss-add-hint) {
+  grid-column: 1 / -1;
+  margin: 0;
+}
+.rss-welcome .rss-add h3 {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+:root[data-reader-design] .rss-app .rss-welcome .rss-add label {
+  font-size: 14px;
+  font-weight: 650;
+}
+:root[data-reader-design] .rss-app .rss-welcome #feed-url {
+  grid-column: 1;
+  width: 100%;
+  min-height: 48px;
+  margin: 0;
+  font-size: 16px;
+}
+:root[data-reader-design] .rss-app .rss-welcome #rss-find-feeds {
+  grid-column: 2;
+  grid-row: 3;
+  width: auto;
+  min-height: 48px;
+  margin: 0;
+  color: var(--viewer-surface);
+  background: var(--viewer-accent);
+  border-color: var(--viewer-accent);
+  font-weight: 700;
+}
+:root[data-reader-design] .rss-app .rss-welcome #rss-find-feeds:disabled {
+  color: var(--viewer-muted);
+  background: var(--viewer-soft);
+  border-color: var(--viewer-line);
+}
+:root[data-reader-design] .rss-app .rss-welcome .rss-add-hint {
+  font-size: 13px;
+}
+:root[data-reader-design] .rss-app .rss-welcome .rss-add-article {
+  grid-column: 1 / -1;
+  justify-self: start;
+  width: auto;
+  margin: 0;
+}
+:root[data-reader-design] .rss-app .rss-welcome .rss-presets {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 24px 0 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--viewer-line);
+}
+:root[data-reader-design] .rss-app .rss-welcome .rss-presets p {
+  flex-basis: 100%;
+  margin: 0;
+}
+:root[data-reader-design] .rss-app .rss-welcome .rss-presets button {
+  display: inline-flex;
+  width: auto;
+  margin: 0;
+}
+
+/* ---------- 本文に集中：上部の帯と一段の紙面 ---------- */
+@media (min-width: 801px) {
+  :root[data-reader-design] .rss-app[data-layout="single"] > .rss-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 4px 12px;
+    min-height: 60px;
+    padding: 8px max(16px, calc((100vw - 1240px) / 2));
+  }
+  :root[data-reader-design]
+    .rss-app[data-layout="single"]
+    > .rss-header
+    .rss-destinations {
+    margin-inline-start: auto;
+  }
+  :root[data-reader-design] .rss-app[data-layout="single"] .rss-header-actions {
+    display: flex;
+    gap: 2px;
+  }
+
+}
+
+/* 設定のデザイン見本も、左の帯をレールの色にそろえる。 */
+:root[data-reader-design] .rss-settings .rss-design-preview[data-preview="studio"] {
+  background: #ffffff;
+  border-color: #1c2523;
+}
+:root[data-reader-design] .rss-settings .rss-design-preview[data-preview="editorial"] {
+  border-color: #2a231e;
+}
+:root[data-reader-design] .rss-settings .rss-design-preview[data-preview="focus"] {
+  border-color: #0b1117;
+}
+
+/* ---------- 狭い画面：記事を先に、メニューは後ろに ---------- */
+@media (max-width: 800px) {
+  :root[data-reader-design] .rss-app {
+    background: var(--paper-bg);
+  }
+  :root[data-reader-design] .rss-app > .rss-header {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      "brand . actions"
+      "tabs tabs tabs";
+    align-items: center;
+    gap: 0 8px;
+    min-height: 0;
+    padding: 4px max(10px, env(safe-area-inset-left)) 0;
+  }
+
+  :root[data-reader-design] .rss-app > .rss-header .brand {
+    grid-area: brand;
+    font-size: 18px;
+  }
+  :root[data-reader-design] .rss-app > .rss-header .rss-header-actions {
+    grid-area: actions;
+    display: flex;
+    gap: 2px;
+  }
+  :root[data-reader-design] .rss-app > .rss-header .rss-header-actions :is(a, button) {
+    flex-direction: column;
+    justify-content: center;
+    gap: 1px;
+    min-width: 48px;
+    min-height: 48px;
+    padding: 2px 4px;
+    font-size: 10.5px;
+  }
+  :root[data-reader-design] .rss-app > .rss-header .rss-destinations {
+    grid-area: tabs;
+    width: auto;
+    margin: 0;
+  }
+  :root[data-reader-design] .rss-app > .rss-header .rss-destination-links {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    flex-direction: row;
+    gap: 0;
+  }
+  :root[data-reader-design] .rss-app > .rss-header .rss-destination-links a {
+    justify-content: center;
+    min-width: 0;
+    padding: 0 4px;
+    border-radius: 0;
+    font-size: 13px;
+    white-space: nowrap;
+    box-shadow: inset 0 -2px 0 transparent;
+  }
+  :root[data-reader-design] .rss-app > .rss-header .rss-destination-links a .rss-icon {
+    display: none;
+  }
+  :root[data-reader-design] .rss-app > .rss-header .rss-destination-links a[aria-current] {
+    background: transparent;
+    box-shadow: inset 0 -2px 0 var(--rail-accent);
+  }
+  :root[data-reader-design] .rss-app .rss-shell:not(.rss-focused) {
+    margin: 0;
+    padding: 0;
+  }
+  :root[data-reader-design] .rss-app .rss-shell:not(.rss-focused) .rss-main {
+    padding: 16px max(14px, env(safe-area-inset-left)) 32px;
+  }
+  :root[data-reader-design] .rss-app #rss-collection {
+    margin: 0;
+    padding: 8px max(12px, env(safe-area-inset-left)) 40px;
+  }
+  :root[data-reader-design] .rss-app .rss-main ~ #rss-collection {
+    margin-top: 16px;
+  }
+  :root[data-reader-design] .rss-app .rss-collection-jump {
+    justify-content: center;
+    width: 44px;
+    min-height: 44px;
+    padding: 0;
+  }
+  :root[data-reader-design] .rss-app .rss-list-header h1 {
+    flex-basis: auto;
+    font-size: 22px;
+  }
+  :root[data-reader-design] .rss-app .rss-list-search-tools {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    margin-top: 12px;
+  }
+  :root[data-reader-design] .rss-app .rss-list-search-tools > .rss-search-field {
+    grid-column: 1 / -1;
+  }
+  :root[data-reader-design] .rss-app .rss-article-list > li:first-child .rss-article-title {
+    font-size: 19px;
+  }
+  :root[data-reader-design] .rss-app .rss-article-list .rss-tag-summary > summary {
+    min-height: 44px;
+  }
+  :root[data-reader-design] .rss-app .rss-welcome .rss-add {
+    grid-template-columns: 1fr;
+  }
+  :root[data-reader-design] .rss-app .rss-welcome #rss-find-feeds {
+    grid-column: 1;
+    grid-row: auto;
+    width: 100%;
+  }
+}
+
+@media (forced-colors: active) {
+  :root[data-reader-design] .rss-app #rss-collection .rss-filters button[aria-current],
+  :root[data-reader-design] .rss-app #rss-collection .rss-feed-title[aria-pressed="true"] {
+    outline: 2px solid Highlight;
+  }
+}
+@media (prefers-reduced-motion: no-preference) {
+  :root[data-reader-design] .rss-app .rss-skip-navigation {
+    transition: transform 120ms ease;
+  }
+}
+
+/* 同じ幅の先頭列を全記事で予約し、読み込み前後や画像のない行でも文字の起点を保つ。 */
+:root[data-reader-design] .rss-app .rss-article-list > li {
+  --thumbnail-width: clamp(52px, 9vw, 116px);
+  --thumbnail-gap: clamp(8px, 1.5vw, 20px);
+  position: relative;
+  padding-inline-start: calc(var(--thumbnail-width) + var(--thumbnail-gap));
+}
+.rss-article-list li > .rss-story-thumbnail {
+  grid-area: auto;
+  position: absolute;
+  inset-inline-start: 0;
+  top: 18px;
+  width: var(--thumbnail-width);
+  aspect-ratio: 3 / 2;
+}
+.rss-article-list li:first-child .rss-story-thumbnail { top: 14px; }
+.rss-story-thumbnail img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 5px;
+}
+
+.rss-thumbnail-unavailable {
+  display: grid;
+  place-items: center;
+  height: 100%;
+  background: var(--viewer-soft);
+  color: var(--viewer-muted);
+  border-radius: 5px;
+}
+
+.rss-source-text .rss-imported-image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin-block: 1em;
+}
+
+:root[data-reader-design] .rss-app .rss-headlines-only > li {
+  --thumbnail-width: clamp(48px, 7vw, 76px);
+  padding-block: 10px;
+}
+.rss-headlines-only > li > .rss-story-thumbnail {
+  top: 12px;
+}
+:root[data-reader-design] .rss-app .rss-headlines-only li :is(.rss-excerpt, .rss-tag-summary) {
+  display: none;
+}

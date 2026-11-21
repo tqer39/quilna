@@ -142,7 +142,6 @@ export class ArticleOutline {
 
   private measure() {
     if (!this.body?.isConnected || !this.links.length) return;
-    const toolbar = document.querySelector(".rss-reader-navigation");
     const firstHeading = this.body.querySelector<HTMLElement>(
       `#${this.links[0].id}`,
     );
@@ -153,10 +152,7 @@ export class ArticleOutline {
     const atBottom =
       scrollHeight > window.innerHeight + 2 &&
       window.scrollY + window.innerHeight >= scrollHeight - 2;
-    const top = atBottom
-      ? window.innerHeight
-      : Math.max(scrollMargin, toolbar?.getBoundingClientRect().bottom ?? 0) +
-        2;
+    const top = atBottom ? window.innerHeight : scrollMargin + 2;
     // Headings are in document order. Bound layout reads even for 1,000 headings.
     let low = 0,
       high = this.links.length;

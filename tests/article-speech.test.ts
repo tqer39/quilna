@@ -184,3 +184,44 @@ it("rejects network or wrong-language choices, and reports persistence failure w
   expect(speak).not.toHaveBeenCalled();
   expect(speech.message).toContain("端末内音声が見つかりません");
 });
+
+it("長い見出しの分割中も同じ番号を通知し、前の発話や停止後の通知を無視する", () => {
+  const spoken: SpeechSynthesisUtterance[] = [];
+  vi.stubGlobal("speechSynthesis", {
+    getVoices: () => [
+      {
+        lang: "ja-JP",
+        voiceURI: "test",
+        name: "test",
+        localService: true,
+        default: true,
+      },
+    ],
+    cancel: vi.fn(),
+    speak: (u: SpeechSynthesisUtterance) => spoken.push(u),
+  });
+  vi.stubGlobal(
+    "SpeechSynthesisUtterance",
+    class {
+      constructor(public text: string) {}
+    },
+  );
+  const speech = new ArticleSpeech(() => {}),
+    started = vi.fn();
+  speech.start(["あ".repeat(181), "次の見出し"], "ja-JP", 1, started);
+  const event = new Event("speech") as SpeechSynthesisEvent;
+  const [first] = spoken;
+  first.onstart?.(event);
+  first.onend?.(event);
+  first.onstart?.(event);
+  first.onend?.(event);
+  expect(spoken).toHaveLength(2);
+  spoken[1].onstart?.(event);
+  spoken[1].onend?.(event);
+  spoken[2].onstart?.(event);
+  speech.stop();
+  spoken[2].onstart?.(event);
+  spoken[2].onend?.(event);
+  expect(started.mock.calls).toEqual([[0], [0], [1]]);
+  expect(speech.state).toBe("idle");
+});

@@ -569,7 +569,16 @@ export async function handleAccount(
     }
     if (command.action === "feed-fetch") {
       if (!collector) throw Error("collection-unconfigured");
-      return json(200, await collector.source(command.data));
+      try {
+        return json(200, await collector.source(command.data));
+      } catch (error) {
+        if (
+          error?.message === "feed-response" &&
+          [404, 410].includes(error.status)
+        )
+          return json(error.status, { error: "source-unavailable" });
+        throw error;
+      }
     }
     if (command.action?.startsWith("collection-")) {
       if (!collector) throw Error("collection-unconfigured");
