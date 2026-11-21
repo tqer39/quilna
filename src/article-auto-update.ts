@@ -1,4 +1,4 @@
-import type { ArticleContent } from "./article-content";
+import { sourceFailureLabel, type ArticleContent } from "./article-content";
 import { libraryName } from "./library-context";
 import type { FeedArticle } from "./feed-parser";
 import { validArticle } from "./feed-store";
@@ -81,7 +81,10 @@ async function commit(
           const next = {
             ...a,
             bodyUpdate: update,
-            contentError: fill ? undefined : a.contentError,
+            contentError:
+              fill || (!update.error && sourceFailureLabel(a.contentError))
+                ? undefined
+                : a.contentError,
             content: fill
               ? initial
               : original && a.content
@@ -160,7 +163,14 @@ export async function checkArticleUpdates(
                 a.feedRevision &&
                 a.feedRevision.fingerprint !== a.bodyUpdate?.fingerprint,
             );
-      const result = await acquisition.acquire(first.url, !!force, snapshot);
+      const retryMissing = eligible.some((a) =>
+        sourceFailureLabel(a.bodyUpdate?.error ?? a.contentError),
+      );
+      const result = await acquisition.acquire(
+        first.url,
+        !!force || retryMissing,
+        snapshot,
+      );
       active();
       if (result.warning) error = result.warning;
       else {

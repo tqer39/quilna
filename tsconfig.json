@@ -6,6 +6,7 @@
     "strict": true,
     "lib": ["ES2022", "DOM"],
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "skipLibCheck": true
   },
   "include": ["src", "server/adapter.ts", "tests", "*.ts"]

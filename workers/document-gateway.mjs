@@ -8,6 +8,7 @@ import {
 } from "./document-access.mjs";
 import { json } from "./http.mjs";
 import { DocumentPolicyAdmin } from "./document-policy-admin.mjs";
+import { DocumentPublicationAdmin } from "./document-publication-admin.mjs";
 import {
   documentLifecycleAccess,
   lifecycleRequest,
@@ -123,6 +124,8 @@ export class DocumentGateway {
     }
   }
   async handle(owner, action, data) {
+    if (action.startsWith("admin-publication-"))
+      return new DocumentPublicationAdmin(this.env).handle(owner, action, data);
     if (
       [
         "admin-document-preview",

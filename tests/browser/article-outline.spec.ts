@@ -90,6 +90,69 @@ async function seed(page: Page, design = "studio") {
     .click();
 }
 
+async function replaceTitle(page: Page, title: string) {
+  await page.evaluate(async (title) => {
+    const path = "/src/feed-store.ts",
+      api = await import(path),
+      db = await api.openFeedLibrary();
+    const article = await api.readArticle(db, "map");
+    await new Promise<void>((resolve, reject) => {
+      const tx = db.transaction("articles", "readwrite");
+      tx.objectStore("articles").put({
+        ...article,
+        content: { ...article.content, title },
+      });
+      tx.oncomplete = () => resolve();
+      tx.onerror = tx.onabort = () => reject(tx.error);
+    });
+    db.close();
+    const channel = new BroadcastChannel("tsumiki.rss.v1");
+    channel.postMessage({ articleId: "map" });
+    channel.close();
+  }, title);
+}
+
+test("本文より上のタイトルの高さが変わっても、同じ原文の読書位置を維持する", async ({
+  page,
+}) => {
+  await seed(page);
+  const source = page.locator(".rss-source-text");
+  const outline = page.locator(".rss-article-outline");
+  if (!(await outline.evaluate((e) => (e as HTMLDetailsElement).open)))
+    await outline.locator("summary").click();
+  await outline.getByRole("link", { name: "Conclusion", exact: true }).click();
+  await expect
+    .poll(async () => (await source.boundingBox())!.y)
+    .toBeLessThan(0);
+  const before = await source.boundingBox(),
+    title = page.locator("#rss-current-title"),
+    oldTitle = await title.boundingBox();
+  const replacement =
+    "保存済みの記事の題名が長くなっても、読んでいる本文の位置を保ちます。".repeat(
+      8,
+    );
+  await replaceTitle(page, replacement);
+  await expect(title).toHaveText(replacement);
+  expect((await title.boundingBox())!.height).toBeGreaterThan(oldTitle!.height);
+  await expect
+    .poll(async () => Math.abs((await source.boundingBox())!.y - before!.y))
+    .toBeLessThanOrEqual(2);
+});
+
+test("記事上部を確認中は、タイトル更新で本文へスクロールさせない", async ({
+  page,
+}) => {
+  await seed(page);
+  await page.evaluate(() => window.scrollTo(0, 0));
+  const before = await page.evaluate(() => scrollY);
+  const sourceTop = (await page.locator(".rss-source-text").boundingBox())!.y;
+  expect(sourceTop).toBeGreaterThan(12);
+  const replacement = "更新された長い記事のタイトル。".repeat(30);
+  await replaceTitle(page, replacement);
+  await expect(page.locator("#rss-current-title")).toHaveText(replacement);
+  expect(await page.evaluate(() => scrollY)).toBe(before);
+});
+
 for (const design of ["studio", "editorial", "focus"])
   test(`${design}: source heading hierarchy, current position and keyboard jumps fit the viewport`, async ({
     page,
@@ -116,11 +179,7 @@ for (const design of ["studio", "editorial", "focus"])
     await expect
       .poll(async () => {
         const heading = await page.locator(`#${href}`).boundingBox();
-        const toolbar = await page
-          .locator(".rss-reader-navigation")
-          .boundingBox();
-        if (!heading || !toolbar) return -Infinity;
-        return heading.y - (toolbar.y + toolbar.height);
+        return heading?.y ?? -Infinity;
       })
       .toBeGreaterThanOrEqual(12);
     await expect(duplicates.nth(1)).toHaveAttribute("aria-current", "location");

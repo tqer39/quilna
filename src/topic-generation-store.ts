@@ -15,9 +15,9 @@ import {
 import {
   parseTextbookRequest,
   parseTextbookCandidate,
-  parseSharedTextbook,
-  parseReviewedTextbookCandidate,
 } from "./shared-textbook-format";
+
+import { createTopicTextbookEdition } from "./topic-textbook-edition";
 
 export const topicOperationDatabase = libraryName("quilna.topic-generation.v1");
 export const topicOperationLimit = 200;
@@ -350,12 +350,6 @@ export async function removeTopicOperations(rootId: string) {
     tx.onerror = tx.onabort = () => reject(unavailable());
   });
 }
-const encode = (raw: string) =>
-  btoa(
-    Array.from(new TextEncoder().encode(raw), (byte) =>
-      String.fromCharCode(byte),
-    ).join(""),
-  );
 /** 有料の入力・出力をそのまま不変版に包み、個人の控え・同意・回答を教材へ混ぜない。 */
 export async function generatedTopicBook(
   root: TopicOperation,
@@ -381,34 +375,15 @@ export async function generatedTopicBook(
     checked.invocation.model !== review.quote.model
   )
     throw unsupported();
-  const content = await parseReviewedTextbookCandidate(
-    root.input.requestRaw,
-    draft.json,
-    checked.json,
-  );
-  if (
-    content.requestDigest !== draft.requestDigest ||
-    content.requestDigest !== checked.requestDigest ||
-    content.draftDigest !== draft.draftDigest ||
-    content.draftDigest !== checked.draftDigest
-  )
+  return createTopicTextbookEdition({
+    bookID: root.bookID,
+    createdAt: root.createdAt,
+    requestRaw: root.input.requestRaw,
+    draft,
+    checked,
+    generationQuote: root.quote,
+    reviewQuote: review.quote,
+  }).catch(() => {
     throw unsupported();
-  const raw = JSON.stringify({
-    format: "TsumikiText",
-    schemaVersion: 2,
-    record: encode(
-      JSON.stringify({
-        schemaVersion: 2,
-        bookID: root.bookID,
-        version: 1,
-        createdAt: Date.parse(root.createdAt) / 1000 - 978307200,
-        request: encode(root.input.requestRaw),
-        draft: encode(draft.json),
-        review: encode(checked.json),
-        generator: draft.invocation,
-        reviewer: checked.invocation,
-      }),
-    ),
   });
-  return parseSharedTextbook(raw);
 }

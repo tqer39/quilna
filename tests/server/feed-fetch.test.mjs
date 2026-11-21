@@ -129,6 +129,8 @@ test("local feed API is same-origin only, bounds JSON and never accepts arbitrar
       return { xml: "<rss/>", url };
     },
     fetchSource: async (url) => {
+      if (url.endsWith("/missing"))
+        throw Object.assign(Error("feed-response"), { status: 404 });
       discoveries.push(url);
       return { html: "<!doctype html><title>A site</title>", url };
     },
@@ -200,6 +202,12 @@ test("local feed API is same-origin only, bounds JSON and never accepts arbitrar
     403,
   );
   assert.equal(discoveries.length, 1);
+  const missing = await post({
+    url: "https://publisher.example.org/missing",
+    discover: true,
+  });
+  assert.equal(missing.status, 404);
+  assert.deepEqual(await missing.json(), { error: "source-unavailable" });
 });
 
 test("HTML discovery keeps the feed transport DNS, redirect, size and deadline restrictions", async () => {

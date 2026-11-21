@@ -543,3 +543,33 @@ test("失効以外の資格情報の解決失敗を中止と区別して未送�
   });
   assert.equal(calls, 0);
 });
+
+test("計数後に権限やキーが失効した場合は生成を送らず、計数だけが実行されたことを保持する", async () => {
+  for (const failure of ["credential-changed", "credential-unavailable"]) {
+    let resolutions = 0;
+    const calls = [];
+    const api = openaiTopicTextbookTransport({
+      model,
+      reasoningEffort: "none",
+      mockOnly: true,
+      secret: async () => {
+        if (++resolutions === 2) throw Error(failure);
+        return "synthetic-credential-not-live";
+      },
+      send: async (url) => {
+        calls.push(url);
+        return Response.json({ input_tokens: 1000 });
+      },
+    });
+    const result = await api.generate(request, options());
+    assert.equal(
+      result.outcome,
+      failure === "credential-changed" ? "cancelled" : "credential-unavailable",
+    );
+    assert.deepEqual(result.usage, { inputTokens: 0, outputTokens: 0 });
+    assert.deepEqual(calls, [
+      "https://api.openai.com/v1/responses/input_tokens",
+    ]);
+    assert.equal(resolutions, 2);
+  }
+});

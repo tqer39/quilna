@@ -14,6 +14,9 @@ Existing CI and necessary security maintenance may still validate native code an
 
 ## Reading, curiosity and connections
 
+The owner's 2026-11-18 brief defines the current [quick-input and deeper-reading experience](product-experience.md): asynchronous/RSS collection, saving for later, a brief dictionary and related-word exploration, trend discovery, an interest-filtered headline player, independently generated textbooks, annotations and reusable shared database/cache delivery.
+This brief expands the priorities recorded below; existing screens may be rebuilt rather than preserved as constraints. The experience page distinguishes current code from incomplete live services and owner acceptance.
+
 The owner's 2026-11-17 clarification in [Issue #7](https://github.com/tqer39/quilna/issues/7) makes [reusable topic textbooks](topic-textbooks.md) the next textbook direction: articles lead to deeper knowledge in independently maintained textbooks, whose stable content can be reused across articles.
 The owner rejected the suggestion/reason workflow as difficult to use on 2026-11-17. Articles now link technical terms directly to retained textbooks; creation is separate asynchronous work in [#202](https://github.com/tqer39/quilna/issues/202). Earlier manual mappings, local correction/withdrawal records and an injected-response authoring prototype remain available. Live asynchronous authoring and owner usability acceptance remain incomplete.
 Existing article-bound learning cues and imported textbooks remain available and do not establish completion of the full workflow.

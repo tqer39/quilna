@@ -131,7 +131,7 @@ export default {
       const value = request.headers.get("X-Test-Principal");
       if (!["test-a", "test-b"].includes(value)) return null;
       return {
-        subject: `local-only:${value}`,
+        subject: `better-auth:${value}`,
         sessionId: `local-session:${value}`,
       };
     },

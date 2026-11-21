@@ -1,4 +1,9 @@
+import type { ArticleImage } from "./article-images";
 import { libraryName } from "./library-context";
+import {
+  captureReaderSelection,
+  restoreReaderSelection,
+} from "./reader-selection";
 import type { ArticleStructure, ArticleLink } from "./article-structure";
 import { appendArticleText, type ArticleCodeRange } from "./article-code";
 import { articleURL } from "./feed-parser";
@@ -17,6 +22,7 @@ export type ReadingView = Omit<HighlightSource, "version"> & {
   original: string;
   ranges?: ArticleCodeRange[];
   structure?: ArticleStructure;
+  images?: ArticleImage[];
 };
 type Span = { node: Text; start: number };
 export class ArticleHighlightView {
@@ -452,6 +458,7 @@ export class ArticleHighlightView {
   }
   private paint() {
     if (!this.body || !this.view) return;
+    const selection = captureReaderSelection(this.body);
     this.selected = undefined;
     this.controls();
     const active = this.source
@@ -499,7 +506,9 @@ export class ArticleHighlightView {
       },
       this.view.structure,
       this.textbookLinks,
+      this.view.images,
     );
+    restoreReaderSelection(selection, this.body);
   }
   private captureSelection() {
     if (!this.body?.isConnected || !this.ready || this.busy) return;

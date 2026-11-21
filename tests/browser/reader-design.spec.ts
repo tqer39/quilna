@@ -14,6 +14,163 @@ const xml = `<rss version="2.0"><channel><title>Quilna Journal</title>${[
   )
   .join("")}</channel></rss>`;
 
+test("スマートフォンの読書ヘッダーは操作領域が重ならず、文字の外側からも教材を開ける", async ({
+  page,
+}) => {
+  const header = page.getByRole("banner");
+  const books = header.getByRole("link", { name: "教材", exact: true });
+  for (const width of [320, 390]) {
+    await page.setViewportSize({ width, height: 844 });
+    await page.goto("/?view=feeds");
+    await expect(books).toBeVisible();
+    // 通常は画面外にあるスキップリンクは、フォーカス時の位置を別に確かめる。
+    const skip = header.getByRole("link", { name: "記事へ", exact: true });
+    await expect(skip).not.toBeInViewport();
+    const targets = await header
+      .locator("a:visible:not(.rss-skip-navigation), button:visible")
+      .evaluateAll((elements) =>
+        elements.map((element) => {
+          const rect = element.getBoundingClientRect();
+          const hit = (x: number) =>
+            element.contains(
+              document.elementFromPoint(x, rect.top + rect.height / 2),
+            );
+          return {
+            label: element.textContent,
+            width: rect.width,
+            height: rect.height,
+            inside: rect.left >= 0 && rect.right <= innerWidth,
+            edges: hit(rect.left + 3) && hit(rect.right - 3),
+          };
+        }),
+      );
+    for (const target of targets) {
+      expect(target.width, target.label ?? "").toBeGreaterThanOrEqual(44);
+      expect(target.height, target.label ?? "").toBeGreaterThanOrEqual(44);
+      expect(target.inside && target.edges, target.label ?? "").toBe(true);
+    }
+    await page.keyboard.press("Tab");
+    await expect(skip).toBeFocused();
+    await expect(skip).toBeInViewport({ ratio: 1 });
+    await skip.press("Enter");
+    await expect(page.locator("#rss-main")).toBeFocused();
+  }
+  await books.click({ position: { x: 3, y: 22 } });
+  await expect(page).toHaveURL(/view=textbooks/);
+});
+
+for (const design of ["studio", "editorial", "focus"])
+  test(`${design} prioritizes complete titles and keeps article details readable`, async ({
+    page,
+  }, info) => {
+    const title =
+      "長い記事タイトルも最後まで読む：日々のニュースと過去の学びをつなぎ、次に読みたい記事を見つけるために";
+    await page.addInitScript(
+      (value) => localStorage.setItem("quilna.reader.design.v1", value),
+      design,
+    );
+    await page.route("**/api/feeds/fetch", (route) =>
+      route.fulfill({
+        json: {
+          url: "https://example.org/rss",
+          xml: xml
+            .replace(articleTitle, title)
+            .replace(
+              "Quilna Journal",
+              "長い配信元名でも情報を確認できるQuilna読書ジャーナル",
+            ),
+        },
+      }),
+    );
+    await page.goto("/?view=feeds");
+    await page.getByLabel("サイト・RSSのURL").fill("https://example.org/rss");
+    await page
+      .getByRole("button", { name: "フィードを探す", exact: true })
+      .click();
+    await page
+      .getByRole("button", { name: "登録して読む", exact: true })
+      .click();
+    const article = page.locator(".rss-article-list li").filter({
+      has: page.getByRole("button", { name: title, exact: true }),
+    });
+    const open = article.getByRole("button", { name: title, exact: true });
+    for (const width of [1440, 320]) {
+      await page.setViewportSize({ width, height: 1000 });
+      await expect(article).toContainText("未読");
+      const titles = await page.locator(".rss-article-title").evaluateAll((items) =>
+        items.map((item) => {
+          const { left, top, bottom } = item.getBoundingClientRect();
+          return { left, top, bottom };
+        }),
+      );
+      expect(titles).toHaveLength(4);
+      for (const [index, item] of titles.entries()) {
+        expect(item.left).toBe(titles[0].left);
+        if (index) expect(item.top).toBeGreaterThan(titles[index - 1].bottom);
+      }
+      const bounds = await article.evaluate((row) => {
+        const box = (selector: string) => {
+          const element = row.querySelector<HTMLElement>(selector)!;
+          const rect = element.getBoundingClientRect();
+          return {
+            top: rect.top,
+            bottom: rect.bottom,
+            height: rect.height,
+            lineHeight: parseFloat(getComputedStyle(element).lineHeight),
+            width: element.clientWidth,
+            contentWidth: element.scrollWidth,
+            visibleHeight: element.clientHeight,
+            contentHeight: element.scrollHeight,
+          };
+        };
+        return {
+          title: box(".rss-article-title"),
+          meta: box(".rss-article-meta"),
+          excerpt: box(".rss-excerpt"),
+          tags: box(".rss-tag-summary"),
+          fits: document.documentElement.scrollWidth <= innerWidth,
+        };
+      });
+      expect(bounds.title.bottom).toBeLessThanOrEqual(bounds.meta.top);
+      expect(bounds.meta.bottom).toBeLessThanOrEqual(bounds.excerpt.top);
+      expect(bounds.excerpt.bottom).toBeLessThanOrEqual(bounds.tags.top);
+      expect(bounds.title.height).toBeGreaterThanOrEqual(44);
+      for (const part of [
+        bounds.title,
+        bounds.meta,
+        bounds.excerpt,
+        bounds.tags,
+      ]) {
+        expect(part.contentWidth).toBeLessThanOrEqual(part.width);
+        if (part === bounds.excerpt && width === 320) {
+          expect(part.visibleHeight).toBeCloseTo(2 * part.lineHeight, 0);
+          expect(part.contentHeight).toBeGreaterThan(part.visibleHeight);
+        } else {
+          expect(part.contentHeight).toBeLessThanOrEqual(
+            part.visibleHeight + 1,
+          );
+        }
+      }
+      expect(bounds.fits).toBe(true);
+      await article.scrollIntoViewIfNeeded();
+      await open.focus();
+      await expect(open).toBeFocused();
+      await page.screenshot({
+        path: info.outputPath(`${design}-${width}-hierarchy.png`),
+      });
+    }
+    await open.press("Enter");
+    await expect(page.locator("#rss-current-title")).toHaveText(title);
+    await expect(page.locator(".rss-source-text")).toContainText(
+      "気になる言葉を手掛かりに、少し先まで読み進めてみましょう。",
+    );
+    await page
+      .getByRole("button", { name: "← 記事一覧へ", exact: true })
+      .click();
+    await expect(open).toBeFocused();
+    await expect(article).toContainText("既読");
+  });
+
 for (const design of ["studio", "editorial", "focus"])
   test(`${design} keeps the settings close button clear of scrolled controls`, async ({
     page,

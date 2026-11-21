@@ -137,7 +137,14 @@ export class AccountVaultCore {
       };
     });
   }
-  async authorize(principal, csrf, mutating, { countRate = true } = {}) {
+  async authorize(
+    principal,
+    csrf,
+    mutating,
+    { countRate = true, rateScope = "mutations" } = {},
+  ) {
+    if (!["mutations", "topic-preparation"].includes(rateScope))
+      throw Error("invalid-command");
     principalSchema.parse(principal);
     const owner = await hash(principal.subject);
     await this.transaction(owner, async (tx) => {
@@ -153,11 +160,13 @@ export class AccountVaultCore {
         throw Error("csrf-invalid");
       // 保存結果の照会にもCSRFは必要だが、生成・キー変更の回数枠は消費しない。
       if (!countRate) return;
-      const recent = ((await tx.get("rate")) ?? []).filter(
+      const rateKey =
+        rateScope === "topic-preparation" ? "topic-preparation:rate" : "rate";
+      const recent = ((await tx.get(rateKey)) ?? []).filter(
         (t) => t > now - 60000,
       );
       if (recent.length >= 20) throw Error("rate-limit");
-      await tx.put("rate", [...recent, now]);
+      await tx.put(rateKey, [...recent, now]);
     });
     return owner;
   }
@@ -304,9 +313,15 @@ export class AccountVaultCore {
     const request = requestSchema.parse(input);
     return this.proposeUsing(owner, request, this.generation);
   }
-  async proposeTopic(owner, input) {
+  async proposeTopic(owner, input, { authorize = null } = {}) {
     const request = topicTextbookContract.requestSchema.parse(input);
-    return this.proposeUsing(owner, request, this.topicGeneration, true);
+    return this.proposeUsing(
+      owner,
+      request,
+      this.topicGeneration,
+      true,
+      authorize,
+    );
   }
   async topicStatus(owner) {
     const budget = await this.budget(owner);
@@ -387,7 +402,13 @@ export class AccountVaultCore {
       };
     });
   }
-  async proposeUsing(owner, request, configuration, topic = false) {
+  async proposeUsing(
+    owner,
+    request,
+    configuration,
+    topic = false,
+    authorize = null,
+  ) {
     if (!configuration) return { status: "unconnected" };
     const model = configuration.registry.find(
       (m) =>
@@ -437,6 +458,9 @@ export class AccountVaultCore {
         credential.revision,
         this.keyring,
       );
+      if (operationSignal.aborted) throw Error("credential-cancelled");
+      if (authorize && !(await authorize()))
+        throw Error("credential-unavailable");
       if (operationSignal.aborted) throw Error("credential-cancelled");
       const confirmed = await this.status(owner, provider);
       if (operationSignal.aborted) throw Error("credential-cancelled");

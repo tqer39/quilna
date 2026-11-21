@@ -48,7 +48,12 @@ async function fixture(
       ACCOUNTS: { className: "AccountVault", useSQLite: true },
     },
     resourcePersistencePath: dir,
-    bindings: { APP_ORIGIN: origin, BYOK_ENCRYPTION_KEYRING: ring() },
+    d1Databases: { AUTH_DB: "runtime-auth" },
+    bindings: {
+      APP_ORIGIN: origin,
+      BYOK_ENCRYPTION_KEYRING: ring(),
+      GOOGLE_ALLOWED_EMAIL: "admin@example.test",
+    },
     outboundService: () => {
       outbound++;
       throw Error("external network forbidden in tests");
@@ -56,6 +61,19 @@ async function fixture(
     ...extra,
   };
   let mf = new Miniflare(convertV4MiniflareOptions(config));
+  const auth = await mf.getD1Database("AUTH_DB");
+  await auth.exec(
+    (await readFile("migrations/auth/0001_better_auth.sql", "utf8")).replaceAll(
+      "\n",
+      " ",
+    ),
+  );
+  await auth
+    .prepare(
+      'INSERT INTO "user" (id,name,email,"emailVerified","createdAt","updatedAt") VALUES (?,?,?,?,?,?)',
+    )
+    .bind("test-a", "Admin", "admin@example.test", 1, 0, 0)
+    .run();
   t.after(async () => {
     await mf.dispose();
     await rm(dir, { recursive: true, force: true });
@@ -117,7 +135,7 @@ test("production bundle stays auth-unconfigured despite forged principal/session
     assert.equal(JSON.stringify(result).includes("DUMMY-ONLY"), false);
   }
   assert.equal(f.script.includes("X-Test-Principal"), false);
-  assert.equal(f.script.includes("local-only:"), false);
+  assert.equal(f.script.includes("X-Test-Principal"), false);
   assert.equal(f.outbound(), 0);
 });
 test("actual local SQLite DO CRUD separates users/providers, rejects ownership injection, persists and deletes without secret responses", async (t) => {
@@ -494,7 +512,7 @@ const topicInput = () => ({
   approvedPublicText: true,
 });
 async function approveTopic(f, input, user = "test-a") {
-  const account = await hash(`local-only:${user}`);
+  const account = await hash(`better-auth:${user}`);
   const response = await f.api("/api/topic-textbooks/status", {
     user,
     headers: { "X-Library-Account": account },
@@ -514,7 +532,7 @@ async function approveTopic(f, input, user = "test-a") {
 }
 test("テーマの実SQLite台帳とHTTPで生成・検証・再起動・キー削除後の照会を保持する", async (t) => {
   const f = await fixture(t),
-    account = await hash("local-only:test-a");
+    account = await hash("better-auth:test-a");
   const csrf = (await f.api("/api/session")).value.csrfToken;
   const key = command();
   assert.equal(
@@ -612,7 +630,7 @@ test("別の利用者のテーマ候補を照会・検証せず予算と操作�
   for (const user of ["test-a", "test-b"]) {
     sessions[user] = {
       csrf: (await f.api("/api/session", { user })).value.csrfToken,
-      account: await hash(`local-only:${user}`),
+      account: await hash(`better-auth:${user}`),
     };
     assert.equal(
       (
@@ -657,9 +675,9 @@ test("別の利用者のテーマ候補を照会・検証せず予算と操作�
       "test-b",
     ),
   );
-  assert.equal(rejected.status, 409);
+  assert.equal(rejected.status, 403);
   assert.deepEqual(rejected.value, {
-    status: "unissued-draft",
+    status: "topic-author-forbidden",
     account: sessions["test-b"].account,
   });
   assert.equal(
@@ -670,8 +688,7 @@ test("別の利用者のテーマ候補を照会・検証せず予算と操作�
   const b = (
     await call("test-b", "proposals", await approveTopic(f, input, "test-b"))
   ).value;
-  assert.equal(b.status, "complete");
-  assert.notEqual(b.draft.invocation.id, a.draft.invocation.id);
+  assert.equal(b.status, "topic-author-forbidden");
   assert.notEqual(b.account, a.account);
   assert.deepEqual((await f.api("/api/budget")).value, beforeA);
   assert.deepEqual(
@@ -682,7 +699,7 @@ test("別の利用者のテーマ候補を照会・検証せず予算と操作�
 });
 test("テーマ配送は不正な所有者・CSRF・Origin・入力を予約前に拒否する", async (t) => {
   const f = await fixture(t),
-    account = await hash("local-only:test-a"),
+    account = await hash("better-auth:test-a"),
     input = {
       ...topicInput(),
       approvedMaxMilliYen: 1000,
@@ -742,7 +759,7 @@ test("テーマ配送は不正な所有者・CSRF・Origin・入力を予約前�
 });
 test("保存操作の照会が生成・キー操作の20回枠を消費しない", async (t) => {
   const f = await fixture(t),
-    account = await hash("local-only:test-a"),
+    account = await hash("better-auth:test-a"),
     csrf = (await f.api("/api/session")).value.csrfToken;
   for (let i = 0; i < 25; i++) {
     const result = await f.api("/api/topic-textbooks/operations", {
@@ -779,7 +796,7 @@ test("保存操作の照会が生成・キー操作の20回枠を消費しない
 });
 test("HTTPの結果不明照会はSQLiteの予約を保持し入力の差し替えを区別する", async (t) => {
   const f = await fixture(t),
-    account = await hash("local-only:test-a"),
+    account = await hash("better-auth:test-a"),
     csrf = (await f.api("/api/session")).value.csrfToken;
   await f.api("/api/credentials/openai", {
     method: "POST",

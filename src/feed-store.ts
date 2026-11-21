@@ -1,3 +1,4 @@
+import { validArticleImages } from "./article-images";
 import { libraryName, openLibraryDatabase } from "./library-context";
 import { validArticleUpdate } from "./article-update";
 import {
@@ -53,6 +54,8 @@ export function validArticle(a: FeedArticle) {
         validCodeRanges(a.content.text, a.content.codeRanges) &&
         validArticleStructure(a.content.text, a.content.structure) &&
         validArticleInfo(a.content.info) &&
+        (a.content.images === undefined ||
+          validArticleImages(a.content.images, a.content.text.length)) &&
         (a.content.sourceTags === undefined ||
           validSourceTags(a.content.sourceTags)) &&
         (a.content.document === undefined ||
@@ -377,6 +380,14 @@ export async function mergeFeed(
                   bodyUpdate: old?.bodyUpdate,
                 };
           if (!stale) {
+            // 画像欄がなかった版の保存記事にも、同じ記事URLの再取得時に画像を補う。
+            if (
+              old?.saved &&
+              !next.thumbnailUrl &&
+              old.url === article.url &&
+              article.thumbnailUrl
+            )
+              next.thumbnailUrl = article.thumbnailUrl;
             const same =
               old &&
               (old.feedRevision
@@ -522,10 +533,12 @@ export function updateArticleContent(
                 (old?.content &&
                   JSON.stringify({
                     ...sourceContent(old.content),
+                    images: undefined,
                     fetchedAt: "",
                   }) ===
                     JSON.stringify({
                       ...sourceContent(patch.content),
+                      images: undefined,
                       fetchedAt: "",
                     }))
                   ? {}

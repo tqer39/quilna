@@ -175,7 +175,12 @@ export class DocumentPolicyAdmin {
    */
   async handle(owner, action, raw) {
     if (action === "admin-status")
-      return json(200, { account: owner, enabled: this.enabled(owner) });
+      return json(200, {
+        account: owner,
+        enabled: this.enabled(owner),
+        publicationsEnabled:
+          this.enabled(owner) && this.env.PUBLIC_DOCUMENTS_ENABLED === "true",
+      });
     try {
       if (!this.enabled(owner)) throw Error("document-unavailable");
       if (!Object.hasOwn(commands, action)) throw Error("document-request");

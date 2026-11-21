@@ -1,6 +1,30 @@
 import { z } from "zod";
 import {
+  topicCreationPayloads,
+  topicCreationReplySchema,
+  topicCreationListSchema,
+  topicCreationRemovedSchema,
+  type TopicCreationAction,
+  type TopicCreationInput,
+  type TopicCreationReply,
+} from "./topic-creation-protocol";
+import {
+  topicPreparationInputSchema,
+  topicPreparationPageSchema,
+} from "./topic-preparation-protocol";
+import { sharedTextbookDigest } from "./shared-textbook-format";
+import {
+  topicJobListSchema,
+  topicJobReplySchema,
+  topicJobRemovedSchema,
+  topicJobReadInputSchema,
+  topicJobListInputSchema,
+  topicJobConfirmInputSchema,
+} from "./topic-job-protocol";
+import {
   parseSharedJSON,
+  parseTextbookRequest,
+  parseSharedTextbook,
   parseTextbookCandidate,
   parseReviewedTextbookCandidate,
 } from "./shared-textbook-format";
@@ -32,6 +56,37 @@ const errors = z.enum([
   "response-limit",
   "rate-limit",
   "held",
+  "topic-jobs-unconfigured",
+  "topic-job-owner",
+  "topic-job-active",
+  "topic-job-missing",
+  "topic-job-cursor",
+  "topic-job-unavailable",
+  "topic-job-request",
+  "not-found",
+  "topic-preparation-unconfigured",
+  "topic-preparation-unavailable",
+  "topic-preparation-topic",
+  "topic-creations-unconfigured",
+  "topic-creation-owner",
+  "topic-author-forbidden",
+  "topic-creation-conflict",
+  "topic-creation-capacity",
+  "topic-creation-active",
+  "topic-creation-missing",
+  "topic-creation-cursor",
+  "topic-creation-unavailable",
+  "topic-creation-invalid",
+  "topic-materials-invalid",
+  "topic-materials-request",
+  "topic-materials-unconfigured",
+  "topic-materials-unavailable",
+  "document-unavailable",
+  "document-unconfigured",
+  "topic-job-retry-unavailable",
+  "topic-job-capacity",
+  "topic-job-conflict",
+  "quote-changed",
 ]);
 export class TopicClientError extends Error {
   constructor(readonly code: string) {
@@ -61,7 +116,8 @@ export class TopicGenerationClient {
   private async request(
     path: string,
     signal: AbortSignal,
-    input?: TopicGenerationInput,
+    input?: unknown,
+    responseLimit = 262144,
   ) {
     this.check(signal);
     const timeout = new AbortController(),
@@ -99,7 +155,8 @@ export class TopicGenerationClient {
         this.check(combined);
         if (chunk.done) break;
         size += chunk.value.byteLength;
-        if (size > 262144) throw new TopicClientError("invalid-response");
+        if (size > responseLimit)
+          throw new TopicClientError("invalid-response");
         raw += decoder.decode(chunk.value, { stream: true });
       }
       raw += decoder.decode();
@@ -114,7 +171,12 @@ export class TopicGenerationClient {
           response.status === 401 ||
           (response.status === 403 &&
             code.success &&
-            ["account-mismatch", "owner-mismatch"].includes(code.data))
+            [
+              "account-mismatch",
+              "owner-mismatch",
+              "topic-job-owner",
+              "topic-creation-owner",
+            ].includes(code.data))
         ) {
           this.csrf = "";
           this.identityLost();
@@ -146,18 +208,274 @@ export class TopicGenerationClient {
   async status(signal: AbortSignal): Promise<TopicCapabilities> {
     this.csrf = "";
     this.mode = "unconnected";
-    const parsed = topicCapabilitiesSchema.safeParse(
-      await this.request("status", signal),
-    );
-    this.check(signal);
-    if (!parsed.success) throw new TopicClientError("invalid-response");
-    if (parsed.data.account !== this.account) {
+    const raw = await this.request("status", signal);
+    const bound = z
+      .object({ account: z.string().regex(/^[a-f0-9]{64}$/) })
+      .safeParse(raw);
+    if (bound.success && bound.data.account !== this.account) {
       this.identityLost();
       throw new TopicClientError("account-mismatch");
     }
+    const parsed = topicCapabilitiesSchema.safeParse(raw);
+    this.check(signal);
+    if (!parsed.success) throw new TopicClientError("invalid-response");
     this.csrf = parsed.data.csrfToken;
     this.mode = parsed.data.mode;
     return parsed.data;
+  }
+  /** 保存済みの公開資料をテーマから準備し、応答の所有者と原文を検査する。 */
+  async prepare(input: { topic: string; after?: string }, signal: AbortSignal) {
+    const command = topicPreparationInputSchema.safeParse(input);
+    if (!command.success) throw new TopicClientError("invalid-request");
+    await this.status(signal);
+    const value = await this.request("preparations", signal, command.data);
+    this.check(signal);
+    const bound = z
+      .object({ account: z.string().regex(/^[a-f0-9]{64}$/) })
+      .safeParse(value);
+    if (!bound.success) throw new TopicClientError("invalid-response");
+    if (bound.data.account !== this.account) {
+      this.csrf = "";
+      this.identityLost();
+      throw new TopicClientError("account-mismatch");
+    }
+    const parsed = topicPreparationPageSchema.safeParse(value);
+    if (!parsed.success) throw new TopicClientError("invalid-response");
+    if (
+      parsed.data.topic !== command.data.topic ||
+      (command.data.after && parsed.data.after === command.data.after)
+    )
+      throw new TopicClientError("invalid-response");
+    for (const candidate of parsed.data.sources) {
+      const digest = await sharedTextbookDigest(
+        new TextEncoder().encode(candidate.source.excerpt),
+      );
+      this.check(signal);
+      if (
+        digest !== candidate.source.sourceFingerprint ||
+        candidate.source.id !== candidate.versionId
+      )
+        throw new TopicClientError("invalid-response");
+    }
+    return parsed.data;
+  }
+  /** 結果の回収は生成と分離し、通信失敗時も予約・再送を行わない。 */
+  async jobs(
+    action: "list",
+    input: { after?: string },
+    signal: AbortSignal,
+  ): Promise<z.infer<typeof topicJobListSchema>>;
+  async jobs(
+    action: "read" | "refresh" | "cancel",
+    input: { id: string; confirm?: true },
+    signal: AbortSignal,
+  ): Promise<z.infer<typeof topicJobReplySchema>>;
+  async jobs(
+    action: "remove",
+    input: { id: string; confirm: true },
+    signal: AbortSignal,
+  ): Promise<z.infer<typeof topicJobRemovedSchema>>;
+  async jobs(
+    action: "list" | "read" | "refresh" | "cancel" | "remove",
+    input: unknown,
+    signal: AbortSignal,
+  ) {
+    const schema =
+      action === "list"
+        ? topicJobListInputSchema
+        : ["cancel", "remove"].includes(action)
+          ? topicJobConfirmInputSchema
+          : topicJobReadInputSchema;
+    const command = schema.safeParse(input);
+    if (!command.success) throw new TopicClientError("invalid-request");
+    await this.status(signal);
+    const raw = await this.request(
+      `jobs/${action}`,
+      signal,
+      command.data,
+      270336,
+    );
+    this.check(signal);
+    const parsed = (
+      action === "list"
+        ? topicJobListSchema
+        : action === "remove"
+          ? topicJobRemovedSchema
+          : topicJobReplySchema
+    ).safeParse(raw);
+    if (!parsed.success) throw new TopicClientError("invalid-response");
+    const after = "after" in command.data ? command.data.after : undefined;
+    if (
+      "jobs" in parsed.data &&
+      after &&
+      parsed.data.jobs.some((job) => job.id === after)
+    )
+      throw new TopicClientError("invalid-response");
+    if (
+      parsed.data.account !== this.account ||
+      ("job" in parsed.data &&
+        parsed.data.job?.result &&
+        parsed.data.job.result.account !== this.account)
+    ) {
+      this.csrf = "";
+      this.identityLost();
+      throw new TopicClientError("account-mismatch");
+    }
+    if (
+      "job" in parsed.data &&
+      parsed.data.job &&
+      "id" in command.data &&
+      parsed.data.job.id !== command.data.id
+    )
+      throw new TopicClientError("invalid-response");
+    if (
+      action === "cancel" &&
+      (!("job" in parsed.data) || parsed.data.job?.state !== "cancelled")
+    )
+      throw new TopicClientError("invalid-response");
+    return parsed.data;
+  }
+  /** 作成APIは候補本文を返さず、完成版だけを再検査して取り込みへ渡す。 */
+  async creations<A extends TopicCreationAction>(
+    action: A,
+    input: TopicCreationInput<A>,
+    signal: AbortSignal,
+  ): Promise<TopicCreationReply<A>> {
+    const command = topicCreationPayloads[action].safeParse(input);
+    if (!command.success) throw new TopicClientError("invalid-request");
+    let expectedId = "id" in command.data ? command.data.id : undefined;
+    if (action === "save" && "requestRaw" in command.data) {
+      try {
+        const request = await parseTextbookRequest(command.data.requestRaw);
+        if (request.schemaVersion !== 2) throw Error();
+        expectedId = request.id.toLowerCase();
+      } catch {
+        throw new TopicClientError("invalid-request");
+      }
+    }
+    const capabilities = await this.status(signal);
+    if (
+      !capabilities.creations?.available ||
+      (["approve", "retry", "review-again", "resume"].includes(action) &&
+        !capabilities.creations.enabled)
+    )
+      throw new TopicClientError("topic-creations-unconfigured");
+    const raw = await this.request(
+      `creations/${action}`,
+      signal,
+      command.data,
+      1048576,
+    );
+    this.check(signal);
+    const bound = z
+      .object({ account: z.string().regex(/^[a-f0-9]{64}$/) })
+      .safeParse(raw);
+    if (!bound.success) throw new TopicClientError("invalid-response");
+    if (bound.data.account !== this.account) {
+      this.csrf = "";
+      this.identityLost();
+      throw new TopicClientError("account-mismatch");
+    }
+    const parsed = (
+      action === "list"
+        ? topicCreationListSchema
+        : action === "remove"
+          ? topicCreationRemovedSchema
+          : topicCreationReplySchema
+    ).safeParse(raw);
+    if (!parsed.success) throw new TopicClientError("invalid-response");
+    const after = "after" in command.data ? command.data.after : undefined;
+    if (
+      "creations" in parsed.data &&
+      after &&
+      parsed.data.creations.some((r) => r.id === after)
+    )
+      throw new TopicClientError("invalid-response");
+    if ("creation" in parsed.data && parsed.data.creation) {
+      const c = parsed.data.creation;
+      try {
+        if (c.id !== expectedId) throw Error();
+        if (
+          action === "approve" &&
+          "generation" in command.data &&
+          "review" in command.data &&
+          (!c.quotes ||
+            JSON.stringify(c.quotes.generation) !==
+              JSON.stringify(command.data.generation) ||
+            JSON.stringify(c.quotes.review) !==
+              JSON.stringify(command.data.review))
+        )
+          throw Error();
+        if (
+          ["retry", "review-again"].includes(action) &&
+          "quote" in command.data &&
+          (!c.quotes ||
+            JSON.stringify(
+              c.quotes[
+                topicQuoteSchema.parse(command.data.quote).purpose ===
+                "book-addition"
+                  ? "generation"
+                  : "review"
+              ],
+            ) !== JSON.stringify(command.data.quote))
+        )
+          throw Error();
+        if (
+          action === "review-again" &&
+          "reviewRequestId" in command.data &&
+          c.reviewRequestId !== command.data.reviewRequestId
+        )
+          throw Error();
+        const request = await parseTextbookRequest(c.requestRaw);
+        const revision = await sharedTextbookDigest(
+          new TextEncoder().encode(JSON.stringify(c.requestRaw)),
+        );
+        if (
+          request.schemaVersion !== 2 ||
+          request.id.toLowerCase() !== c.id ||
+          request.topic.name !== c.title ||
+          request.learningGoal !== c.learningGoal ||
+          revision !== c.revision ||
+          ("expectedRevision" in command.data &&
+            command.data.expectedRevision !== revision) ||
+          ("requestRaw" in command.data &&
+            command.data.requestRaw !== c.requestRaw)
+        )
+          throw Error();
+        if (
+          c.operation &&
+          c.operation.id !==
+            (c.stage === "generation" ? c.id : c.reviewRequestId)
+        )
+          throw Error();
+        if (c.book) {
+          const book = await parseSharedTextbook(c.book);
+          const retained = new TextDecoder("utf-8", {
+            fatal: true,
+            ignoreBOM: true,
+          }).decode(
+            Uint8Array.from(atob(book.record.request), (c) => c.charCodeAt(0)),
+          );
+          if (
+            book.id !== `${c.bookID}:1` ||
+            retained !== c.requestRaw ||
+            !c.quotes ||
+            book.record.generator.provider !== c.quotes.generation.provider ||
+            book.record.generator.model !== c.quotes.generation.model ||
+            book.record.reviewer.provider !== c.quotes.review.provider ||
+            book.record.reviewer.model !== c.quotes.review.model
+          )
+            throw Error();
+        }
+      } catch {
+        throw new TopicClientError("invalid-response");
+      }
+    } else if (
+      ["save", "approve", "retry", "review-again", "resume"].includes(action)
+    )
+      throw new TopicClientError("invalid-response");
+    this.check(signal);
+    return parsed.data as TopicCreationReply<A>;
   }
   async operate(
     path: "proposals" | "operations",

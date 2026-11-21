@@ -1,3 +1,5 @@
+import { articleImageLimit, type ImageSource } from "./article-images";
+import { articleImageURL, htmlThumbnail } from "./article-thumbnail";
 import {
   safeArticleLink,
   validArticleOrdinal,
@@ -17,6 +19,7 @@ export function extractArticleDocument(
   doc: Document,
   prepareFragment?: (fragment: DocumentFragment) => void,
   parseFragment?: (html: string) => DocumentFragment,
+  images?: ImageSource[],
 ): ArticleContent {
   if (html.length > 2_000_000)
     throw Error("記事が大きすぎるため取り込めませんでした。");
@@ -38,6 +41,7 @@ export function extractArticleDocument(
     for (const child of Array.from(node.childNodes))
       stack.push({ node: child, depth: depth + 1 });
   }
+  const thumbnailUrl = htmlThumbnail(fragment, url);
   // Zenn publishes article topics in inert page data rather than standard meta tags.
   let siteTags: string[] = [];
   if (new URL(url).hostname === "zenn.dev") {
@@ -124,13 +128,48 @@ export function extractArticleDocument(
   // Native template parsing discards these wrappers; DOM-only parsers retain them.
   for (const wrapper of Array.from(fragment.querySelectorAll("html,head,body")))
     wrapper.replaceWith(...Array.from(wrapper.childNodes));
+  const candidates: Omit<ImageSource, "offset">[] = [];
+  fragment
+    .querySelectorAll("[data-quilna-image]")
+    .forEach((node) => node.removeAttribute("data-quilna-image"));
+  if (images) {
+    for (const img of Array.from(fragment.querySelectorAll("img"))) {
+      if (
+        candidates.length >= 100 ||
+        img.closest("nav,footer,aside,header,[hidden],[aria-hidden='true']")
+      )
+        continue;
+      if (
+        ["width", "height"].some((attr) =>
+          /^[01](?:px)?$/.test(img.getAttribute(attr) ?? ""),
+        )
+      )
+        continue;
+      const src = articleImageURL(img, url);
+      if (!src) continue;
+      const marker = doc.createElement("img");
+      // Readability は取得先の属性がない画像を除去する。解析中は通信先を空に保つ。
+      marker.setAttribute("data-src", "");
+      marker.setAttribute("data-quilna-image", String(candidates.length));
+      candidates.push({
+        url: src,
+        alt: (img.getAttribute("alt") || "").slice(0, 500),
+      });
+      (img.closest("picture") || img).replaceWith(marker);
+    }
+  }
   fragment
     .querySelectorAll(
-      "script,style,iframe,object,embed,img,picture,video,audio,source,link,meta,base,form,nav,footer,template,svg,math,[hidden],[aria-hidden='true']",
+      "script,style,iframe,object,embed,img:not([data-quilna-image]),picture,video,audio,source,link,meta,base,form,nav,footer,template,svg,math,[hidden],[aria-hidden='true']",
     )
     .forEach((n) => n.remove());
   for (const element of Array.from(fragment.querySelectorAll("*"))) {
     for (const attr of Array.from(element.attributes)) {
+      if (
+        element.hasAttribute("data-quilna-image") &&
+        ["data-quilna-image", "data-src"].includes(attr.name)
+      )
+        continue;
       if (attr.name === "href" && element.tagName.toLowerCase() === "a") {
         const href = safeArticleLink(attr.value, url);
         if (href) element.setAttribute("href", href);
@@ -174,6 +213,10 @@ export function extractArticleDocument(
     charThreshold: 140,
     serializer: (node) => {
       const serialized = serializeArticle(node, url);
+      for (const marker of serialized.images.slice(0, articleImageLimit)) {
+        const source = candidates[marker.index];
+        if (source) images?.push({ ...source, offset: marker.offset });
+      }
       codeRanges = serialized.codeRanges;
       structure = serialized.structure;
       return serialized.text;
@@ -195,6 +238,7 @@ export function extractArticleDocument(
     language: language.slice(0, 35),
     fetchedAt: new Date().toISOString(),
     codeRanges,
+    ...(thumbnailUrl ? { thumbnailUrl } : {}),
     structure,
     ...(Object.keys(info).length ? { info } : {}),
     ...(sourceTags.length ? { sourceTags } : {}),

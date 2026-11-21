@@ -11,7 +11,7 @@ import {
   readingFingerprint,
   validReadingPositions,
 } from "../src/reading-position";
-import { faviconData } from "../src/favicon-data.mjs";
+import { articleImageData, faviconData } from "../src/favicon-data.mjs";
 import type { FeedArticle } from "../src/feed-parser";
 
 describe("retained article structure", () => {
@@ -101,4 +101,16 @@ it("allows bounded raster icons but rejects SVG, HTML and oversized content", ()
     new Uint8Array(),
   ])
     expect(() => faviconData(data)).toThrow();
+});
+
+it("AVIF の互換ブランドだけでも本文画像を認識し、サイズ外やバージョン内の文字列は除外する", () => {
+  const header = new TextEncoder().encode("\0\0\0\x18ftypmif1....mif1avif");
+  expect(articleImageData(header)).toMatch(/^data:image\/avif;base64,/);
+  expect(() => faviconData(header)).toThrow();
+  header[3] = 20;
+  expect(() => articleImageData(header)).toThrow();
+  header.set(new TextEncoder().encode("avis"), 12);
+  expect(() => articleImageData(header)).toThrow();
+  header[3] = 32;
+  expect(() => articleImageData(header)).toThrow();
 });

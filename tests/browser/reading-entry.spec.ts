@@ -109,20 +109,24 @@ for (const design of ["studio", "editorial", "focus"]) {
         body: JSON.stringify(position),
         contentType: "application/json",
       });
-      expect(
-        await page
-          .locator(".rss-content-note")
-          .filter({ hasText: "元サイトから取り込んだ本文です。" })
-          .evaluate(
-            (note) =>
-              !!(
-                document
-                  .querySelector(".rss-source-text")!
-                  .compareDocumentPosition(note) &
+      await expect
+        .poll(() =>
+          page.evaluate(() => {
+            const source = document.querySelector(".rss-source-text");
+            const notice = Array.from(
+              document.querySelectorAll(".rss-content-note"),
+            ).find(
+              (node) => node.textContent === "元サイトから取り込んだ本文です。",
+            );
+            return !!(
+              source &&
+              notice &&
+              source.compareDocumentPosition(notice) &
                 Node.DOCUMENT_POSITION_FOLLOWING
-              ),
-          ),
-      ).toBe(true);
+            );
+          }),
+        )
+        .toBe(true);
       expect(position.overflow).toBe(false);
       expect(
         position.top,
@@ -138,7 +142,7 @@ for (const design of ["studio", "editorial", "focus"]) {
       await expect(
         page.getByRole("button", { name: "目次・見出しマップ", exact: true }),
       ).toBeVisible();
-      await expect(page.locator(".rss-article-meta")).toContainText(
+      await expect(page.locator(".rss-article-meta")).not.toContainText(
         "画像・埋め込みなし",
       );
       await page.evaluate(async () => {
@@ -203,11 +207,9 @@ for (const design of ["studio", "editorial", "focus"]) {
         db.close();
       });
       await page.reload();
-      const legacyWarning = page
-        .locator(".rss-content-note")
-        .filter({
-          hasText: "以前に取り込んだ本文にはコードの書式情報がありません。",
-        });
+      const legacyWarning = page.locator(".rss-content-note").filter({
+        hasText: "以前に取り込んだ本文にはコードの書式情報がありません。",
+      });
       await expect(legacyWarning).toBeVisible();
       expect(
         await legacyWarning.evaluate(

@@ -185,10 +185,7 @@ export class ReadingProgress {
       }
       return offset;
     };
-    const top =
-      document.querySelector(".rss-reader-navigation")?.getBoundingClientRect()
-        .bottom ?? 80;
-    const offset = at(Math.max(0, top) + 12),
+    const offset = at(12),
       furthest = Math.max(offset, at(innerHeight));
     s.pending = {
       fingerprint: s.fingerprint,
@@ -244,16 +241,12 @@ export class ReadingProgress {
           ? Number(blocks[index + 1].dataset.readingStart)
           : s.text.length;
     const box = target.getBoundingClientRect();
-    const header =
-      document.querySelector(".rss-reader-navigation")?.getBoundingClientRect()
-        .height ?? 80;
     s.armed = true;
     window.scrollTo({
       top:
         scrollY +
         box.top +
         (box.height * (p.offset - start)) / Math.max(1, end - start) -
-        header -
         12,
     });
     target.tabIndex = -1;

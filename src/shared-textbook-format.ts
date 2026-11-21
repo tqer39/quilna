@@ -71,7 +71,7 @@ const articleRequestSchema = object({
   sources: z.array(sourceSchema).min(1).max(3),
 });
 // 記事への入口と教材の根拠を分け、私的なリンクを教材ファイルへ混入させない。
-const topicSourceSchema = object(sourceFields);
+export const topicSourceSchema = object(sourceFields);
 const topicRequestSchema = object({
   schemaVersion: z.literal(2),
   id: uuid,
@@ -265,6 +265,18 @@ export async function parseTextbookRequest(raw: string) {
   return request;
 }
 
+export class TextbookPrerequisiteError extends Error {
+  constructor(sectionNumber: number) {
+    const correction =
+      sectionNumber === 1
+        ? "最初の節は空配列 [] にしてください。"
+        : "前にある節の content.id だけを、重複せずに指定してください。";
+    super(
+      `${sectionNumber}節目の prerequisiteSectionIDs を修正してください。${correction}`,
+    );
+  }
+}
+
 /** 生成候補を保存・検証へ渡す前に、引用と問題・前提の対応を検査する。 */
 export async function parseTextbookCandidate(
   requestRaw: string,
@@ -280,12 +292,11 @@ export async function parseTextbookCandidate(
     const { content } = lesson,
       q = content.question;
     if (
-      earlier.has(content.id) ||
-      questions.has(q.id) ||
       !unique(lesson.prerequisiteSectionIDs) ||
       lesson.prerequisiteSectionIDs.some((id) => !earlier.has(id))
     )
-      throw invalid();
+      throw new TextbookPrerequisiteError(earlier.size + 1);
+    if (earlier.has(content.id) || questions.has(q.id)) throw invalid();
     earlier.add(content.id);
     questions.add(q.id);
     if (
@@ -401,6 +412,7 @@ export async function parseSharedTextbook(raw: string) {
 
 // 生成用のwire形式も同じ構造定義を使い、ファイルの検査条件との乖離を防ぐ。
 export {
+  draftSchema as textbookDraftSchema,
   lessonSchema as textbookLessonSchema,
   reviewSchema as textbookReviewSchema,
 };

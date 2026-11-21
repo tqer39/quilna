@@ -47,6 +47,7 @@ export function serializeArticle(
   text: string;
   codeRanges: ArticleCodeRange[];
   structure: ArticleStructure;
+  images: { index: number; offset: number }[];
 } {
   const pieces: {
     text: string;
@@ -56,6 +57,7 @@ export function serializeArticle(
     map: (i: number) => number;
   }[] = [];
   const links: { start: number; end: number; href: string }[] = [];
+  const images: { index: number; offset: number }[] = [];
   const headings: { start: number; end: number; level: number }[] = [];
   const blocks: ArticleBlock[] = [],
     containers: ArticleBlock[] = [];
@@ -86,6 +88,13 @@ export function serializeArticle(
     if (current.nodeType !== 1) return;
     const element = current as Element,
       tag = element.tagName.toLowerCase();
+    if (tag === "img" && element.hasAttribute("data-quilna-image")) {
+      images.push({
+        index: Number(element.getAttribute("data-quilna-image")),
+        offset: rawLength,
+      });
+      return;
+    }
     if (tag === "pre" || tag === "code") {
       const code = current.textContent ?? "";
       if (tag === "pre") add("\n\n");
@@ -200,6 +209,10 @@ export function serializeArticle(
   return {
     text,
     codeRanges,
+    images: images.map(({ index, offset }) => ({
+      index,
+      offset: mapped(offset),
+    })),
     structure: {
       version: 1,
       links: convert(links),

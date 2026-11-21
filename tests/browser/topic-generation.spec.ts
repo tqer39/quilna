@@ -65,6 +65,7 @@ async function fixture(context: BrowserContext) {
         account,
         mode: state.connected ? "test-only" : "unconnected",
         csrfToken: "synthetic-csrf-token-for-tests",
+        creations: { available: true, enabled: false, canAuthor: true },
         quotes: state.connected
           ? [
               { ...quote, quoteDigest: state.generationQuoteDigest },
@@ -188,7 +189,7 @@ async function preview(page: Page) {
     .getByLabel("教材のテーマ", { exact: true })
     .fill(original.topic.name);
   await page
-    .getByLabel("学習目標", { exact: true })
+    .getByRole("textbox", { name: "学習目標", exact: true })
     .fill(original.learningGoal);
   await page.getByLabel("出典の題名").fill(original.sources[0].title);
   await page.getByLabel("公開資料のURL（任意）").fill(original.sources[0].url);

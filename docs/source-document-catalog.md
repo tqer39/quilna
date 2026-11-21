@@ -20,6 +20,57 @@ Browser parsing uses an inert template; server parsing uses a fresh DOM-only doc
 
 Fixed fixtures compare browser/server text, code ranges, title and language for full/fragment/malformed documents, Japanese/astral Unicode, tables and hostile resources. The real local Workers runtime covers HTML extraction into a chunked durable version, concurrent reuse, restart, 304 and failure/retry with the old version intact. DOM implementations may differ on other malformed pages; this is fixture evidence, not universal extraction equivalence or live-site acceptance. Dependency and lockfile are shared across development platforms; the server-only worker export adds no native runtime dependency or browser download.
 
+## Anonymous reading of explicitly published copies
+
+The optional public reader is `GET /public/documents?url=<encoded exact source URL>`; `GET /api/public/documents?url=...` returns the same stored latest version as JSON. Both support `HEAD`. These exact routes work without a login, even when the personal library requires authentication. When public delivery is configured, a link on the login page opens a form where readers enter the original article URL. The public routes never acquire a source, enumerate documents, return version history, accept aliases, or change personal state. Unknown, private, unpublished and missing copies all return the same unavailable status.
+
+Internal textbook authoring may supply `versionId` to the binding-only `public-read` command to verify an approved retained edition. The same current publication permission and document lifecycle checks apply, and missing versions never trigger acquisition. Anonymous URL routes still return only the latest version.
+
+This requires `PUBLIC_DOCUMENTS_ENABLED=true`, the existing `DOCUMENTS_ENABLED=true`, `DOCUMENTS` and `DOCUMENT_ACCESS_DB` bindings, and migrations `0005_publications.sql` and `0006_publication_management.sql` after the existing document migrations. It remains disabled in the checked-in deployment configurations. The migration creates an empty `document_publications` table; it does not publish any existing copy. An operator must record an independently reviewed anonymous-delivery permission for the exact current policy generation, with an expiry and evidence. The authenticated policy editor can manage publications after migration `0006_publication_management.sql` and the administrator configuration described below. An operator can also seed an initial permission with this parameterized statement after reviewing those values:
+
+```sql
+SELECT revision AS policy_revision, publication_revision AS source_generation
+FROM document_policies WHERE id = :policy_id;
+
+INSERT INTO document_publications
+  (policy_id, policy_revision, source_revision, enabled, expires, evidence)
+VALUES (:policy_id, :policy_revision, :source_generation, 1, :expires_ms, :public_delivery_evidence);
+```
+
+The SQL example is only for initial bootstrap; its original actor/time will be recorded as unknown on the first managed edit. Use the publication panel or authenticated `/api/documents/admin-publication-save` for subsequent changes and withdrawal so permission and history commit together. Direct SQL updates bypass that audit contract.
+
+The SQL source generation is the current `publicationGeneration` from the administrator read API; the UI supplies it automatically. An enabled, unexpired base policy and publication must both match; changing the base generation does not republish its replacement. Stopping/restarting source sharing or changing its expiry advances a separate publication generation. The prior anonymous permission then stays invalid until explicitly reviewed again, without changing the shared document identity or fetching its body again. Public access uses the existing shared document scope, never a private scope. A permitted member must have acquired the shared copy first. Both the gateway and source object verify the public permission, and verify it again after asynchronous reads. Catalog lifecycle withdrawal, expiry and deletion remain effective.
+
+Public URL lookups also require a `PUBLIC_DOCUMENT_RATE_LIMITER` [Workers Rate Limiting binding](https://developers.cloudflare.com/workers/runtime-apis/bindings/rate-limit/). For example, add this to the intended Wrangler configuration, choosing an account-unique namespace and an appropriate quota before enabling public delivery:
+
+```json
+{
+  "ratelimits": [{
+    "name": "PUBLIC_DOCUMENT_RATE_LIMITER",
+    "namespace_id": "1001",
+    "simple": { "limit": 60, "period": 60 }
+  }]
+}
+```
+
+Both routes use one aggregate key, `public-documents`, independent of source URL and without personal identifiers. The check runs before D1/catalog access, including conditional requests: permission revalidation still reads the database even when the content ETag matches. Exhaustion returns `429`, `Retry-After: 60`, `no-store` and no ETag; a missing or failed binding returns `503`. The empty HTML entry form does not access the catalog or consume this quota. Cloudflare's limit is per location and best effort, not a global request or billing cap. The shared quota protects database work but can be exhausted by one client or legitimate revalidations, refusing other readers at that location. Size it for expected traffic and consider edge abuse controls before production use. This example is not applied to the checked-in deployment configurations.
+
+If publication administration is unavailable and all anonymous delivery must stop, disable `PUBLIC_DOCUMENTS_ENABLED` in every serving deployment. This is a deployment operation, not an automatic application fallback; it takes effect after the new configuration is serving. Record the incident and later verify the publication history before re-enabling delivery. Previously downloaded copies cannot be recalled.
+
+The JSON response contains only document/version IDs, source URL and original content. It has an `ETag` and `Cache-Control: public, no-cache, must-revalidate`: a cache may retain it but must revalidate before every reuse. Permission and lifecycle checks run before a matching ETag can produce 304. This deliberately avoids a CDN freshness window after revocation; an already delivered or downloaded copy cannot be retracted. The HTML reader uses `no-store`, escapes all source text, makes no subresource requests and has a nonce-bound stylesheet with scripts disabled. Errors use `no-store` and no ETag. There is no public acquisition endpoint, continuous public collection, live publication or owner acceptance yet. Local SQLite-backed runtime tests prove reuse after restart, private/shared separation, missing-copy refusal, expiration/revision/withdrawal checks and conditional delivery; they do not prove real-source redistribution permission.
+
+On 2026-11-18, a local Chromium test at desktop and mobile widths used a simulated publisher and a SQLite-backed Worker. An anonymous browser fetched the saved JSON article twice. The second request received HTTP 304 and the browser reused the original body. After the publication grant was withdrawn, the same browser received HTTP 404 for both JSON and HTML. None of these reads contacted the publisher.
+
+### Publication administration and history
+
+With the existing administrator enabled and `PUBLIC_DOCUMENTS_ENABLED=true`, a saved shared source has a separate “一般公開の許可” panel. Load the current permission, choose whether anonymous delivery is allowed, enter an expiry and evidence, and explicitly confirm redistribution rights when enabling it. Review the exact source and audience before saving. Opening the panel or reading history does not publish anything. A changed source-policy generation starts with anonymous delivery unchecked; an old publication is never implicitly carried forward. The public-page link reports a permission, not proof that a shared copy has already been acquired or remains available.
+
+`POST /api/documents/admin-publication-read`, `/admin-publication-save` and `/admin-publication-history` use the existing administrator, session, CSRF and account-binding checks. Saves compare the publication revision and the base policy's management, delivery and publication generations. An enabled publication needs a future expiry no later than the currently enabled source policy. Concurrent or stale edits fail without replacing another decision. The browser retains an unconfirmed draft after a lost or unverifiable response and does not resend automatically. A confirmed rejection or a preflight failure clears the uncertain-operation marker and leaves inputs editable. Reading the latest state updates an unedited baseline immediately; an edited or uncertain draft remains intact until the operator explicitly adopts the saved state. An unresolved publication operation or draft is not silently discarded by saving the parent policy. Session changes hide the editor while retaining its draft.
+
+Migration `0006_publication_management.sql` adds revisions and actor/time metadata to publication rows and an append-only `document_publication_history` table. The permission and audit snapshot commit in one D1 batch; an audit failure rolls back the permission. A pre-management permission gets a baseline on its first successful edit, labelled with unknown original actor/time. History reads at most 20 entries per page and never restore a permission. No production publication-management migration, real-source publication permission or production setting has been applied.
+
+Local browser-to-SQLite validation uses synthetic users and publisher fixtures. It checks that UI saves change anonymous delivery, retain the same article version and record publication history without new source acquisition; it is not real-user acceptance.
+
 ## Authenticated transport and access policy
 
 `GET /api/documents/status` returns the authenticated account and whether acquisition is configured. `POST /api/documents/acquire`, `/read` and `/history` require same-origin requests and the existing session CSRF token. Bodies contain `url`, `audience` (`private` or `shared`) and only the operation's optional `force`, `versionId` or `after` field. Browser-supplied owners, scopes, content and action overrides are rejected. `X-Document-Account`, when supplied, must match the verified account. The HTTP layer rechecks the same authenticated subject/session after asynchronous work, so logout or expiry observed then prevents delivery.

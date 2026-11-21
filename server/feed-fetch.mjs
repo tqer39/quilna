@@ -1,4 +1,8 @@
-import { faviconData } from "../src/favicon-data.mjs";
+import {
+  articleImageAccept,
+  articleImageData,
+  faviconData,
+} from "../src/favicon-data.mjs";
 import { lookup } from "node:dns/promises";
 import { request } from "node:https";
 import { BlockList, isIP } from "node:net";
@@ -71,6 +75,7 @@ function exchange(
   allowHTML = false,
   validators,
   allowIcon = false,
+  allowImage = false,
 ) {
   return new Promise((resolve, reject) => {
     const req = request(
@@ -83,10 +88,12 @@ function exchange(
           done(null, address.address, address.family),
         headers: {
           ...conditionalHeaders(url.href, validators),
-          Accept: allowIcon
-            ? "image/png,image/jpeg,image/webp,image/gif,image/x-icon"
-            : "application/atom+xml, application/rss+xml, application/xml, text/xml" +
-              (allowHTML ? ", text/html, application/xhtml+xml" : ""),
+          Accept: allowImage
+            ? articleImageAccept
+            : allowIcon
+              ? "image/png,image/jpeg,image/webp,image/gif,image/x-icon"
+              : "application/atom+xml, application/rss+xml, application/xml, text/xml" +
+                (allowHTML ? ", text/html, application/xhtml+xml" : ""),
           "Accept-Encoding": "identity",
           "User-Agent": "Quilna-RSS/0.1",
         },
@@ -116,13 +123,16 @@ function exchange(
             res.headers["content-encoding"] !== "identity")
         ) {
           res.destroy();
-          reject(Error("feed-response"));
+          reject(
+            Object.assign(Error("feed-response"), { status: res.statusCode }),
+          );
           return;
         }
         const type = res.headers["content-type"] ?? "";
         const html = /^(text\/html|application\/xhtml\+xml)(;|$)/i.test(type);
         if (
           !allowIcon &&
+          !allowImage &&
           !(allowHTML && html) &&
           !/^(application\/(rss\+xml|atom\+xml|xml)|text\/(xml|plain))(;|$)/i.test(
             type,
@@ -136,7 +146,7 @@ function exchange(
         const chunks = [];
         res.on("data", (chunk) => {
           size += chunk.length;
-          if (size > (allowIcon ? 65536 : 2_000_000)) {
+          if (size > (allowImage ? 4_000_000 : allowIcon ? 65536 : 2_000_000)) {
             res.destroy(Error("feed-size"));
             return;
           }
@@ -146,6 +156,10 @@ function exchange(
         res.on("end", () => {
           try {
             const data = Buffer.concat(chunks);
+            if (allowImage) {
+              resolve({ image: articleImageData(data) });
+              return;
+            }
             if (allowIcon) {
               resolve({ icon: faviconData(data) });
               return;
@@ -181,11 +195,13 @@ export async function fetchPublicFeed(
     timeout = 12000,
     allowHTML = false,
     allowIcon = false,
+    allowImage = false,
     validators,
   } = {},
 ) {
   if (
-    (allowIcon && (allowHTML || validators !== undefined)) ||
+    (allowImage && allowIcon) ||
+    ((allowImage || allowIcon) && (allowHTML || validators !== undefined)) ||
     (validators !== undefined &&
       (!allowHTML || !validSourceValidators(validators)))
   )
@@ -224,6 +240,7 @@ export async function fetchPublicFeed(
             allowHTML,
             Object.keys(condition).length ? validators : undefined,
             allowIcon,
+            allowImage,
           );
           signal.throwIfAborted();
           const received = result.validators;
@@ -240,6 +257,8 @@ export async function fetchPublicFeed(
               ...(received ? { validators: received } : {}),
             };
           }
+          if (allowImage && typeof result.image === "string")
+            return { url: url.href, image: result.image };
           if (allowIcon && typeof result.icon === "string")
             return { url: url.href, icon: result.icon };
           if (allowHTML && typeof result.html === "string") {
@@ -271,6 +290,7 @@ export async function fetchPublicFeed(
 
 export function feedMiddleware({
   fetchFeed = fetchPublicFeed,
+  fetchImage = (url) => fetchPublicFeed(url, { allowImage: true }),
   fetchIcon = (url) =>
     fetchPublicFeed(new URL("/favicon.ico", url).href, { allowIcon: true }),
   fetchSource = (url, validators) =>
@@ -314,8 +334,10 @@ export function feedMiddleware({
         body = JSON.parse(Buffer.concat(chunks).toString());
         feedURL(body?.url);
         if (
-          body.icon === true &&
-          (body.discover === true || body.validators !== undefined)
+          (body.icon === true || body.image === true) &&
+          (body.discover === true ||
+            body.validators !== undefined ||
+            (body.icon && body.image))
         )
           throw Error("icon-options");
         if (
@@ -327,15 +349,24 @@ export function feedMiddleware({
         return send(400, { error: "url" });
       }
       const result = await (
-        body.icon === true
-          ? fetchIcon
-          : body.discover === true
-            ? fetchSource
-            : fetchFeed
+        body.image === true
+          ? fetchImage
+          : body.icon === true
+            ? fetchIcon
+            : body.discover === true
+              ? fetchSource
+              : fetchFeed
       )(body.url, body.validators);
       return send(200, result);
-    } catch {
-      if (!res.destroyed) send(502, { error: "fetch" });
+    } catch (error) {
+      if (!res.destroyed) {
+        if (
+          error?.message === "feed-response" &&
+          [404, 410].includes(error.status)
+        )
+          send(error.status, { error: "source-unavailable" });
+        else send(502, { error: "fetch" });
+      }
     } finally {
       active--;
       clearTimeout(timer);

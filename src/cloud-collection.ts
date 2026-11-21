@@ -2,7 +2,7 @@ import { z } from "zod";
 import { parseFeed } from "./feed-parser";
 import { mergeFeed, findArticle, updateArticleContent } from "./feed-store";
 import type { FeedArticle } from "./feed-parser";
-import { extractArticle } from "./article-content";
+import { importArticle } from "./article-content";
 import { sourceURL } from "./feed-discovery";
 import { currentDocument, retainDocument } from "./source-document-store";
 import { versionContent } from "./source-document";
@@ -341,7 +341,10 @@ export class CloudCollectionClient {
       if (!saved) {
         let content;
         try {
-          content = extractArticle(await inflate(result.gzip), result.finalUrl);
+          content = await importArticle(
+            await inflate(result.gzip),
+            result.finalUrl,
+          );
         } catch {
           ids.push(meta.id);
           continue;

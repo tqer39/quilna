@@ -136,6 +136,13 @@ test("selection across prose and inline code stores exact offsets, memo, and saf
   await expect(page.locator("#rss-highlights summary")).toHaveText(
     "ハイライト・メモ（1）",
   );
+  await expect(
+    page.getByRole("button", {
+      name: "選択範囲をハイライト",
+      exact: true,
+      includeHidden: true,
+    }),
+  ).toBeDisabled();
   const saved = await records(page);
   expect(saved[0]).toMatchObject({
     quote: "Call deleteAlarm() now.",
@@ -148,6 +155,12 @@ test("selection across prose and inline code stores exact offsets, memo, and saf
   await expect(page.locator(".rss-source-text code mark")).toHaveText(
     "deleteAlarm()",
   );
+  const markedCode = page.locator(".rss-source-text code mark");
+  await expect(markedCode).toHaveCSS("text-decoration-line", "underline");
+  await page.getByRole("button", { name: "ことばの辞書を開く" }).click();
+  await expect(page.getByRole("dialog", { name: "ことばの辞書" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(markedCode).toHaveText("deleteAlarm()");
   await expect(page.locator("#rss-highlights img")).toHaveCount(0);
   await page.reload();
   await open(page);
@@ -158,7 +171,51 @@ test("selection across prose and inline code stores exact offsets, memo, and saf
   );
   await page.getByRole("button", { name: "本文の引用へ", exact: true }).click();
   await expect(page.locator(".rss-source-text mark").first()).toBeFocused();
+  await expect(markedCode).toHaveCSS("text-decoration-line", "underline");
   await page.screenshot({ path: info.outputPath("highlight.png") });
+});
+
+test("メモを入力しないハイライト保存後も、保存した選択から再び追加操作を出さない", async ({
+  page,
+}) => {
+  await fixture(page);
+  await page.locator(".rss-source-text").evaluate((node) => {
+    const text = document
+      .createTreeWalker(node, NodeFilter.SHOW_TEXT)
+      .nextNode()!;
+    const range = document.createRange();
+    range.setStart(text, 0);
+    range.setEnd(text, 5);
+    const selection = getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event("selectionchange"));
+  });
+  await page
+    .getByRole("button", { name: "選択範囲をハイライト", exact: true })
+    .click();
+  await page
+    .getByRole("button", { name: "ハイライトを保存", exact: true })
+    .click();
+  await expect(page.locator("#rss-highlights summary")).toHaveText(
+    "ハイライト・メモ（1）",
+  );
+  await expect(
+    page.getByRole("button", {
+      name: "ハイライト一覧を再読み込み",
+      exact: true,
+    }),
+  ).toBeEnabled();
+  await page.evaluate(() =>
+    document.dispatchEvent(new Event("selectionchange")),
+  );
+  await expect(
+    page.getByRole("button", {
+      name: "選択範囲をハイライト",
+      exact: true,
+      includeHidden: true,
+    }),
+  ).toBeDisabled();
 });
 
 test("exact quote lookup disambiguates repeated text and keeps old source and translated references separate", async ({

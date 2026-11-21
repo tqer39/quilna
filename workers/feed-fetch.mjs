@@ -1,4 +1,8 @@
-import { faviconData } from "../src/favicon-data.mjs";
+import {
+  articleImageAccept,
+  articleImageData,
+  faviconData,
+} from "../src/favicon-data.mjs";
 // Production requires global_fetch_strictly_public: the Workers platform keeps
 // global fetch on the public Internet. This is not the Node DNS-pinning adapter.
 // Never replace this fetch with a private-origin/VPC binding.
@@ -47,11 +51,13 @@ export async function fetchCloudFeed(
     timeout = 12000,
     allowHTML = false,
     allowIcon = false,
+    allowImage = false,
     validators,
   } = {},
 ) {
   if (
-    (allowIcon && (allowHTML || validators !== undefined)) ||
+    (allowImage && allowIcon) ||
+    ((allowImage || allowIcon) && (allowHTML || validators !== undefined)) ||
     (validators !== undefined &&
       (!allowHTML || !validSourceValidators(validators)))
   )
@@ -77,10 +83,12 @@ export async function fetchCloudFeed(
             signal: controller.signal,
             headers: {
               ...condition,
-              Accept: allowIcon
-                ? "image/png,image/jpeg,image/webp,image/gif,image/x-icon"
-                : "application/atom+xml, application/rss+xml, application/xml, text/xml" +
-                  (allowHTML ? ", text/html, application/xhtml+xml" : ""),
+              Accept: allowImage
+                ? articleImageAccept
+                : allowIcon
+                  ? "image/png,image/jpeg,image/webp,image/gif,image/x-icon"
+                  : "application/atom+xml, application/rss+xml, application/xml, text/xml" +
+                    (allowHTML ? ", text/html, application/xhtml+xml" : ""),
             },
           });
           if ([301, 302, 303, 307, 308].includes(response.status)) {
@@ -104,7 +112,7 @@ export async function fetchCloudFeed(
               ...(received ? { validators: received } : {}),
             };
           }
-          if (allowIcon) {
+          if (allowIcon || allowImage) {
             if (response.status !== 200 || !response.body) {
               await response.body?.cancel();
               throw Error("feed-response");
@@ -117,7 +125,8 @@ export async function fetchCloudFeed(
                 const { done, value } = await reader.read();
                 if (done) break;
                 size += value.byteLength;
-                if (size > 65536) throw Error("icon-size");
+                if (size > (allowImage ? 4_000_000 : 65536))
+                  throw Error("icon-size");
                 chunks.push(value);
               }
               const bytes = new Uint8Array(size);
@@ -126,7 +135,9 @@ export async function fetchCloudFeed(
                 bytes.set(chunk, offset);
                 offset += chunk.byteLength;
               }
-              return { url: url.href, icon: faviconData(bytes) };
+              return allowImage
+                ? { url: url.href, image: articleImageData(bytes) }
+                : { url: url.href, icon: faviconData(bytes) };
             } finally {
               await reader.cancel().catch(() => {});
               reader.releaseLock();

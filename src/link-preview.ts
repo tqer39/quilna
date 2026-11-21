@@ -64,9 +64,10 @@ const observer =
                   img.height = 16;
                   img.decoding = "async";
                   img.referrerPolicy = "no-referrer";
+                  const fallback = target.host.firstElementChild;
                   img.addEventListener(
                     "error",
-                    () => target.host.replaceChildren(readerIcon("site")),
+                    () => fallback && img.replaceWith(fallback),
                     { once: true },
                   );
                   target.host.replaceChildren(img);
@@ -75,7 +76,7 @@ const observer =
         },
         { rootMargin: "80px" },
       );
-export function siteIcon(url: string) {
+export function siteIcon(url: string, fallback: Element = readerIcon("site")) {
   queueMicrotask(() => {
     for (const target of iconTargets.keys())
       if (!target.isConnected) {
@@ -85,7 +86,7 @@ export function siteIcon(url: string) {
   });
   const host = el("span", undefined, "rss-site-icon");
   host.setAttribute("aria-hidden", "true");
-  host.append(readerIcon("site"));
+  host.append(fallback);
   const safe = safeArticleLink(url);
   if (safe?.startsWith("https:")) {
     iconTargets.set(host, { url: safe, host });

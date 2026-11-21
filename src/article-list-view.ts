@@ -1,7 +1,9 @@
+import { libraryName } from "./library-context";
+import { thumbnailURL } from "./article-thumbnail";
 import { siteIcon } from "./link-preview";
 import { readerIcon } from "./reader-icons";
 import { articleReadingTime } from "./reading-time";
-import { tagSummary } from "./article-tags";
+import { effectiveTags, tagSummary } from "./article-tags";
 import { isLinkOnly } from "./article-content";
 import type { FeedArticle } from "./feed-parser";
 import { button, el } from "./ui";
@@ -38,8 +40,16 @@ export class ArticleListView {
   readonly root = el("div");
   private readonly list = el("ul", undefined, "rss-article-list");
   private readonly status = el("p");
+  private readonly listTools = el("div", undefined, "rss-list-display");
+  private readonly headlinesLabel = el(
+    "label",
+    undefined,
+    "rss-headlines-label",
+  );
   private readonly progress = el("p");
   private readonly empty = el("div", undefined, "rss-empty");
+  private readonly pager = el("div", undefined, "rss-pagination");
+  private readonly upkeep = el("div", undefined, "rss-list-upkeep");
   private readonly classify;
   private readonly cancel;
   private readonly retry;
@@ -51,6 +61,7 @@ export class ArticleListView {
   constructor(
     private readonly actions: {
       open: (id: string) => void;
+      save: (id: string) => void;
       classify: () => void;
       cancel: () => void;
       retry: () => void;
@@ -61,6 +72,25 @@ export class ArticleListView {
     this.list.setAttribute("aria-label", "記事一覧");
     this.status.id = "rss-search-status";
     this.status.setAttribute("role", "status");
+    const headlines = el("input");
+    headlines.type = "checkbox";
+    const preference = libraryName("quilna.reader.headlinesOnly.v1");
+    try {
+      headlines.checked = localStorage.getItem(preference) === "true";
+    } catch {
+      // 保存領域が使えないときも、開いている一覧で切り替えられる。
+    }
+    this.list.classList.toggle("rss-headlines-only", headlines.checked);
+    headlines.addEventListener("change", () => {
+      this.list.classList.toggle("rss-headlines-only", headlines.checked);
+      try {
+        localStorage.setItem(preference, String(headlines.checked));
+      } catch {
+        // 現在の表示はチェックボックスが保持する。
+      }
+    });
+    this.headlinesLabel.append(headlines, "見出し中心");
+    this.listTools.append(this.status, this.headlinesLabel);
     this.progress.id = "rss-tag-progress";
     this.progress.setAttribute("role", "status");
     this.classify = button("", actions.classify);
@@ -69,11 +99,62 @@ export class ArticleListView {
     this.clear = button("検索を解除", actions.clear);
     this.previous = button("前の50件", () => actions.page(-1));
     this.next = button("次の50件", () => actions.page(1));
+    this.pager.append(this.previous, this.next);
+    // 見出しの間はポインタなしでも矢印キーで流し読みできるようにする。
+    this.list.addEventListener("keydown", (event) => {
+      if (
+        event.altKey ||
+        event.ctrlKey ||
+        event.metaKey ||
+        event.shiftKey ||
+        !(event.target instanceof HTMLElement) ||
+        !event.target.classList.contains("rss-article-title")
+      )
+        return;
+      const titles = this.titles();
+      const index = titles.indexOf(event.target as HTMLButtonElement);
+      const next =
+        event.key === "ArrowDown"
+          ? titles[index + 1]
+          : event.key === "ArrowUp"
+            ? titles[index - 1]
+            : event.key === "Home"
+              ? titles[0]
+              : event.key === "End"
+                ? titles[titles.length - 1]
+                : undefined;
+      if (!next) return;
+      event.preventDefault();
+      next.focus();
+    });
+  }
+
+  private titles() {
+    return Array.from(this.rows.values(), (row) => row.title);
+  }
+
+  /** n/p キーなど一覧外からの移動。表示中の見出しがなければ false。 */
+  moveFocus(direction: -1 | 1) {
+    const titles = this.titles();
+    if (!titles.length || !this.list.isConnected) return false;
+    const focused = document.activeElement;
+    const index = titles.findIndex(
+      (title) => !!focused && title.closest("li")!.contains(focused),
+    );
+    const next =
+      index < 0
+        ? titles[direction > 0 ? 0 : titles.length - 1]
+        : titles[index + direction];
+    if (!next) return false;
+    next.focus();
+    return true;
   }
 
   private createRow(id: string) {
     const row = {
       node: el("li"),
+      thumbnail: el("span", undefined, "rss-story-thumbnail"),
+      imageUrl: undefined as string | undefined,
       meta: el("p", undefined, "rss-article-meta"),
       publisherIcon: el("span"),
       iconURL: null as string | null,
@@ -82,7 +163,10 @@ export class ArticleListView {
       durationText: el("span"),
       title: el("button", undefined, "rss-article-title"),
       excerpt: el("p", undefined, "rss-excerpt"),
-      tags: el("p", undefined, "rss-tag-summary"),
+      tags: el("details", undefined, "rss-tag-summary"),
+      tagLabel: el("summary"),
+      tagDetails: el("p"),
+      save: el("button", undefined, "rss-quick-save"),
     };
     row.duration.append(readerIcon("clock"), row.durationText);
     row.meta.append(
@@ -92,9 +176,23 @@ export class ArticleListView {
       row.duration,
     );
     row.title.type = "button";
+    row.save.type = "button";
+    row.save.append(readerIcon("bookmark"));
+    row.tags.append(row.tagLabel, row.tagDetails);
+    row.save.addEventListener("click", () => {
+      if (row.save.getAttribute("aria-disabled") !== "true")
+        this.actions.save(id);
+    });
     // Resolve the current record in the owner on click, not a captured snapshot.
     row.title.addEventListener("click", () => this.actions.open(id));
-    row.node.append(row.meta, row.title, row.excerpt, row.tags);
+    row.node.append(
+      row.thumbnail,
+      row.title,
+      row.meta,
+      row.excerpt,
+      row.tags,
+      row.save,
+    );
     return row;
   }
 
@@ -134,14 +232,48 @@ export class ArticleListView {
     previousDisabled: boolean;
     nextDisabled: boolean;
     empty: string;
+    saving: ReadonlySet<string>;
   }) {
     const focused = document.activeElement;
     const previousIndex = Array.from(this.rows.values()).findIndex(
-      (row) => row.title === focused,
+      (row) => !!focused && row.node.contains(focused),
     );
     const rows = new Map<string, ReturnType<ArticleListView["createRow"]>>();
     for (const article of state.items) {
       const row = this.rows.get(article.id) ?? this.createRow(article.id);
+      const url =
+        article.content?.images?.[0]?.data ??
+        thumbnailURL(article.thumbnailUrl) ??
+        thumbnailURL(article.content?.thumbnailUrl);
+      if (row.imageUrl !== url) {
+        row.imageUrl = url;
+        row.thumbnail.replaceChildren();
+        if (url) {
+          const img = el("img");
+          img.alt = "";
+          img.loading = "lazy";
+          img.decoding = "async";
+          img.referrerPolicy = "no-referrer";
+          img.addEventListener(
+            "error",
+            () => {
+              const fallback = el(
+                "span",
+                undefined,
+                "rss-thumbnail-unavailable",
+              );
+              fallback.setAttribute("role", "img");
+              fallback.setAttribute("aria-label", "画像を表示できません");
+              fallback.title = "画像を表示できません";
+              fallback.append(readerIcon("imageOff"));
+              img.replaceWith(fallback);
+            },
+            { once: true },
+          );
+          img.src = url;
+          row.thumbnail.append(img);
+        }
+      }
       text(row.facts, state.metadata(article));
       text(row.durationText, articleReadingTime(article));
       const iconURL = article.feedUrl || article.url;
@@ -150,6 +282,9 @@ export class ArticleListView {
         row.publisherIcon.replaceChildren(siteIcon(iconURL));
       }
       text(row.title, article.content?.title || article.title);
+      // 未読・既読は文字の濃さで見分け、行ごとの印は増やさない。
+      row.node.dataset.read = String(!!article.read);
+      row.node.dataset.saved = String(!!article.saved);
       text(
         row.excerpt,
         (
@@ -157,7 +292,28 @@ export class ArticleListView {
           (isLinkOnly(article.body) ? "本文なし・リンク情報のみ" : article.body)
         ).slice(0, 160),
       );
-      text(row.tags, tagSummary(article));
+      const tags = effectiveTags(article);
+      text(
+        row.tagLabel,
+        tags.length
+          ? `タグ：${tags.slice(0, 3).join("・")}${tags.length > 3 ? ` ほか${tags.length - 3}件` : ""}`
+          : "タグを確認",
+      );
+      text(row.tagDetails, tagSummary(article));
+      row.save.title = article.saved
+        ? "あとで読むから外す"
+        : "あとで読むに保存";
+      row.save.setAttribute("aria-pressed", String(article.saved));
+      row.save.setAttribute(
+        "aria-label",
+        `${article.saved ? "あとで読むから外す" : "あとで読むに保存"}：${article.content?.title || article.title}`,
+      );
+      // 書き込み中もフォーカスを保ち、同じ操作の重複だけを防ぐ。
+      row.save.setAttribute(
+        "aria-disabled",
+        String(state.saving.has(article.id)),
+      );
+      row.save.setAttribute("aria-busy", String(state.saving.has(article.id)));
       rows.set(article.id, row);
     }
     children(
@@ -166,23 +322,28 @@ export class ArticleListView {
     );
     // Bound retained nodes to the current page, not the whole library.
     this.rows = rows;
+    // 件数の一行だけを見出しの前に置き、タグ判定などの整理作業は一覧の後ろへ回す。
     const desired: HTMLElement[] = [];
-    text(this.classify, state.classify);
-    this.classify.disabled = state.classifyDisabled;
-    if (state.classify) desired.push(this.classify);
-    if (state.classifying) desired.push(this.cancel);
-    text(this.progress, state.progress);
-    if (state.progress) desired.push(this.progress);
     text(this.status, state.status);
-    desired.push(this.status);
+    this.headlinesLabel.hidden = !rows.size;
+    desired.push(this.listTools);
     if (state.retry) desired.push(this.retry);
     if (state.clear) desired.push(this.clear);
     desired.push(this.list);
     this.previous.disabled = state.previousDisabled;
     this.next.disabled = state.nextDisabled;
-    if (state.pagination) desired.push(this.previous, this.next);
+    if (state.pagination) desired.push(this.pager);
     text(this.empty, state.empty);
     if (state.empty) desired.push(this.empty);
+    text(this.classify, state.classify);
+    this.classify.disabled = state.classifyDisabled;
+    const upkeep: HTMLElement[] = [];
+    if (state.classify) upkeep.push(this.classify);
+    if (state.classifying) upkeep.push(this.cancel);
+    text(this.progress, state.progress);
+    if (state.progress) upkeep.push(this.progress);
+    children(this.upkeep, upkeep);
+    if (upkeep.length) desired.push(this.upkeep);
     children(this.root, desired);
     // An asynchronous read/save update can remove the returned-to row.
     if (

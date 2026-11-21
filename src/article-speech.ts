@@ -4,6 +4,16 @@ export function voiceKey(voice: SpeechSynthesisVoice): string {
   return voice.voiceURI || `${voice.lang}:${voice.name || "default"}`;
 }
 
+function* speechSegments(parts: readonly string[]) {
+  for (const [part, text] of parts.entries()) {
+    for (const match of text.matchAll(
+      /[^。！？.!?\n]{1,180}[。！？.!?\n]*|[。！？.!?\n]+/gu,
+    )) {
+      yield { part, text: match[0] };
+    }
+  }
+}
+
 export class ArticleSpeech {
   state: "idle" | "speaking" | "paused" = "idle";
   message = "";
@@ -103,7 +113,12 @@ export class ArticleSpeech {
     this.message = "";
     if (notify) this.changed();
   }
-  start(text: string, language: string, rate: number) {
+  start(
+    text: string | readonly string[],
+    language: string,
+    rate: number,
+    onPartStart?: (part: number) => void,
+  ) {
     this.stop(false);
     if (!this.supported) {
       this.message = "このブラウザでは読み上げを利用できません。";
@@ -122,26 +137,34 @@ export class ArticleSpeech {
       return;
     }
     const ticket = this.epoch;
-    const chunks =
-      text.match(/[^。！？.!?\n]{1,180}[。！？.!?\n]*|[。！？.!?\n]+/gu) ?? [];
+    const chunks = speechSegments(typeof text === "string" ? [text] : text);
     let index = 0;
     const next = () => {
       if (ticket !== this.epoch) return;
-      if (index >= chunks.length) {
+      const segment = chunks.next();
+      if (segment.done) {
         this.state = "idle";
         this.utterance = null;
         this.message = "読み上げが終わりました。";
         this.changed();
         return;
       }
-      const utterance = new SpeechSynthesisUtterance(chunks[index++]);
+      const utterance = new SpeechSynthesisUtterance(segment.value.text);
+      index++;
+      if (onPartStart)
+        utterance.onstart = () => {
+          if (ticket === this.epoch && this.utterance === utterance)
+            onPartStart(segment.value.part);
+        };
       this.utterance = utterance;
       utterance.voice = voice;
       utterance.lang = voice.lang;
       utterance.rate = rate;
-      utterance.onend = next;
+      utterance.onend = () => {
+        if (this.utterance === utterance) next();
+      };
       utterance.onerror = () => {
-        if (ticket !== this.epoch) return;
+        if (ticket !== this.epoch || this.utterance !== utterance) return;
         this.stop(false);
         this.message =
           "読み上げに失敗しました。音声設定を確認して再試行してください。";

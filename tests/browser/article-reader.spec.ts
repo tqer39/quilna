@@ -90,6 +90,57 @@ test("direct article imports safe text and saved original survives reload and a 
     fullPage: true,
   });
 });
+test("公開終了の記事は一覧に理由を示し、再取得に成功したら表示を戻す", async ({
+  page,
+}) => {
+  await page.addInitScript(() =>
+    localStorage.setItem("quilna.article.updates.v1", "false"),
+  );
+  await page.route("**/api/feeds/fetch", (route) =>
+    route.fulfill({ status: 410, json: { error: "source-unavailable" } }),
+  );
+  await add(page);
+  await expect(page.locator(".rss-content-note").first()).toContainText(
+    "公開終了",
+  );
+  await page.goto("/?view=feeds&filter=saved");
+  const row = page.locator(".rss-article-list li").first();
+  await expect(row).toContainText("元記事は公開終了です（410）");
+  await row.locator(".rss-article-title").click();
+  await source(page);
+  await page.getByRole("button", { name: "本文の取得を再試行" }).click();
+  await expect(page.locator(".rss-article-body")).toContainText(
+    "Final paragraph.",
+  );
+  await page.goto("/?view=feeds&filter=saved");
+  await expect(row).toContainText("Collected article");
+  await expect(row).not.toContainText("公開終了");
+});
+test("元記事が404でも保存済み本文を一覧から開ける", async ({ page }) => {
+  await page.addInitScript(() =>
+    localStorage.setItem("quilna.article.updates.v1", "false"),
+  );
+  await source(page);
+  await add(page);
+  await page.route("**/api/feeds/fetch", (route) =>
+    route.fulfill({ status: 404, json: { error: "source-unavailable" } }),
+  );
+  const history = page.locator(".rss-document-history");
+  await history.locator("summary").click();
+  await history.getByRole("button", { name: "元サイトの更新を確認" }).click();
+  await expect(
+    page.locator(".rss-content-note").filter({ hasText: "404" }).first(),
+  ).toBeVisible();
+  await page.goto("/?view=feeds&filter=saved");
+  const row = page.locator(".rss-article-list li").first();
+  await expect(row).toContainText(
+    "元記事が見つかりません（404） · 保存した本文を読めます",
+  );
+  await row.locator(".rss-article-title").click();
+  await expect(page.locator(".rss-article-body")).toContainText(
+    "Final paragraph.",
+  );
+});
 test("failed extraction preserves a saved link and retry recovers without duplicates", async ({
   page,
 }) => {

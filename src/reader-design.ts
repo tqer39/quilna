@@ -6,7 +6,7 @@ export const readerDesigns = [
   {
     id: "studio",
     name: "Studio",
-    description: "新着を軽快に探す、明るいカード表示。",
+    description: "暗いメニューと白い紙面で、見出しから流し読み。",
   },
   {
     id: "editorial",
@@ -25,7 +25,8 @@ function validDesign(value: string | null): ReaderDesign {
   return readerDesigns.find((design) => design.id === value)?.id ?? "studio";
 }
 
-export function readerDesignSettings() {
+/** 独立した教材画面にも同じログイン専用の表示設定を適用する。 */
+export function applyReaderDesign() {
   let selected: ReaderDesign = "studio";
   let readFailed = false;
   try {
@@ -34,6 +35,10 @@ export function readerDesignSettings() {
     readFailed = true;
   }
   document.documentElement.dataset.readerDesign = selected;
+  return { selected, readFailed };
+}
+export function readerDesignSettings() {
+  const { selected, readFailed } = applyReaderDesign();
   const section = el("fieldset", undefined, "rss-design-settings");
   section.append(el("legend", "ビューアのデザイン"));
   section.append(

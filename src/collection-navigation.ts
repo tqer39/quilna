@@ -1,3 +1,5 @@
+import { siteIcon } from "./link-preview";
+import { readerIcon, type ReaderIconKind } from "./reader-icons";
 import { button, el } from "./ui";
 
 type FeedLine = {
@@ -13,6 +15,8 @@ type FeedLine = {
   unsubscribed: boolean;
   cloudUnsubscribePending: boolean;
   subscriptionBusy: boolean;
+  total: number;
+  unread: number;
 };
 type State = {
   counts: { all: number; unread: number; saved: number };
@@ -30,6 +34,15 @@ type State = {
 function text(node: HTMLElement, value: string) {
   if (node.textContent !== value) node.textContent = value;
 }
+function attribute(node: HTMLElement, name: string, value: string) {
+  if (node.getAttribute(name) !== value) node.setAttribute(name, value);
+}
+
+const filterLabels = [
+  ["all", "すべての記事", "stack"],
+  ["unread", "未読", "unread"],
+  ["saved", "保存した記事", "bookmark"],
+] as const satisfies readonly (readonly [string, string, ReaderIconKind])[];
 
 // Keep form controls connected across search, article and collection updates.
 export class CollectionNavigation {
@@ -39,17 +52,24 @@ export class CollectionNavigation {
   private readonly add;
   private readonly select = el("select");
   private readonly refresh;
-  private readonly status = el("p", "", "muted");
+  private readonly status = el("p", "", "rss-rail-status");
   private readonly progress = el("p", "", "rss-progress");
   private readonly presets = el("div", undefined, "rss-presets");
   private readonly presetButtons = new Map<string, HTMLButtonElement>();
-  private readonly menus = new Map<string, HTMLButtonElement>();
+  private readonly menus = new Map<
+    string,
+    { button: HTMLButtonElement; count: HTMLElement }
+  >();
   private readonly options = new Map<string, HTMLOptionElement>();
   private readonly rows = new Map<
     string,
     {
       root: HTMLDivElement;
       title: HTMLButtonElement;
+      mark: HTMLElement;
+      label: HTMLElement;
+      count: HTMLElement;
+      total: HTMLElement;
       management: HTMLDetailsElement;
       summary: HTMLElement;
       stateLabel: HTMLElement;
@@ -60,9 +80,18 @@ export class CollectionNavigation {
       signature: string;
     }
   >();
-  private readonly feedList = el("div");
-  private readonly importSlot = el("div");
+  private readonly feedList = el("div", undefined, "rss-feed-list");
+  private readonly feedsEmpty = el(
+    "p",
+    "配信元を追加すると、ここに並びます。",
+    "rss-rail-note",
+  );
+  private readonly importSlot = el("div", undefined, "rss-import-slot");
   private importParts: HTMLElement[] = [];
+  /** 購読がある間の追加欄。レールの末尾に置き、読む・配信元より目立たせない。 */
+  readonly railImport = el("section", undefined, "rss-rail-add");
+  /** 一覧の検索と並べる配信元の選択欄。レールの外に置ける。 */
+  readonly sourceField = el("div", undefined, "rss-source-field");
 
   constructor(
     root: HTMLElement,
@@ -79,10 +108,16 @@ export class CollectionNavigation {
   ) {
     const menus = el("nav", undefined, "rss-filters");
     menus.setAttribute("aria-label", "記事の絞り込み");
-    for (const value of ["all", "unread", "saved"]) {
+    for (const [value, label, icon] of filterLabels) {
       const menu = button("", () => actions.filter(value));
+      const count = el("span", "", "rss-filter-count");
+      menu.append(
+        readerIcon(icon),
+        el("span", label, "rss-filter-label"),
+        count,
+      );
       menus.append(menu);
-      this.menus.set(value, menu);
+      this.menus.set(value, { button: menu, count });
     }
     const form = el("form", undefined, "rss-add");
     const label = el("label", "サイト・RSSのURL");
@@ -111,6 +146,7 @@ export class CollectionNavigation {
     hint.id = "rss-url-hint";
     this.field.setAttribute("aria-describedby", hint.id);
     this.add = button("", () => actions.add(this.field.value));
+    this.add.classList.add("rss-add-article");
     form.append(
       el("h3", "サイトを追加"),
       label,
@@ -140,7 +176,9 @@ export class CollectionNavigation {
     this.select.addEventListener("change", () =>
       actions.source(this.select.value),
     );
-    this.refresh = button("すべて更新", actions.refreshAll);
+    this.sourceField.append(sourceLabel, this.select);
+    this.refresh = button("", actions.refreshAll, "rss-refresh-all");
+    this.refresh.append(readerIcon("refresh"), el("span", "すべて更新"));
     this.status.id = "rss-auto-refresh-status";
     this.status.setAttribute("role", "status");
     this.progress.setAttribute("role", "status");
@@ -157,17 +195,19 @@ export class CollectionNavigation {
     });
     this.importParts = [form, this.presets];
     this.restoreImport();
+    this.railImport.setAttribute("aria-label", "配信元の追加");
+    this.railImport.append(this.importSlot);
+    const sources = el("div", undefined, "rss-sources-header");
+    sources.append(el("h3", "配信元"), this.refresh);
     root.append(
-      el("p", "COLLECT → READ → LEARN", "eyebrow"),
       el("h2", "情報収集"),
       menus,
-      this.importSlot,
-      sourceLabel,
-      this.select,
-      this.refresh,
-      this.status,
+      sources,
       this.progress,
+      this.feedsEmpty,
       this.feedList,
+      this.status,
+      this.railImport,
     );
   }
   private readonly createSource: (url: string) => HTMLButtonElement;
@@ -184,18 +224,42 @@ export class CollectionNavigation {
   restoreImport() {
     this.importSlot.append(...this.importParts);
   }
+  /**
+   * 空のライブラリでは紙面の中央、購読後はレールの末尾へ追加欄を移す。
+   * 入力途中の値・フォーカス・選択範囲は移動後も保つ。
+   */
+  placeImport(host: HTMLElement) {
+    if (this.importSlot.parentElement === host) return;
+    const focused = document.activeElement;
+    const keep =
+      focused instanceof HTMLElement && this.importSlot.contains(focused)
+        ? focused
+        : null;
+    const range =
+      keep instanceof HTMLInputElement
+        ? ([
+            keep.selectionStart,
+            keep.selectionEnd,
+            keep.selectionDirection ?? undefined,
+          ] as const)
+        : null;
+    host.append(this.importSlot);
+    if (!keep) return;
+    keep.focus({ preventScroll: true });
+    if (range && keep instanceof HTMLInputElement)
+      keep.setSelectionRange(range[0], range[1], range[2]);
+  }
 
   update(state: State) {
     this.state = state;
-    for (const [value, label] of [
-      ["all", "すべての記事"],
-      ["unread", "未読"],
-      ["saved", "保存した記事"],
-    ] as const) {
+    for (const [value, label] of filterLabels) {
       const menu = this.menus.get(value)!;
-      text(menu, `${label} · ${state.counts[value]}`);
-      if (state.filter === value) menu.setAttribute("aria-current", "page");
-      else menu.removeAttribute("aria-current");
+      // 表示は名前と件数を分けて揃え、読み上げ名は従来の「名前 · 件数」を保つ。
+      attribute(menu.button, "aria-label", `${label} · ${state.counts[value]}`);
+      text(menu.count, String(state.counts[value]));
+      if (state.filter === value)
+        menu.button.setAttribute("aria-current", "page");
+      else menu.button.removeAttribute("aria-current");
     }
     if (this.field.value !== state.input) this.field.value = state.input;
     text(this.submit, state.discovering ? "探しています…" : "フィードを探す");
@@ -208,6 +272,7 @@ export class CollectionNavigation {
       add.disabled = !state.ready || state.updating.has(url);
     this.refresh.disabled =
       !state.feeds.some((f) => !f.unsubscribed) || !!state.updating.size;
+    this.feedsEmpty.hidden = !!state.feeds.length || state.connecting;
     text(this.status, state.status);
     text(
       this.progress,
@@ -215,6 +280,7 @@ export class CollectionNavigation {
         ? `更新中：${state.updating.size}件。取得済みの記事は読めます。`
         : "",
     );
+    this.progress.hidden = !state.updating.size;
     const retained = new Set(state.feeds.map((f) => f.url));
     for (const [url, option] of this.options)
       if (!retained.has(url)) {
@@ -245,6 +311,10 @@ export class CollectionNavigation {
         row = {
           root: el("div", undefined, "rss-feed-state"),
           title: this.createSource(feed.url),
+          mark: el("span", "", "rss-feed-mark"),
+          label: el("span", "", "rss-feed-label"),
+          count: el("span", "", "rss-feed-count"),
+          total: el("span", "", "rss-feed-total"),
           management: el("details", undefined, "rss-feed-management"),
           summary: el("summary"),
           stateLabel: el("p", undefined, "rss-feed-status"),
@@ -254,6 +324,7 @@ export class CollectionNavigation {
           signature: "",
         };
         row.title.className = "rss-feed-title";
+        row.title.append(siteIcon(feed.url, row.mark), row.label);
         row.management.append(
           row.summary,
           row.details,
@@ -261,24 +332,39 @@ export class CollectionNavigation {
           row.subscription,
           row.retrySubscription,
         );
-        row.root.append(row.title, row.stateLabel, row.management);
+        const counts = el("span", "", "rss-feed-counts");
+        row.total.title = "取り込んだ記事の総数";
+        counts.append(row.total, row.count);
+        row.root.append(row.title, counts, row.stateLabel, row.management);
         this.rows.set(feed.url, row);
       }
-      text(row.title, feed.title);
+      text(row.label, feed.title);
+      text(row.mark, Array.from(feed.title.trim())[0] ?? "?");
+      text(row.total, `全${feed.total}件`);
+      text(row.count, feed.unread ? `未読${feed.unread}件` : "");
       row.title.setAttribute("aria-pressed", String(feed.url === state.source));
       text(row.summary, "管理");
       row.summary.setAttribute("aria-label", `${feed.title}の管理`);
+      const stateKey = feed.updating
+        ? "updating"
+        : feed.cloudUnsubscribePending
+          ? "cloud-pending"
+          : feed.unsubscribed
+            ? "unsubscribed"
+            : feed.retry || feed.details.some((detail) => detail.error)
+              ? "failed"
+              : "active";
+      row.root.dataset.state = stateKey;
+      row.stateLabel.dataset.state = stateKey;
       text(
         row.stateLabel,
-        feed.updating
-          ? "更新中"
-          : feed.cloudUnsubscribePending
-            ? "クラウド解除の確認待ち"
-            : feed.unsubscribed
-              ? "購読停止中"
-              : feed.retry || feed.details.some((detail) => detail.error)
-                ? "取得に失敗・再試行できます"
-                : "購読中",
+        {
+          updating: "更新中",
+          "cloud-pending": "クラウド解除の確認待ち",
+          unsubscribed: "購読停止中",
+          failed: "取得に失敗・再試行できます",
+          active: "購読中",
+        }[stateKey],
       );
       const signature = JSON.stringify(feed.details);
       if (row.signature !== signature) {

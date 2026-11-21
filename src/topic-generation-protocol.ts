@@ -55,7 +55,8 @@ export const topicTextbookEnvelopeSchema = z.discriminatedUnion("kind", [
 ]);
 export type TopicTextbookEnvelope = z.infer<typeof topicTextbookEnvelopeSchema>;
 const account = z.string().regex(/^[a-f0-9]{64}$/);
-const failureStatus = z.enum([
+export const topicGenerationFailureStatusSchema = z.enum([
+  "account-forbidden",
   "unconnected",
   "model-unapproved",
   "cost-unconfigured",
@@ -71,6 +72,7 @@ const failureStatus = z.enum([
   "cost-unapproved",
   "cost-limit",
   "quote-changed",
+  "materials-unavailable",
 ]);
 export const topicGenerationReplySchema = z.discriminatedUnion("status", [
   object({
@@ -92,7 +94,11 @@ export const topicGenerationReplySchema = z.discriminatedUnion("status", [
     retryable: z.literal(true).optional(),
     account,
   }),
-  object({ status: failureStatus, draft: z.null().optional(), account }),
+  object({
+    status: topicGenerationFailureStatusSchema,
+    draft: z.null().optional(),
+    account,
+  }),
 ]);
 export type TopicGenerationReply = z.infer<typeof topicGenerationReplySchema>;
 export const topicQuoteSchema = object({
@@ -114,6 +120,11 @@ export const topicCapabilitiesSchema = object({
   account,
   csrfToken: z.string().min(20).max(100),
   quotes: z.array(topicQuoteSchema).max(40),
+  creations: object({
+    canAuthor: z.boolean().optional(),
+    available: z.boolean(),
+    enabled: z.boolean(),
+  }).optional(),
   budget: object({
     limitMilliYen: z.literal(500000),
     spentMilliYen: z.number().int().min(0).max(500000),

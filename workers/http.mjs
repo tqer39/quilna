@@ -2,7 +2,15 @@ import { z } from "zod";
 import { hash, bytes } from "./crypto.mjs";
 import { libraryStatus } from "./library-status.mjs";
 import { topicTextbookContract } from "../server/topic-textbook-contract.mjs";
-const principal = z
+import { publicDocuments, publicDocumentPaths } from "./public-documents.mjs";
+import { topicJobPayloads, topicJobDispatches } from "./topic-job-commands.mjs";
+import { topicPreparationInputSchema } from "../src/topic-preparation-protocol.ts";
+import {
+  topicCreationPayloads,
+  topicCreationDispatches,
+} from "./topic-creation-commands.mjs";
+import { handleTopicCreationAccount } from "./topic-creation-account.mjs";
+export const principal = z
   .object({
     subject: z.string().min(1).max(300),
     sessionId: z.string().min(1).max(300),
@@ -55,6 +63,8 @@ export function createHandler({
 } = {}) {
   return async (request, env) => {
     const url = new URL(request.url);
+    if (publicDocumentPaths.has(url.pathname))
+      return publicDocuments(request, env);
     if (url.pathname === "/api/library/status")
       return libraryStatus(request, env, authenticate);
     if (!url.pathname.startsWith("/api/"))
@@ -100,6 +110,9 @@ export function createHandler({
               "admin-revision",
               "admin-create",
               "admin-update",
+              "admin-publication-read",
+              "admin-publication-save",
+              "admin-publication-history",
               "admin-document-preview",
               "admin-document-change",
               "admin-document-reconcile",
@@ -212,9 +225,101 @@ export function createHandler({
           }),
         );
       }
+      if (
+        url.pathname.startsWith("/api/topic-textbooks/jobs/") ||
+        url.pathname.startsWith("/api/topic-textbooks/creations/")
+      ) {
+        const creation = url.pathname.startsWith(
+          "/api/topic-textbooks/creations/",
+        );
+        const prefix = creation
+          ? "/api/topic-textbooks/creations/"
+          : "/api/topic-textbooks/jobs/";
+        const action = url.pathname.slice(prefix.length);
+        const payloads = creation ? topicCreationPayloads : topicJobPayloads;
+        const dispatches = creation
+          ? topicCreationDispatches
+          : topicJobDispatches;
+        const binding = creation
+          ? env.TOPIC_TEXTBOOK_CREATIONS
+          : env.TOPIC_TEXTBOOK_JOBS;
+        const enabled = creation
+          ? env.TOPIC_TEXTBOOK_CREATIONS_ENABLED
+          : env.TOPIC_TEXTBOOK_JOBS_ENABLED;
+        if (request.method !== "POST" || !Object.hasOwn(payloads, action))
+          return json(404, { status: "not-found" });
+        if (request.headers.get("X-Library-Account") !== owner)
+          return json(403, { status: "account-mismatch" });
+        if (dispatches.has(action) && !credentialsEnabled)
+          return json(503, {
+            status: "credentials-unconfigured",
+            realKeyInputEnabled: false,
+          });
+        if (!binding || (dispatches.has(action) && enabled !== "true"))
+          return json(503, {
+            status: creation
+              ? "topic-creations-unconfigured"
+              : "topic-jobs-unconfigured",
+          });
+        const csrf = request.headers.get("X-CSRF-Token");
+        if (typeof csrf !== "string" || csrf.length > 200)
+          return json(403, { status: "csrf-invalid" });
+        let data;
+        try {
+          data = await readBody(request, topicTextbookContract.bodyBytes);
+        } catch (error) {
+          return json(error.message === "body-limit" ? 413 : 400, {
+            status: "invalid-request",
+          });
+        }
+        const parsed = payloads[action].safeParse(data);
+        if (!parsed.success) return json(400, { status: "invalid-request" });
+        if (
+          !creation &&
+          ["enqueue", "retry"].includes(action) &&
+          (parsed.data.input.approvedMaxMilliYen === undefined ||
+            !parsed.data.input.approvedQuoteDigest)
+        )
+          return json(400, { status: "cost-unapproved" });
+        const before = principal.safeParse(await authenticate(request));
+        if (
+          !before.success ||
+          before.data.subject !== verified.data.subject ||
+          before.data.sessionId !== verified.data.sessionId
+        )
+          return json(401, { status: "unauthenticated" });
+        const result = await stub.fetch(
+          new Request(
+            creation
+              ? "https://account.internal/command/topic-creations"
+              : "https://account.internal/command/topic-jobs",
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                action: (creation ? "topic-creation-" : "topic-job-") + action,
+                principal: verified.data,
+                csrf,
+                data: parsed.data,
+              }),
+            },
+          ),
+        );
+        const after = principal.safeParse(await authenticate(request));
+        if (
+          !after.success ||
+          after.data.subject !== verified.data.subject ||
+          after.data.sessionId !== verified.data.sessionId
+        ) {
+          await result.body?.cancel();
+          return json(401, { status: "unauthenticated" });
+        }
+        return result;
+      }
       if (url.pathname.startsWith("/api/topic-textbooks/")) {
         const action = {
           "/api/topic-textbooks/status": "topic-status",
+          "/api/topic-textbooks/preparations": "topic-prepare",
           "/api/topic-textbooks/proposals": "topic-propose",
           "/api/topic-textbooks/operations": "topic-lookup",
         }[url.pathname];
@@ -239,7 +344,12 @@ export function createHandler({
         let data;
         try {
           if (!readingStatus)
-            data = await readBody(request, topicTextbookContract.bodyBytes);
+            data = await readBody(
+              request,
+              action === "topic-prepare"
+                ? 4096
+                : topicTextbookContract.bodyBytes,
+            );
         } catch (error) {
           return json(error.message === "body-limit" ? 413 : 400, {
             status:
@@ -248,7 +358,10 @@ export function createHandler({
         }
         const parsed = readingStatus
           ? { success: true, data: null }
-          : topicTextbookContract.requestSchema.safeParse(data);
+          : (action === "topic-prepare"
+              ? topicPreparationInputSchema
+              : topicTextbookContract.requestSchema
+            ).safeParse(data);
         if (!parsed.success) return json(400, { status: "invalid-request" });
         if (
           action === "topic-propose" &&
@@ -340,18 +453,57 @@ export function createHandler({
     }
   };
 }
-export async function handleAccount(core, request, collector, documents) {
+export async function handleAccount(
+  core,
+  request,
+  collector,
+  documents,
+  jobs,
+  prepareTopic,
+  creations,
+) {
+  if (new URL(request.url).pathname === "/command/topic-creations")
+    return handleTopicCreationAccount(core, request, creations);
   let topic = false,
     owner;
   try {
-    topic = new URL(request.url).pathname === "/command/topic-textbooks";
+    const job = new URL(request.url).pathname === "/command/topic-jobs";
+    if (
+      job &&
+      (request.method !== "POST" ||
+        request.url !== "https://account.internal/command/topic-jobs")
+    )
+      return json(404, { status: "not-found" });
+    topic = job || new URL(request.url).pathname === "/command/topic-textbooks";
     const command = await readBody(
       request,
       topic ? topicTextbookContract.bodyBytes + 4096 : 32768,
     );
     if (
-      topic !==
-      ["topic-propose", "topic-lookup", "topic-status"].includes(command.action)
+      command.action === "topic-prepare" &&
+      (request.method !== "POST" ||
+        request.url !== "https://account.internal/command/topic-textbooks")
+    )
+      return json(404, { status: "not-found" });
+    const jobAction =
+      job &&
+      typeof command.action === "string" &&
+      command.action.startsWith("topic-job-")
+        ? command.action.slice("topic-job-".length)
+        : null;
+    if (
+      (!job &&
+        typeof command.action === "string" &&
+        command.action.startsWith("topic-job-")) ||
+      (job
+        ? !Object.hasOwn(topicJobPayloads, jobAction)
+        : topic !==
+          [
+            "topic-propose",
+            "topic-lookup",
+            "topic-status",
+            "topic-prepare",
+          ].includes(command.action))
     )
       throw Error("invalid-command");
     // Internal binding only. No browser-selected owner or credential handles.
@@ -370,8 +522,43 @@ export async function handleAccount(core, request, collector, documents) {
         "document-status",
         "document-admin-status",
       ].includes(command.action),
-      { countRate: command.action !== "topic-lookup" },
+      {
+        countRate:
+          command.action !== "topic-lookup" &&
+          !(job && ["read", "list"].includes(jobAction)),
+        ...(command.action === "topic-prepare"
+          ? { rateScope: "topic-preparation" }
+          : {}),
+      },
     );
+    if (
+      typeof command.action === "string" &&
+      command.action.startsWith("topic-creation-")
+    )
+      throw Error("invalid-command");
+    if (
+      creations &&
+      (["topic-propose", "topic-prepare"].includes(command.action) ||
+        (job && topicJobDispatches.has(jobAction))) &&
+      !(await creations.canAuthor?.(owner))
+    )
+      return json(403, { status: "topic-author-forbidden", account: owner });
+    if (job) {
+      if (
+        !jobs?.binding ||
+        (topicJobDispatches.has(jobAction) && !jobs.enabled)
+      )
+        return json(503, { status: "topic-jobs-unconfigured" });
+      const parsed = topicJobPayloads[jobAction].safeParse(command.data);
+      if (!parsed.success) return json(400, { status: "invalid-request" });
+      return jobs.binding.get(jobs.binding.idFromName(owner)).fetch(
+        new Request("https://topic-jobs.internal/command", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ ...parsed.data, action: jobAction, owner }),
+        }),
+      );
+    }
     if (command.action?.startsWith("document-")) {
       if (!documents) return json(503, { status: "document-unconfigured" });
       return documents.handle(
@@ -382,7 +569,16 @@ export async function handleAccount(core, request, collector, documents) {
     }
     if (command.action === "feed-fetch") {
       if (!collector) throw Error("collection-unconfigured");
-      return json(200, await collector.source(command.data));
+      try {
+        return json(200, await collector.source(command.data));
+      } catch (error) {
+        if (
+          error?.message === "feed-response" &&
+          [404, 410].includes(error.status)
+        )
+          return json(error.status, { error: "source-unavailable" });
+        throw error;
+      }
     }
     if (command.action?.startsWith("collection-")) {
       if (!collector) throw Error("collection-unconfigured");
@@ -419,19 +615,60 @@ export async function handleAccount(core, request, collector, documents) {
       value = await core.propose(owner, command.data);
     else if (command.action === "topic-status") {
       value = await core.topicStatus(owner);
+      const canAuthor = !!(await creations?.canAuthor?.(owner));
       if (command.proposalEnabled !== true)
         value = { ...value, mode: "unconnected", quotes: [] };
       value = {
         ...value,
+        ...(creations
+          ? {
+              creations: {
+                canAuthor,
+                available: !!creations.binding,
+                enabled:
+                  !!creations.binding &&
+                  !!creations.enabled &&
+                  canAuthor &&
+                  command.proposalEnabled === true,
+              },
+            }
+          : {}),
         csrfToken: (await core.session(command.principal)).csrfToken,
       };
+    } else if (command.action === "topic-prepare") {
+      const parsed = topicPreparationInputSchema.safeParse(command.data);
+      if (!parsed.success)
+        return json(400, { status: "invalid-request", account: owner });
+      if (!prepareTopic)
+        return json(503, {
+          status: "topic-preparation-unconfigured",
+          account: owner,
+        });
+      try {
+        value = await prepareTopic(owner, parsed.data);
+      } catch (error) {
+        if (error.message === "rate-limit")
+          return json(429, { status: "rate-limit", account: owner });
+        return json(error.message === "topic-preparation-topic" ? 400 : 503, {
+          status: [
+            "topic-preparation-unconfigured",
+            "topic-preparation-topic",
+          ].includes(error.message)
+            ? error.message
+            : "topic-preparation-unavailable",
+          account: owner,
+        });
+      }
     } else if (command.action === "topic-propose") {
       if (
         command.data?.approvedMaxMilliYen === undefined ||
         !command.data?.approvedQuoteDigest
       )
         return json(400, { status: "cost-unapproved", account: owner });
-      value = await core.proposeTopic(owner, command.data);
+      value = await core.proposeTopic(owner, command.data, {
+        authorize: () =>
+          creations ? creations.canAuthor(owner) : Promise.resolve(true),
+      });
     } else if (command.action === "topic-lookup")
       value = await core.lookupTopic(owner, command.data);
     else

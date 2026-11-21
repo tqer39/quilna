@@ -42,10 +42,34 @@ export type PolicyInput = Pick<
   DocumentPolicy,
   "url" | "enabled" | "expires" | "evidence" | "members" | "aliases"
 >;
+export type PublicationRecord = {
+  policyRevision: number;
+  sourceGeneration: number;
+  enabled: boolean;
+  expires: number;
+  evidence: string;
+  revision: number;
+  actor: string | null;
+  updated: number;
+};
+export type PublicationState = {
+  id: string;
+  policyRevision: number;
+  managementRevision: number;
+  publicationGeneration: number;
+  policyEnabled: boolean;
+  policyExpires: number;
+  publication: PublicationRecord | null;
+};
+export type PublicationHistory = Omit<PublicationRecord, "updated"> & {
+  recorded: number;
+  kind: "baseline" | "create" | "update";
+};
 export class PolicyError extends Error {
   constructor(
     message: string,
     readonly locked = false,
+    readonly unchanged = false,
   ) {
     super(message);
   }
@@ -177,6 +201,7 @@ export function validatePolicyInput(input: PolicyInput, revision: number) {
 
 export class DocumentPolicyClient {
   account: string | null = null;
+  publicationsEnabled = false;
   constructor(private readonly send: typeof fetch = (i, o) => fetch(i, o)) {}
   private async request(
     path: string,
@@ -205,14 +230,20 @@ export class DocumentPolicyClient {
       if (response.status === 404)
         throw new PolicyError(
           "この共有設定を利用できません。権限と登録状況を確認してください。",
+          false,
+          true,
         );
       if (response.status === 409)
         throw new PolicyError(
           "別の編集が保存されたか、URLの重複・保存上限があります。最新の設定を確認してから編集し直してください。",
+          false,
+          true,
         );
       if (response.status === 429)
         throw new PolicyError(
           "操作が続いています。少し待ってから確認してください。",
+          false,
+          true,
         );
       if (!response.ok)
         throw new PolicyError(
@@ -276,27 +307,51 @@ export class DocumentPolicyClient {
         true,
       );
     this.account = result.account;
+    if (
+      result.publicationsEnabled !== undefined &&
+      typeof result.publicationsEnabled !== "boolean"
+    )
+      throw invalid();
+    this.publicationsEnabled = result.publicationsEnabled === true;
     return this.account;
   }
   private async command(action: string, body: unknown, signal: AbortSignal) {
-    if (!this.account) throw changed();
-    await this.connect(signal);
-    const session = await this.request("/api/session", signal);
-    if (
-      typeof session.csrfToken !== "string" ||
-      session.csrfToken.length < 20 ||
-      session.csrfToken.length > 100
-    )
-      throw changed();
-    // Session lookup can itself outlive a login change. Check before mutation too.
-    await this.connect(signal);
+    let session;
+    try {
+      if (!this.account) throw changed();
+      await this.connect(signal);
+      session = await this.request("/api/session", signal);
+      if (
+        typeof session.csrfToken !== "string" ||
+        session.csrfToken.length < 20 ||
+        session.csrfToken.length > 100
+      )
+        throw changed();
+      await this.connect(signal);
+    } catch (error) {
+      // 接続確認までの失敗では、変更要求そのものはまだ送信していない。
+      throw error instanceof PolicyError
+        ? new PolicyError(error.message, error.locked, true)
+        : new PolicyError(
+            "管理者の接続を確認できません。保存要求は送信していません。",
+            false,
+            true,
+          );
+    }
     const result = await this.request(
       "/api/documents/admin-" + action,
       signal,
       body,
       session.csrfToken,
     );
-    await this.connect(signal);
+    try {
+      await this.connect(signal);
+    } catch (error) {
+      // 変更要求の送信後は、確認用の要求が拒否されても未保存とは断定しない。
+      if (error instanceof PolicyError)
+        throw new PolicyError(error.message, error.locked, false);
+      throw error;
+    }
     return result;
   }
   async previewDocument(context: LifecycleContext, signal: AbortSignal) {
@@ -315,6 +370,151 @@ export class DocumentPolicyClient {
       if (error instanceof PolicyError) throw error;
       throw invalid();
     }
+  }
+  private publicationState(value: unknown, id: string): PublicationState {
+    if (
+      !object(value) ||
+      value.id !== id ||
+      !integer(value.policyRevision) ||
+      !integer(value.managementRevision) ||
+      !integer(value.publicationGeneration) ||
+      typeof value.policyEnabled !== "boolean" ||
+      !integer(value.policyExpires) ||
+      value.policyExpires > 8.64e15
+    )
+      throw invalid();
+    const p = value.publication;
+    if (
+      p !== null &&
+      (!object(p) ||
+        !integer(p.policyRevision) ||
+        !integer(p.sourceGeneration) ||
+        typeof p.enabled !== "boolean" ||
+        !integer(p.expires) ||
+        p.expires > 8.64e15 ||
+        !evidence(p.evidence) ||
+        !integer(p.revision) ||
+        !Number.isSafeInteger(p.updated) ||
+        (p.updated as number) < 0 ||
+        (p.updated as number) > 8.64e15 ||
+        (p.actor === null
+          ? p.updated !== 0
+          : !policyAccount(p.actor) || (p.updated as number) <= 0))
+    )
+      throw invalid();
+    return value as PublicationState;
+  }
+  async readPublication(id: string, signal: AbortSignal) {
+    const result = await this.command("publication-read", { id }, signal);
+    return this.publicationState(result.state, id);
+  }
+  async savePublication(
+    policy: DocumentPolicy,
+    current: PublicationState,
+    input: Pick<PublicationRecord, "enabled" | "expires" | "evidence">,
+    signal: AbortSignal,
+  ) {
+    if (
+      current.id !== policy.id ||
+      current.policyRevision !== policy.policyRevision ||
+      current.managementRevision !== policy.managementRevision
+    )
+      throw new PolicyError(
+        "共有条件が変わっています。最新の共有設定を確認してください。",
+        false,
+        true,
+      );
+    if (
+      !evidence(input.evidence) ||
+      !integer(input.expires) ||
+      input.expires > 8.64e15 ||
+      (input.enabled &&
+        (!current.policyEnabled ||
+          input.expires <= Date.now() ||
+          input.expires > current.policyExpires))
+    )
+      throw new PolicyError(
+        "公開の根拠と期限を確認してください。公開の期限は有効な共有期限以内にしてください。",
+        false,
+        true,
+      );
+    const expected = current.publication?.revision ?? 0;
+    const result = await this.command(
+      "publication-save",
+      {
+        id: policy.id,
+        expectedPolicyRevision: policy.policyRevision,
+        expectedManagementRevision: policy.managementRevision,
+        expectedGeneration: current.publicationGeneration,
+        expectedRevision: expected,
+        ...input,
+      },
+      signal,
+    );
+    const next = this.publicationState(result.state, policy.id);
+    if (
+      next.policyRevision !== policy.policyRevision ||
+      next.managementRevision !== policy.managementRevision ||
+      !next.publication ||
+      next.publication.revision !== expected + 1 ||
+      next.publication.policyRevision !== policy.policyRevision ||
+      next.publicationGeneration !== current.publicationGeneration ||
+      next.publication.sourceGeneration !== current.publicationGeneration ||
+      next.publication.enabled !== input.enabled ||
+      next.publication.expires !== input.expires ||
+      next.publication.evidence !== input.evidence ||
+      next.publication.actor !== this.account
+    )
+      throw invalid();
+    return next;
+  }
+  async publicationHistory(
+    id: string,
+    before: number | null,
+    signal: AbortSignal,
+  ) {
+    const result = await this.command(
+      "publication-history",
+      { id, ...(before ? { before } : {}) },
+      signal,
+    );
+    this.publicationState(result.state, id);
+    if (
+      !Array.isArray(result.entries) ||
+      result.entries.length > 20 ||
+      !result.entries.every(
+        (e: unknown) =>
+          object(e) &&
+          integer(e.revision) &&
+          integer(e.policyRevision) &&
+          integer(e.sourceGeneration) &&
+          typeof e.enabled === "boolean" &&
+          integer(e.expires) &&
+          e.expires <= 8.64e15 &&
+          evidence(e.evidence) &&
+          integer(e.recorded) &&
+          e.recorded <= 8.64e15 &&
+          (e.kind === "baseline"
+            ? e.actor === null
+            : (e.kind === "create" || e.kind === "update") &&
+              policyAccount(e.actor)),
+      ) ||
+      result.entries.some(
+        (e, i, all) =>
+          e.revision >=
+          (i ? all[i - 1].revision : (before ?? Number.MAX_SAFE_INTEGER)),
+      ) ||
+      !(
+        result.before === null ||
+        (integer(result.before) &&
+          result.before === result.entries.at(-1)?.revision)
+      )
+    )
+      throw invalid();
+    return {
+      entries: result.entries as PublicationHistory[],
+      before: result.before as number | null,
+    };
   }
   async changeDocument(
     context: LifecycleContext,

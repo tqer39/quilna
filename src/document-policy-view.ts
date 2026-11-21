@@ -1,4 +1,5 @@
 import { documentLifecycleView } from "./document-lifecycle-view";
+import { documentPublicationView } from "./document-publication-view";
 import { button, el } from "./ui";
 import { sourceURL } from "./feed-discovery";
 import {
@@ -137,7 +138,7 @@ export function documentPolicySettings(client = new DocumentPolicyClient()) {
   root.append(
     el(
       "p",
-      "登録した出典の本文を、指定した利用者だけが再利用できます。既読・保存・翻訳・メモは共有しません。",
+      "出典の本文の再利用を管理します。既読・保存・翻訳・メモは共有しません。",
       "muted",
     ),
     connect,
@@ -146,7 +147,12 @@ export function documentPolicySettings(client = new DocumentPolicyClient()) {
     workspace,
   );
   function hasDraft() {
-    return dirty || !!root.querySelector('[data-lifecycle-dirty="true"]');
+    return (
+      dirty ||
+      !!root.querySelector(
+        '[data-lifecycle-dirty="true"], [data-publication-dirty="true"]',
+      )
+    );
   }
   function discard() {
     return (
@@ -158,10 +164,17 @@ export function documentPolicySettings(client = new DocumentPolicyClient()) {
   }
   /** Keep an unconfirmed operation mounted until its result can be reconciled. */
   function canReplaceLifecycle(container: HTMLElement) {
-    if (!container.querySelector('[data-lifecycle-pending="true"]'))
+    if (
+      !container.querySelector(
+        '[data-lifecycle-pending="true"], [data-publication-pending="true"]',
+      )
+    )
       return true;
-    notice.textContent =
-      "本文操作の結果を先に確認してください。同じ操作の再試行か、保存本文の状態確認で結果を確認できます。";
+    notice.textContent = container.querySelector(
+      '[data-publication-pending="true"]',
+    )
+      ? "公開設定の保存結果を先に確認してください。公開設定の再照会で、下書きを保持したまま結果を確認できます。"
+      : "本文操作の結果を先に確認してください。同じ操作の再試行か、保存本文の状態確認で結果を確認できます。";
     return false;
   }
   function controls() {
@@ -480,6 +493,11 @@ export function documentPolicySettings(client = new DocumentPolicyClient()) {
             () =>
               void run(async (signal) => {
                 if (!canReplaceLifecycle(editor)) return;
+                if (editor.querySelector('[data-publication-dirty="true"]')) {
+                  notice.textContent =
+                    "一般公開の下書きを先に保存するか、公開設定を確認して保存済みの内容から編集し直してください。";
+                  return;
+                }
                 const result = await client.save(input, saved, signal);
                 renderEditor(result);
                 next = null;
@@ -546,6 +564,8 @@ export function documentPolicySettings(client = new DocumentPolicyClient()) {
     form.append(fields, review, reread, preview);
     editor.append(form);
     if (saved) {
+      if (client.publicationsEnabled)
+        editor.append(documentPublicationView(client, saved, run));
       editor.append(
         documentLifecycleView(
           client,

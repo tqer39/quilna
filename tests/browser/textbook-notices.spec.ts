@@ -1743,3 +1743,73 @@ test("通知前の候補を下書きに残さず、選択済みの撤回版も�
   await expect(reason).toHaveValue("撤回しても保持する下書き");
   await other.close();
 });
+test("訂正先の読み込み待ちでも撤回理由の入力を失わず、保存は確認完了後に行う", async ({
+  page,
+}) => {
+  await seed(page, "editorial");
+  await page.evaluate(() => {
+    const transaction = IDBDatabase.prototype.transaction;
+    let first = true;
+    IDBDatabase.prototype.transaction = function (...args) {
+      const tx = transaction.apply(this, args);
+      if (
+        first &&
+        this.name === "quilna.shared-textbooks.v1" &&
+        tx.mode === "readonly" &&
+        tx.objectStoreNames.length === 1 &&
+        tx.objectStoreNames.contains("books")
+      ) {
+        first = false;
+        let complete: ((this: IDBTransaction, event: Event) => unknown) | null =
+          null;
+        Object.defineProperty(tx, "oncomplete", {
+          get: () => complete,
+          set: (value) => {
+            complete = value;
+          },
+        });
+        tx.addEventListener("complete", (event) => {
+          const state = window as unknown as {
+            choicesHeld: boolean;
+            releaseChoices: () => void;
+          };
+          state.choicesHeld = true;
+          state.releaseChoices = () => complete?.call(tx, event);
+        });
+      }
+      return tx;
+    };
+  });
+  await page.getByText("教材の訂正・撤回を記録", { exact: true }).click();
+  await page.waitForFunction(
+    () => (window as unknown as { choicesHeld?: boolean }).choicesHeld,
+  );
+  const reason = page.getByLabel("訂正・撤回の理由", { exact: true });
+  await expect(reason).toBeEditable();
+  await page
+    .getByLabel("記録の種類", { exact: true })
+    .selectOption("withdrawn");
+  await reason.fill("確認待ちの間に入力した撤回理由");
+  await page
+    .getByLabel("判断の根拠", { exact: true })
+    .fill("確認待ちの間に入力した判断の根拠");
+  const save = page.getByRole("button", {
+    name: "この版の記録を保存",
+    exact: true,
+  });
+  await expect(save).toBeDisabled();
+  await page.evaluate(() =>
+    (window as unknown as { releaseChoices: () => void }).releaseChoices(),
+  );
+  await expect(save).toBeEnabled();
+  await expect(reason).toHaveValue("確認待ちの間に入力した撤回理由");
+  await save.click();
+  await expect(
+    page.getByRole("region", { name: "この教材版の訂正・撤回", exact: true }),
+  ).toContainText("確認待ちの間に入力した撤回理由");
+  await page.reload();
+  await expect(
+    page.getByRole("region", { name: "この教材版の訂正・撤回", exact: true }),
+  ).toContainText("確認待ちの間に入力した撤回理由");
+  await expect(page.getByRole("radio").first()).toBeDisabled();
+});
