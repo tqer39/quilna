@@ -212,7 +212,7 @@ export default defineConfig({ ...base, testDir: '.', testMatch: 'diagnostic.spec
     }
   }
   const traceComplete =
-    traces.length === (project === "all" ? 3 : 1) &&
+    traces.length === (project === "all" ? 6 : 1) &&
     traces.every(
       (trace) => trace.bytes > 0 && trace.dataLoss === false && !trace.error,
     );
