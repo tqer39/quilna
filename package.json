@@ -48,7 +48,7 @@
   },
   "overrides": {
     "miniflare@5.20261006.1-alpha": {
-      "undici": "7.30.1"
+      "undici": "7.30.2"
     },
     "markdownlint-cli2": {
       "smol-toml": "1.9.1",
