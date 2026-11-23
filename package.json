@@ -37,7 +37,7 @@
     "@playwright/test": "^1.57.0",
     "esbuild": "^0.28.2",
     "eslint": "^10.14.0",
-    "markdownlint-cli2": "^0.24.0",
+    "markdownlint-cli2": "^0.24.2",
     "miniflare": "^5.20261006.1-alpha",
     "prettier": "^3.9.9",
     "typescript": "^5.9.0",
