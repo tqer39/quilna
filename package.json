@@ -29,7 +29,7 @@
     "better-auth": "1.7.18",
     "highlight.js": "11.12.0",
     "jose": "^6.2.12",
-    "linkedom": "0.18.14",
+    "linkedom": "0.18.15",
     "zod": "^4.6.7"
   },
   "devDependencies": {
@@ -37,7 +37,7 @@
     "@playwright/test": "^1.57.0",
     "esbuild": "^0.28.2",
     "eslint": "^10.14.0",
-    "markdownlint-cli2": "^0.23.3",
+    "markdownlint-cli2": "^0.24.2",
     "miniflare": "^5.20261006.1-alpha",
     "prettier": "^3.9.9",
     "typescript": "^5.9.0",
@@ -48,13 +48,13 @@
   },
   "overrides": {
     "miniflare@5.20261006.1-alpha": {
-      "undici": "7.30.1"
+      "undici": "7.30.2"
     },
     "markdownlint-cli2": {
       "smol-toml": "1.9.1",
       "markdownlint": {
         "micromark-extension-math": {
-          "katex": "0.18.2"
+          "katex": "0.19.1"
         }
       },
       "markdown-it": "15.0.3"
