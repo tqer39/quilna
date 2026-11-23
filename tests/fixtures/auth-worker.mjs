@@ -155,7 +155,8 @@ export async function authWorkerFixture(
             : config.bindings.GOOGLE_CLIENT_ID,
         )
         .setIssuedAt(now)
-        .setExpirationTime(behavior === "expired" ? now - 1 : now + 3600)
+        // better-auth は exp に 30 秒の時刻ずれを許すため、それを確実に超えて期限切れにする
+        .setExpirationTime(behavior === "expired" ? now - 300 : now + 3600)
         .sign(behavior === "forged-signature" ? wrong.privateKey : privateKey);
       return Response.json({
         access_token: "DUMMY-ACCESS-MUST-NOT-PERSIST",
