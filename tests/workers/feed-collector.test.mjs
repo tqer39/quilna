@@ -271,7 +271,7 @@ test("cloud fetch restricts initial URLs and every redirect, and never forwards 
     "https://service.local./rss",
     "https://home.arpa/rss",
     "file:///etc/passwd",
-    "https://user:pass@zenn.dev/feed",
+    "https://user:xxxx@zenn.dev/feed",
     "https://zenn.dev:444/feed",
   ])
     await assert.rejects(
