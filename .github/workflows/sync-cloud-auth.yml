@@ -28,7 +28,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: 26.12.1
+          node-version: 26.13.1
       - name: Check configuration before loading credentials
         run: node scripts/sync-cloud-auth.mjs --check-configuration
         env:

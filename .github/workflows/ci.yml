@@ -24,7 +24,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: 26.12.1
+          node-version: 26.13.1
       - id: scope
         run: node scripts/ci-selection.mjs select
 
@@ -40,7 +40,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: 26.12.1
+          node-version: 26.13.1
           cache: npm
       - run: node scripts/check-security.mjs
       - run: npm ci --ignore-scripts
@@ -110,7 +110,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: 26.12.1
+          node-version: 26.13.1
           cache: npm
       - run: node scripts/check-security.mjs
       - run: npm ci --ignore-scripts
@@ -168,7 +168,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
-          node-version: 26.12.1
+          node-version: 26.13.1
       - name: Require every selected check
         env:
           NEEDS_JSON: ${{ toJSON(needs) }}
