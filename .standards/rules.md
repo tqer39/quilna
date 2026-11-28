@@ -13,21 +13,68 @@ EditorConfig、gitignore.io の採用入力、mise の作業入口を維持す�
 
 GitHub Actions を使うリポジトリでは、すべてのワークフローに次の対策を導入する。
 依存するアクションや PR の内容が改ざんされても、リポジトリの権限と secret に被害が及ばないようにする。
+対策は、`zizmor` が判定する項目と、人が確認する項目に分かれる。
 
-- 外部のアクションは `uses:` でコミット SHA の全桁に固定し、版を行末のコメントに残す。
+#### zizmor が判定する項目
+
+括弧内は、対応する zizmor の監査名を示す。
+
+- 外部のアクションは `uses:` でコミット SHA の全桁に固定する（`unpinned-uses`）。
   タグとブランチは付け替えられるため、固定には使わない。
-- ワークフローの `permissions` は `contents: read` などの最小権限にし、書き込み権限は必要なジョブにだけ与える。
-- `actions/checkout` には `persist-credentials: false` を指定する。後続の処理で認証情報を使うジョブだけを除く。
-- `pull_request_target` と `workflow_run` で、PR のコードを checkout して実行しない。
-- `github.event` などの外部入力は `run:` に `${{ }}` で埋め込まず、`env:` を経由して渡す。
-- secret を使うジョブとリリース用のジョブでは、PR からも書き込めるキャッシュを復元しない。
-- クラウドへの認証には、長期のアクセスキーではなく OIDC を使う。
-- 依存の更新は Renovate の `minimumReleaseAge` で待機期間を設け、公開直後の版を取り込まない。
+- ワークフローの `permissions` は `contents: read` などの最小権限にし、書き込み権限はジョブ単位で与える（`excessive-permissions`）。
+- `actions/checkout` には `persist-credentials: false` を指定する（`artipacked`）。
+- `pull_request_target` と `workflow_run` で、PR のコードを checkout して実行しない（`dangerous-triggers`）。
+- `github.event` などの外部入力は `run:` に `${{ }}` で埋め込まず、`env:` を経由して渡す（`template-injection`）。
+- secret を使うジョブとリリース用のジョブでは、PR からも書き込めるキャッシュを復元しない（`cache-poisoning`）。
+
+自律保守を導入した利用先では、共通 CI（`dev-standards.yml`）の `supply-chain` ジョブが、
+版を固定した zizmor を `--offline --min-severity medium` で実行する。
+必須チェックのジョブ（`workflow-result` または `standards-check`）はこのジョブの成功を待ち、失敗すると必須チェックも失敗する。
+
+このジョブが検査するのは、dev-standards が生成する `dev-standards.yml` と `dev-standards-version-lag.yml` だけである。
+利用先が書いたワークフローは対象にしない。
+既存のワークフローに指摘が残る利用先で、採用版の更新と同時に CI が失敗するのを避けるためである。
+
+#### 人が確認する項目
+
+zizmor の成功だけでは判断できないので、ワークフローを追加・変更するときに差分と照合する。
+
+- 固定した SHA の行末に版をコメントで残し、SHA がその版のコミットであること。
+- 書き込み権限を与えたジョブと、`persist-credentials: false` を外したジョブが、その権限と認証情報を実際に必要とすること。
+- クラウドへの認証に、長期のアクセスキーではなく OIDC を使うこと。
+- 依存の更新に Renovate の `minimumReleaseAge` で待機期間を設け、公開直後の版を取り込まないこと。
   脆弱性の修正は待機の対象から外す。
+- zizmor の指摘を `.github/zizmor.yml` や `# zizmor: ignore[...]` で除外する場合は、除外する理由。
+- 利用先が書いたワークフローが、「zizmor が判定する項目」を満たすこと。
+  次の節の条件を満たして自動判定に移すまでは、人が照合する。
+
+#### 検査を利用先の全ワークフローへ広げる条件
+
+利用先は、次の条件を満たしてから、自分の CI で `.github` 全体を検査する。
+共通 CI は生成物なので、直接編集して対象を広げない。
+
+- `zizmor --offline --min-severity medium .github` の指摘が 0 件である。
+  意図して残す指摘は、理由とともに除外を設定してある。
+- zizmor の版を `mise.toml` などで固定し、Renovate の待機期間を経て更新する。
+
+共通 CI の対象を `.github` 全体へ広げるのは、共通 CI を持つすべての利用先で 1 つ目の条件を確認した後にする。
+共通 CI を持たない利用先には `supply-chain` ジョブが届かないので、同じ検査を自分の CI で実行する。
+
+#### secret の検査
+
+`supply-chain` ジョブは、版を固定した betterleaks で作業ツリーの secret も検査する。
+過去の誤検知を拾わないよう、全履歴は対象にしない。検出した値はログに表示しない。
+
+- 実際の secret を検出した場合は、除外せず、先に失効と差し替えを行う。
+- 文書の例やテストの固定値などの誤検知は、リポジトリのルートの `.betterleaks.toml` か、
+  該当行の `betterleaks:allow` コメントで除外する。`.betterleaks.toml` があれば、ジョブはそれを読み込む。
+- 除外は検査対象の PR 自身が追加できる。除外を追加・変更する PR では、対象が実際の secret でないことをレビューで確認する。
+
+#### check の扱い
 
 `check` はこの一覧を判定せず、`review_required` と報告する。
-ワークフローを追加・変更するときに、差分をこの一覧と照合する。
-`zizmor` などの静的解析を CI で実行すると、照合の一部を自動化できる。
+`supply-chain` ジョブの成功は生成ワークフローと作業ツリーの secret についての判定であり、
+利用先のワークフロー全体がこのルールに適合することを示さない。
 
 ## CORE-BOOTSTRAP
 
@@ -227,6 +274,90 @@ GitHub Actions、テストツール、lint と format のツール、同じ製�
 
 複数のリポジトリに共通するまとめ方は共有の Renovate 設定に置き、固有の依存だけを各リポジトリの設定に書く。
 `check` はこの内容を判定せず、`review_required` と報告する。
+
+## CORE-TYPESCRIPT-TSRS
+
+### TypeScript の型チェックに tsrs を使う
+
+<!-- cspell:words tsrs musl -->
+
+TypeScript を使うリポジトリでは、型チェックに [tsrs](https://github.com/oxc-project/tsrs) を使う。
+tsrs は TypeScript 7 の型チェッカーを Rust に移植したもので、npm パッケージ `tsrs` として配布されている。
+型チェックだけを置き換え、アプリの実装言語、ビルド、実行時の依存は変えない。
+TypeScript のソースと `tsconfig.json` の両方を持つリポジトリを対象とし、どちらかがないリポジトリは対象外とする。
+
+公式には今も実験版なので、安定版になるまでは次の初期値で使う。
+利用先で扱いを変える場合は、理由と確認した内容を利用先の文書に残す。
+
+#### 版の固定と実行
+
+- tsrs は mise の npm ツールとして版を固定し、mise のタスクとして実行する。
+  `latest` や範囲指定は使わない。
+- タスクだけにツールを指定し、プロジェクト全体の `[tools]` や `package.json` の依存には追加しない。
+  `npm ci`、ビルド、既存の型チェックが使う TypeScript の版を変えないためである。
+- 共通の mise 設定を生成している利用先は、`.standards/mise.project.toml` などの正本を編集し、
+  変更計画を確認して再生成する。
+
+```toml
+[tasks."typecheck:tsrs"]
+description = "Experimental Rust TypeScript check; tsc remains required"
+tools = { "npm:tsrs" = "0.18.0-ts7.1.0-dev.20260929" }
+run = "tsrs --noEmit"
+```
+
+版は例であり、利用先で確認した版を固定する。
+`tsconfig.json` がリポジトリの直下にない場合は、タスクの `dir` で対象のディレクトリを指定する。
+ローカルで型を確かめるときは、まず `mise run typecheck:tsrs` を実行する。
+
+#### tsc との併用
+
+tsrs が安定版になるまでは、tsc による型チェックを必須の検査として残す。
+
+- 既存の `tsc --noEmit` などの型チェックと、それを呼ぶ lint・test・build のタスクを削除・置換しない。
+- tsrs のタスクは追加の検査とし、`lint`、`test`、`build` など CI の必須チェックが呼ぶタスクには接続しない。
+- 両者の結果が食い違ったら tsc の結果を正とし、差分を既知の互換性の問題と照合する。
+  検査を無効にして tsrs だけを通さない。
+- tsc を外して tsrs だけにするのは、tsrs が安定版になり、利用先の全プラットフォームで動作を確認してからとする。
+
+#### バイナリがないプラットフォーム
+
+tsrs はプラットフォームごとのバイナリを npm の `optionalDependencies` で配布し、対象は版によって異なる。
+`0.18.0-ts7.1.0-dev.20260929` は macOS arm64 と Linux x64／arm64（GNU／musl）だけを配布し、
+Windows と macOS x64 向けのバイナリはない。
+固定した版にバイナリがないプラットフォームでは、tsrs を使わず tsc の型チェックを使う。
+
+dev-standards が生成する CI は `windows-latest` でも必須チェックを実行する。
+tsrs のタスクを必須チェックが呼ぶタスクに接続すると、バイナリがないランナーで必須チェックが失敗する。
+CI で tsrs を実行する場合は、バイナリがあるランナーに限定した別のジョブにし、必須チェックの条件に加えない。
+必須チェックの対象 OS を減らして tsrs に合わせない。
+
+#### 版の更新
+
+版を更新するときは、固定する前に次を確認する。
+
+- 配布元: npm の `tsrs` が公式リポジトリ `oxc-project/tsrs` から公開された版であること。
+  レジストリ署名と attestation を検証できる場合は検証する。
+- 対応プラットフォーム: 新しい版の `optionalDependencies`（`npm view tsrs@<版> optionalDependencies`）。
+  対象が変わったら、tsc に切り替えるプラットフォームの記述も更新する。
+- 互換性: [既知の互換性の制約](https://github.com/oxc-project/tsrs/blob/main/docs/COMPATIBILITY.md)と
+  リリースノート。対応する TypeScript の版が変わる場合は、tsc との診断の差分も確認する。
+- 動作: 更新後に tsrs と tsc の両方で型チェックを実行し、結果を比べる。
+
+mise は既定で npm のインストール時スクリプトを抑止する。この設定を tsrs のために緩めない。
+
+#### 配布と検証の範囲
+
+共通指示の配布を有効にした利用先では、このルールを `.standards/rules.md` に配布する。
+既存利用先には、採用版の更新計画を確認・適用してから届く。
+この配布だけでは、利用先に tsrs のタスクは追加されない。タスクの追加と版の固定は利用先で行う。
+dev-standards は生成する CI と mise のタスクを、このルールでは変更しない。
+`check` と `verify` は tsrs の導入と実行結果を判定せず、`review_required` と報告する。
+
+#### 一次情報
+
+- [tsrs の公式リポジトリ](https://github.com/oxc-project/tsrs)
+- [既知の互換性の制約](https://github.com/oxc-project/tsrs/blob/main/docs/COMPATIBILITY.md)
+- [mise の npm バックエンド](https://mise.jdx.dev/dev-tools/backends/npm.html)
 
 ## PROCESS-AI-DISCLOSURE
 
@@ -457,3 +588,30 @@ CLI の対応構文は公式マニュアルと実行環境の `--help` を確認
 
 このルールは主担当のエージェントが作業の区切りで実行する手順であり、常駐同期や hooks による GitHub 書き込みを追加しない。
 `check` と `verify` は、この進捗ルールの GitHub への反映を検証・代行せず、`review_required` と報告する。
+
+## PROCESS-WORKTREE
+
+### ファイルの変更は worktree で行う
+
+エージェントがファイルを変更するときは、既定ブランチの元の checkout を直接編集しない。
+作業は `git worktree` か、Orca などのツールが用意する worktree で行う。
+実装を別のエージェントやハーネスに任せず、対話の中で直接編集する場合にも適用する。
+
+#### 作業場所
+
+- 変更を始める前に、作業中のディレクトリが元の checkout か worktree かを確認する。
+  元の checkout にいる場合は、作業用のブランチと worktree を作ってから編集する。
+- 別のリポジトリを変更する場合も、そのリポジトリに worktree を作る。隣の `../<repo>` を直接編集しない。
+- Codex など別のエージェントに作業させる場合は、対象のリポジトリと worktree を指定して渡す。
+- 別のエージェントやハーネスに渡した作業は、渡した先の作業場所に任せる。同じ変更をローカルで並行して行わない。
+- 元の checkout に未コミットの変更がある場合は、reset や stash で退避せず、そのまま残して worktree で作業する。
+
+質問、調査、レビューなど、ファイルを変更しない作業には適用しない。
+dev-standards の共通ルール・設定の導入、更新、自律保守は、それぞれの既存手順が定める作業場所に従う。
+
+#### 配布と検証の範囲
+
+共通指示の配布を有効にした利用先では、このルールを `.standards/rules.md` に配布する。
+既存利用先には、採用版の更新計画を確認・適用してから届く。
+このルールはエージェントへの指示であり、元の checkout への書き込みを hooks などで機械的に拒否するものではない。
+`check` と `verify` は作業場所を検査せず、遵守の判断を `review_required` として報告する。
